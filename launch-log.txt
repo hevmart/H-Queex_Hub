@@ -71,3 +71,7 @@ Press CTRL+C to quit
 127.0.0.1 - - [08/Aug/2026 02:16:37] "GET /favicon.ico HTTP/1.1" 404 -
 127.0.0.1 - - [08/Aug/2026 02:16:42] "GET /services?edit_id=39320226-76e5-4277-9bc7-0e7dbc8f79f3 HTTP/1.1" 200 -
 127.0.0.1 - - [08/Aug/2026 02:16:42] "GET /static/H-Queex%20Logo%20Blue%20and%20Gold%20with%20Tagline%20V4.0.png HTTP/1.1" 200 -
+[2026-08-10 13:35:26] Launch requested
+[2026-08-10 13:35:30] Python start command issued (PID: 32036)
+[2026-08-10 13:35:32] App HTTP endpoint is responsive
+[2026-08-10 13:35:33] Browser open command issued (explorer)
