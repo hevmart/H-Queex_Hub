@@ -1563,7 +1563,6 @@ def test_bank_statement_import_and_unmatched_export(workbook_copy):
         '/expenses/add',
         data={
             "date": "2026-08-05",
-            "title": "Statement match expense",
             "description": "Should match statement",
             "supplier": "Supplier A",
             "supplier_vat_number": "IE1234567A",
@@ -1594,7 +1593,7 @@ def test_bank_statement_import_and_unmatched_export(workbook_copy):
     queue_response = app.app.test_client().get('/reconciliation/export.csv')
     assert queue_response.status_code == 200
     assert b'statement_match_count' not in queue_response.data
-    assert b'Statement match expense' in queue_response.data
+    assert b'Should match statement' in queue_response.data
 
     bank_lines_response = app.app.test_client().get('/reconciliation/bank-statements.csv')
     assert bank_lines_response.status_code == 200
@@ -1663,8 +1662,7 @@ def test_apply_suggested_reconciliation_skips_ambiguous_groups(workbook_copy):
             '/expenses/add',
             data={
                 "date": "2026-08-05",
-                "title": title,
-                "description": "Same amount same day",
+                "description": title,
                 "supplier": "Supplier A",
                 "supplier_vat_number": "IE1234567A",
                 "category": "Professional Fees",
@@ -1698,7 +1696,7 @@ def test_apply_suggested_reconciliation_skips_ambiguous_groups(workbook_copy):
 
     app.load_finance_data.cache_clear()
     expenses = app.load_finance_data()["sheets"]["Expenses"]
-    ambiguous = [row for row in expenses if str(row.get("Title") or "") in {"Ambiguous Expense A", "Ambiguous Expense B"}]
+    ambiguous = [row for row in expenses if str(row.get("Description") or "") in {"Ambiguous Expense A", "Ambiguous Expense B"}]
     assert len(ambiguous) == 2
     assert all(str(row.get("Bank Reconciliation") or "") != "Reconciled" for row in ambiguous)
 
@@ -1892,8 +1890,10 @@ def test_restore_archived_expense_recreates_workbook_row_and_logs_audit(workbook
     assert response.status_code == 200
     assert b'Expense restored' in response.data
 
+    app.load_finance_data.cache_clear()
+    app.load_finance_data()
     expense_records = json.loads(app.EXPENSES_PATH.read_text(encoding="utf-8"))
-    assert any(record.get("Title") == "Recovered Expense" for record in expense_records)
+    assert any(record.get("Description") == "Recovered Expense — Restored row" for record in expense_records)
     assert json.loads(app.ARCHIVE_PATH.read_text(encoding="utf-8")) == []
     audit_entries = json.loads(app.AUDIT_LOG_PATH.read_text(encoding="utf-8"))
     assert any(entry["action"] == "restore" and entry["entity_type"] == "expense" for entry in audit_entries)
@@ -1939,12 +1939,14 @@ def test_restore_conflict_is_detected_until_force_restore(workbook_copy):
     app.WORKBOOK_PATH = workbook_copy
     app.load_finance_data.cache_clear()
 
+    app.load_finance_data()  # trigger the Title-into-Description migration for row 1 first
+
     app._archive_record(
         "expense",
         {
             "Date (Registered)": "2026-07-29",
-            "Title": "Travel",
-            "Description": "Hotel",
+            "Title": "",
+            "Description": "Travel — Hotel",
             "Supplier / Payee": "Supplier A",
             "Category": "Travel",
             "Net Amount (€)": 100.0,
@@ -2373,7 +2375,7 @@ def test_legacy_invoice_without_line_items_gets_migrated(workbook_copy):
 def _expense_add_payload(**overrides):
     payload = {
         "date": "2026-08-07",
-        "title": "Client dinner",
+        "description": "Client dinner",
         "category": "Entertainment",
         "supplier_vat_number": "IE1234567A",
         "base_net_amount": "100.00",
@@ -2406,7 +2408,7 @@ def test_expense_with_unacknowledged_red_flag_is_rejected(workbook_copy):
     assert b'compliance flags that need your attention' in response.data
 
     app.load_finance_data.cache_clear()
-    saved = [row for row in app.load_finance_data()["sheets"]["Expenses"] if row.get("Title") == "Client dinner"]
+    saved = [row for row in app.load_finance_data()["sheets"]["Expenses"] if row.get("Description") == "Client dinner"]
     assert saved == []
 
 
@@ -2429,7 +2431,7 @@ def test_expense_with_acknowledged_red_flag_saves_and_records_acknowledgement(wo
     assert b'Expense entry added' in response.data
 
     app.load_finance_data.cache_clear()
-    saved = next(row for row in app.load_finance_data()["sheets"]["Expenses"] if row.get("Title") == "Client dinner")
+    saved = next(row for row in app.load_finance_data()["sheets"]["Expenses"] if row.get("Description") == "Client dinner")
     stored_flags = json.loads(saved["Compliance Flags"])
     assert stored_flags == [{"key": "vat", "severity": "danger", "message": "VAT cannot be reclaimed on entertainment expenses."}]
     assert saved["Flags Acknowledged"] == "Yes"
@@ -2445,7 +2447,7 @@ def test_expense_with_only_amber_flag_saves_without_acknowledgement(workbook_cop
     response = client.post(
         '/expenses/add',
         data=_expense_add_payload(
-            title="New laptop",
+            description="New laptop",
             category="Equipment and Hardware",
             base_net_amount="1500.00",
             net_amount="1500.00",
@@ -2459,7 +2461,7 @@ def test_expense_with_only_amber_flag_saves_without_acknowledgement(workbook_cop
     assert b'Expense entry added' in response.data
 
     app.load_finance_data.cache_clear()
-    saved = next(row for row in app.load_finance_data()["sheets"]["Expenses"] if row.get("Title") == "New laptop")
+    saved = next(row for row in app.load_finance_data()["sheets"]["Expenses"] if row.get("Description") == "New laptop")
     stored_flags = json.loads(saved["Compliance Flags"])
     assert stored_flags == [{"key": "amount", "severity": "warning", "message": "Amounts over €1,000 may require capital allowances treatment."}]
     assert saved["Flags Acknowledged"] == "No"
@@ -2473,14 +2475,14 @@ def test_expense_with_no_flags_saves_with_empty_flags_list(workbook_copy):
 
     response = client.post(
         '/expenses/add',
-        data=_expense_add_payload(title="Ordinary software cost", category="Software and Subscriptions"),
+        data=_expense_add_payload(description="Ordinary software cost", category="Software and Subscriptions"),
         follow_redirects=True,
     )
     assert response.status_code == 200
     assert b'Expense entry added' in response.data
 
     app.load_finance_data.cache_clear()
-    saved = next(row for row in app.load_finance_data()["sheets"]["Expenses"] if row.get("Title") == "Ordinary software cost")
+    saved = next(row for row in app.load_finance_data()["sheets"]["Expenses"] if row.get("Description") == "Ordinary software cost")
     assert json.loads(saved["Compliance Flags"]) == []
     assert saved["Flags Acknowledged"] == "No"
 
@@ -2550,7 +2552,7 @@ def test_entertainment_expense_locks_deductibility_and_vat_reclaimable(workbook_
     response = client.post(
         '/expenses/add',
         data=_expense_add_payload(
-            title="Client dinner - locked fields",
+            description="Client dinner - locked fields",
             category="Entertainment",
             deductibility_status="Fully Deductible",  # attempt to override — must be ignored
             input_vat_reclaimable="Yes",  # attempt to override — must be ignored
@@ -2561,7 +2563,7 @@ def test_entertainment_expense_locks_deductibility_and_vat_reclaimable(workbook_
     assert b'Expense entry added' in response.data
 
     app.load_finance_data.cache_clear()
-    saved = next(row for row in app.load_finance_data()["sheets"]["Expenses"] if row.get("Title") == "Client dinner - locked fields")
+    saved = next(row for row in app.load_finance_data()["sheets"]["Expenses"] if row.get("Description") == "Client dinner - locked fields")
     assert saved["Deductibility Status"] == "Non-Deductible"
     assert saved["Input VAT Reclaimable"] == "No"
 
@@ -2574,7 +2576,7 @@ def test_home_office_expense_locks_partially_deductible(workbook_copy):
     response = client.post(
         '/expenses/add',
         data=_expense_add_payload(
-            title="Broadband share",
+            description="Broadband share",
             category="Home Office Expenses",
             deductibility_status="Fully Deductible",
         ),
@@ -2582,7 +2584,7 @@ def test_home_office_expense_locks_partially_deductible(workbook_copy):
     )
     assert response.status_code == 200
     app.load_finance_data.cache_clear()
-    saved = next(row for row in app.load_finance_data()["sheets"]["Expenses"] if row.get("Title") == "Broadband share")
+    saved = next(row for row in app.load_finance_data()["sheets"]["Expenses"] if row.get("Description") == "Broadband share")
     assert saved["Deductibility Status"] == "Partially Deductible"
 
 
@@ -2594,7 +2596,7 @@ def test_other_category_deductibility_is_editable(workbook_copy):
     response = client.post(
         '/expenses/add',
         data=_expense_add_payload(
-            title="Consulting invoice",
+            description="Consulting invoice",
             category="Professional Fees",
             deductibility_status="Partially Deductible",
         ),
@@ -2602,7 +2604,7 @@ def test_other_category_deductibility_is_editable(workbook_copy):
     )
     assert response.status_code == 200
     app.load_finance_data.cache_clear()
-    saved = next(row for row in app.load_finance_data()["sheets"]["Expenses"] if row.get("Title") == "Consulting invoice")
+    saved = next(row for row in app.load_finance_data()["sheets"]["Expenses"] if row.get("Description") == "Consulting invoice")
     assert saved["Deductibility Status"] == "Partially Deductible"
 
 
@@ -2635,7 +2637,7 @@ def test_existing_non_deductible_items_expense_gets_flagged_amber(workbook_copy)
     app._migrate_flag_retired_non_deductible_category()
 
     app.load_finance_data.cache_clear()
-    flagged = next(row for row in app.load_finance_data()["sheets"]["Expenses"] if row.get("Title") == "Legacy non-deductible item")
+    flagged = next(row for row in app.load_finance_data()["sheets"]["Expenses"] if row.get("Description") == "Legacy non-deductible item")
     flags = json.loads(flagged["Compliance Flags"])
     assert any(flag["key"] == "retired_category" and flag["severity"] == "warning" for flag in flags)
 
@@ -2647,7 +2649,7 @@ def test_saving_json_record_creates_local_backup(workbook_copy):
 
     client.post(
         '/expenses/add',
-        data=_expense_add_payload(title="Backup trigger expense", category="Software and Subscriptions"),
+        data=_expense_add_payload(description="Backup trigger expense", category="Software and Subscriptions"),
         follow_redirects=True,
     )
 
@@ -2655,7 +2657,7 @@ def test_saving_json_record_creates_local_backup(workbook_copy):
     backed_up_file = today_dir / app.EXPENSES_PATH.name
     assert backed_up_file.exists()
     backed_up_records = json.loads(backed_up_file.read_text(encoding="utf-8"))
-    assert any(row.get("Title") == "Backup trigger expense" for row in backed_up_records)
+    assert any(row.get("Description") == "Backup trigger expense" for row in backed_up_records)
 
     status = app._load_backup_status()
     assert status["local_ok"] is True
@@ -2688,11 +2690,11 @@ def test_restore_backup_restores_file_and_rejects_invalid_filename(workbook_copy
 
     client.post(
         '/expenses/add',
-        data=_expense_add_payload(title="Will be restored away", category="Software and Subscriptions"),
+        data=_expense_add_payload(description="Will be restored away", category="Software and Subscriptions"),
         follow_redirects=True,
     )
     app.load_finance_data.cache_clear()
-    assert any(row.get("Title") == "Will be restored away" for row in app.load_finance_data()["sheets"]["Expenses"])
+    assert any(row.get("Description") == "Will be restored away" for row in app.load_finance_data()["sheets"]["Expenses"])
 
     today_str = date.today().isoformat()
     backup_file = app.BACKUPS_DIR / today_str / app.EXPENSES_PATH.name
@@ -2717,7 +2719,7 @@ def test_restore_backup_restores_file_and_rejects_invalid_filename(workbook_copy
 
     app.load_finance_data.cache_clear()
     restored = app.load_finance_data()["sheets"]["Expenses"]
-    assert not any(row.get("Title") == "Will be restored away" for row in restored)
+    assert not any(row.get("Description") == "Will be restored away" for row in restored)
 
 
 def test_backups_view_lists_available_backup_dates(workbook_copy):
@@ -2727,7 +2729,7 @@ def test_backups_view_lists_available_backup_dates(workbook_copy):
 
     client.post(
         '/expenses/add',
-        data=_expense_add_payload(title="Listing check expense", category="Software and Subscriptions"),
+        data=_expense_add_payload(description="Listing check expense", category="Software and Subscriptions"),
         follow_redirects=True,
     )
 
@@ -2744,13 +2746,13 @@ def test_non_deductible_expense_has_zero_taxable_net(workbook_copy):
 
     response = client.post(
         '/expenses/add',
-        data=_expense_add_payload(title="Entertainment zero net", category="Entertainment"),
+        data=_expense_add_payload(description="Entertainment zero net", category="Entertainment"),
         follow_redirects=True,
     )
     assert response.status_code == 200
 
     app.load_finance_data.cache_clear()
-    saved = next(row for row in app.load_finance_data()["sheets"]["Expenses"] if row.get("Title") == "Entertainment zero net")
+    saved = next(row for row in app.load_finance_data()["sheets"]["Expenses"] if row.get("Description") == "Entertainment zero net")
     assert saved["Deductibility Status"] == "Non-Deductible"
     assert saved["Net Amount (€)"] == "0.00"
 
@@ -2763,7 +2765,7 @@ def test_manually_selected_non_deductible_expense_has_zero_taxable_net(workbook_
     response = client.post(
         '/expenses/add',
         data=_expense_add_payload(
-            title="Manually flagged non-deductible",
+            description="Manually flagged non-deductible",
             category="Professional Fees",
             deductibility_status="Non-Deductible",
         ),
@@ -2772,7 +2774,7 @@ def test_manually_selected_non_deductible_expense_has_zero_taxable_net(workbook_
     assert response.status_code == 200
 
     app.load_finance_data.cache_clear()
-    saved = next(row for row in app.load_finance_data()["sheets"]["Expenses"] if row.get("Title") == "Manually flagged non-deductible")
+    saved = next(row for row in app.load_finance_data()["sheets"]["Expenses"] if row.get("Description") == "Manually flagged non-deductible")
     assert saved["Deductibility Status"] == "Non-Deductible"
     assert saved["Net Amount (€)"] == "0.00"
 
@@ -2784,13 +2786,13 @@ def test_fully_deductible_expense_keeps_calculated_taxable_net(workbook_copy):
 
     response = client.post(
         '/expenses/add',
-        data=_expense_add_payload(title="Fully deductible net check", category="Software and Subscriptions", base_net_amount="80.00"),
+        data=_expense_add_payload(description="Fully deductible net check", category="Software and Subscriptions", base_net_amount="80.00"),
         follow_redirects=True,
     )
     assert response.status_code == 200
 
     app.load_finance_data.cache_clear()
-    saved = next(row for row in app.load_finance_data()["sheets"]["Expenses"] if row.get("Title") == "Fully deductible net check")
+    saved = next(row for row in app.load_finance_data()["sheets"]["Expenses"] if row.get("Description") == "Fully deductible net check")
     assert saved["Deductibility Status"] == "Fully Deductible"
     assert saved["Net Amount (€)"] == "80.00"
 
@@ -2879,7 +2881,7 @@ def test_pre_trading_expense_gets_pre_trading_phase_tag_and_amber_flag(workbook_
     response = client.post(
         '/expenses/add',
         data=_expense_add_payload(
-            title="Laptop before trading",
+            description="Laptop before trading",
             category="Equipment and Hardware",
             date="2026-02-15",
             base_net_amount="1500.00",
@@ -2891,7 +2893,7 @@ def test_pre_trading_expense_gets_pre_trading_phase_tag_and_amber_flag(workbook_
     assert response.status_code == 200
 
     app.load_finance_data.cache_clear()
-    saved = next(row for row in app.load_finance_data()["sheets"]["Expenses"] if row.get("Title") == "Laptop before trading")
+    saved = next(row for row in app.load_finance_data()["sheets"]["Expenses"] if row.get("Description") == "Laptop before trading")
     assert saved["Phase Tag"] == "Pre-Trading"
     flags = json.loads(saved["Compliance Flags"])
     assert any(flag["key"] == "pretrading_capex" and flag["severity"] == "warning" for flag in flags)
@@ -2911,12 +2913,12 @@ def test_expense_dated_after_trading_start_is_not_pre_trading(workbook_copy):
 
     client.post(
         '/expenses/add',
-        data=_expense_add_payload(title="After trading start", category="Software and Subscriptions", date="2026-07-01"),
+        data=_expense_add_payload(description="After trading start", category="Software and Subscriptions", date="2026-07-01"),
         follow_redirects=True,
     )
 
     app.load_finance_data.cache_clear()
-    saved = next(row for row in app.load_finance_data()["sheets"]["Expenses"] if row.get("Title") == "After trading start")
+    saved = next(row for row in app.load_finance_data()["sheets"]["Expenses"] if row.get("Description") == "After trading start")
     assert saved["Phase Tag"] != "Pre-Trading"
 
 
@@ -2935,7 +2937,6 @@ def test_expenses_page_phase_filter(workbook_copy):
     client.post(
         '/expenses/add',
         data=_expense_add_payload(
-            title="Pre-trading filter check",
             description="Pre-trading filter check description",
             category="Software and Subscriptions",
             date="2026-02-01",
@@ -2957,7 +2958,7 @@ def test_expense_receipt_file_upload_stores_filename_and_file(workbook_copy):
     app.load_finance_data.cache_clear()
     client = app.app.test_client()
 
-    data = _expense_add_payload(title="Receipt upload check", category="Software and Subscriptions")
+    data = _expense_add_payload(description="Receipt upload check", category="Software and Subscriptions")
     data['receipt_file'] = (BytesIO(b'%PDF-1.4 fake receipt content'), 'my receipt.pdf')
 
     response = client.post(
@@ -2969,7 +2970,7 @@ def test_expense_receipt_file_upload_stores_filename_and_file(workbook_copy):
     assert response.status_code == 200
 
     app.load_finance_data.cache_clear()
-    saved = next(row for row in app.load_finance_data()["sheets"]["Expenses"] if row.get("Title") == "Receipt upload check")
+    saved = next(row for row in app.load_finance_data()["sheets"]["Expenses"] if row.get("Description") == "Receipt upload check")
     filename = saved["Receipt Filename"]
     assert filename
     assert filename.endswith("my_receipt.pdf") or filename.endswith("my-receipt.pdf")
@@ -2982,7 +2983,7 @@ def test_expense_receipt_rejects_disallowed_extension(workbook_copy):
     app.load_finance_data.cache_clear()
     client = app.app.test_client()
 
-    data = _expense_add_payload(title="Bad receipt extension", category="Software and Subscriptions")
+    data = _expense_add_payload(description="Bad receipt extension", category="Software and Subscriptions")
     data['receipt_file'] = (BytesIO(b'not a real executable'), 'malware.exe')
 
     client.post(
@@ -2993,7 +2994,7 @@ def test_expense_receipt_rejects_disallowed_extension(workbook_copy):
     )
 
     app.load_finance_data.cache_clear()
-    saved = next(row for row in app.load_finance_data()["sheets"]["Expenses"] if row.get("Title") == "Bad receipt extension")
+    saved = next(row for row in app.load_finance_data()["sheets"]["Expenses"] if row.get("Description") == "Bad receipt extension")
     assert saved["Receipt Filename"] == ""
 
 
@@ -4537,13 +4538,13 @@ def test_expense_stores_supplier_id_alongside_supplier_name(workbook_copy):
 
     client.post(
         '/expenses/add',
-        data=_expense_add_payload(title="Supplier ID check", category="Software and Subscriptions", supplier="Supplier A"),
+        data=_expense_add_payload(description="Supplier ID check", category="Software and Subscriptions", supplier="Supplier A"),
         follow_redirects=True,
     )
 
     app.load_finance_data.cache_clear()
     expenses = app.load_finance_data()["sheets"]["Expenses"]
-    expense = next(row for row in expenses if row.get("Title") == "Supplier ID check")
+    expense = next(row for row in expenses if row.get("Description") == "Supplier ID check")
     assert expense["Supplier ID"] == supplier_a_id
 
 
@@ -4552,13 +4553,13 @@ def test_expense_one_off_payee_gets_no_supplier_id(workbook_copy):
     app.load_finance_data.cache_clear()
     client = app.app.test_client()
 
-    data = _expense_add_payload(title="One-off payee check", category="Software and Subscriptions", supplier="Totally New Payee")
+    data = _expense_add_payload(description="One-off payee check", category="Software and Subscriptions", supplier="Totally New Payee")
     data["one_off_payee"] = "Yes"
     client.post('/expenses/add', data=data, follow_redirects=True)
 
     app.load_finance_data.cache_clear()
     expenses = app.load_finance_data()["sheets"]["Expenses"]
-    expense = next(row for row in expenses if row.get("Title") == "One-off payee check")
+    expense = next(row for row in expenses if row.get("Description") == "One-off payee check")
     assert expense["Supplier ID"] == ""
 
 
@@ -4998,8 +4999,7 @@ def test_expense_ocr_audit_fields_saved_on_add(workbook_copy):
 
     payload = {
         "date": "2026-08-05",
-        "title": "Receipt-read expense",
-        "description": "Read from receipt",
+        "description": "Receipt-read expense",
         "supplier": "Supplier A",
         "supplier_vat_number": "IE1234567A",
         "receipt_reference": "REC-1",
@@ -5021,7 +5021,7 @@ def test_expense_ocr_audit_fields_saved_on_add(workbook_copy):
 
     app.load_finance_data.cache_clear()
     expenses = app.load_finance_data()["sheets"]["Expenses"]
-    saved = next(r for r in expenses if r.get("Title") == "Receipt-read expense")
+    saved = next(r for r in expenses if r.get("Description") == "Receipt-read expense")
     assert saved.get("OCR Processed") == "Yes"
     assert saved.get("OCR Confidence") == "92"
     assert saved.get("OCR Language") == "English"

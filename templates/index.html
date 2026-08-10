@@ -257,6 +257,30 @@
       .field input[type="number"] { font-variant-numeric: tabular-nums; }
       .field input[readonly] { background: var(--brand-bg-deep); color: var(--brand-dark-grey); cursor: not-allowed; }
       .field.field-total input[readonly] { color: var(--brand-gold); font-weight: 700; font-size: 16px; background: var(--brand-bg-light); border: 1px solid var(--brand-gold); }
+      .field.field-total-large input[readonly] { color: var(--brand-gold); font-weight: 700; font-size: 20px; background: var(--brand-bg-light); border: 1px solid var(--brand-gold); min-height: 52px; }
+      .form-section-heading {
+        font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+        color: var(--brand-steel); margin: 22px 0 12px;
+      }
+      .form-section-heading:first-child { margin-top: 0; }
+      .form-row { display: grid; grid-template-columns: repeat(var(--form-row-cols, 3), 1fr); gap: 16px; margin-bottom: 16px; align-items: start; }
+      .form-row-1 { --form-row-cols: 1; }
+      .form-row-2 { --form-row-cols: 2; }
+      .form-row-4 { --form-row-cols: 4; }
+      .form-row:last-child { margin-bottom: 0; }
+      @media (max-width: 640px) {
+        .form-row { grid-template-columns: 1fr; }
+      }
+      .additional-charges-toggle {
+        background: none; border: none; color: var(--brand-navy); font-weight: 700; font-size: 13px;
+        cursor: pointer; padding: 6px 0; display: inline-flex; align-items: center; gap: 6px; margin-bottom: 12px;
+      }
+      .additional-charges-toggle:hover { color: var(--brand-mid-navy); text-decoration: underline; }
+      .additional-charges-toggle .toggle-caret { transition: transform 150ms ease; display: inline-block; }
+      .additional-charges-toggle[aria-expanded="true"] .toggle-caret { transform: rotate(90deg); }
+      .additional-charges-body { display: none; }
+      .additional-charges-body.open { display: block; }
+      .form-actions-right { justify-content: flex-end; }
       .discount-input-group { display: flex; gap: 6px; align-items: center; }
       .discount-input-group input { min-height: 44px; }
       .discount-input-group .discount-type-select { flex: 0 0 62px; min-height: 44px; padding: 8px 22px 8px 8px; background-position: calc(100% - 12px) calc(50% - 2px), calc(100% - 8px) calc(50% - 2px); }
@@ -459,6 +483,7 @@
         cursor: pointer; background: var(--brand-bg-light); transition: border-color 150ms ease, background 150ms ease;
       }
       .receipt-dropzone:hover, .receipt-dropzone.drag-over { border-color: var(--brand-gold); background: rgba(176, 141, 87, 0.06); }
+      .receipt-dropzone-compact { padding: 12px 16px; }
       .receipt-dropzone-text { display: block; font-size: 13px; font-weight: 600; color: var(--brand-navy); }
       .receipt-dropzone-filename { display: block; margin-top: 6px; font-size: 12px; color: var(--brand-steel); }
       .ocr-status { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: 13px; color: var(--brand-steel); }
@@ -3006,14 +3031,32 @@
         </div>
         <form method="post" action="{% if editing_expense %}/expenses/update{% else %}/expenses/add{% endif %}" class="form-shell" enctype="multipart/form-data" novalidate>
           {% if editing_expense %}<input type="hidden" name="row_number" value="{{ editing_expense.get('__row_number') }}">{% endif %}
-          <div class="form-grid">
+          <div class="form-section-heading">Basic details</div>
+          <div class="form-row form-row-1">
             <div class="field required {% if validation_errors.get('date') %}has-error{% endif %}"><label for="expense_date">Date</label><input id="expense_date" type="date" name="date" value="{{ expense_form.get('date') if expense_form else (editing_expense.get('Date (Registered)') if editing_expense else '') }}">{% if validation_errors.get('date') %}<span class="field-error">{{ validation_errors.get('date') }}</span>{% endif %}</div>
-            <div class="field required {% if validation_errors.get('title') %}has-error{% endif %}"><label for="expense_title">Title</label><input id="expense_title" type="text" name="title" value="{{ expense_form.get('title') if expense_form else (editing_expense.get('Title') if editing_expense else '') }}" placeholder="Title">{% if validation_errors.get('title') %}<span class="field-error">{{ validation_errors.get('title') }}</span>{% endif %}</div>
-            <div class="field optional {% if validation_errors.get('description') %}has-error{% endif %}" style="grid-column: 1 / -1;"><label for="expense_description">Description</label><textarea id="expense_description" name="description" rows="4" placeholder="Description">{{ expense_form.get('description') if expense_form else (editing_expense.get('Description') if editing_expense else '') }}</textarea>{% if validation_errors.get('description') %}<span class="field-error">{{ validation_errors.get('description') }}</span>{% endif %}</div>
+          </div>
+          <div class="form-row form-row-1">
+            <div class="field required {% if validation_errors.get('description') %}has-error{% endif %}">
+              <label for="expense_description">Description</label>
+              <textarea id="expense_description" name="description" rows="4" placeholder="e.g. Adobe Creative Cloud subscription August 2026">{{ expense_form.get('description') if expense_form else (editing_expense.get('Description') if editing_expense else '') }}</textarea>
+              <span class="mini">Be specific — Revenue may query expenses without clear descriptions.</span>
+              {% if validation_errors.get('description') %}<span class="field-error">{{ validation_errors.get('description') }}</span>{% endif %}
+            </div>
+          </div>
+          <div class="form-row form-row-1">
             {{ supplier_search_field('expense', expense_form.get('supplier') if expense_form else (editing_expense.get('Supplier / Payee') if editing_expense else ''), (expense_form and expense_form.get('one_off_payee') == 'Yes'), record_id=(expense_form.get('supplier_id') if expense_form else (editing_expense.get('Supplier ID') if editing_expense else ''))) }}
-            <div class="field optional" style="grid-column: 1 / -1;">
-              <label for="expense_receipt_file">Receipt</label>
-              <div class="receipt-dropzone" id="expense_receipt_dropzone">
+          </div>
+          <div class="form-row form-row-3">
+            <div class="field required"><label for="expense_category">Category <span class="info-icon" id="expense_category_info" tabindex="0">ⓘ<div class="popover category-tooltip"></div></span></label><select id="expense_category" name="category"><option value="">Select category</option>{% for option in expense_categories %}<option value="{{ option }}" {% if (expense_form and expense_form.get('category') == option) or (not expense_form and editing_expense and editing_expense.get('Category') == option) %}selected{% endif %}>{{ option }}</option>{% endfor %}</select>
+            </div>
+            <div class="field optional {% if validation_errors.get('supplier_vat_number') %}has-error{% endif %}"><label for="expense_supplier_vat">Supplier VAT number</label><input id="expense_supplier_vat" type="text" name="supplier_vat_number" value="{{ expense_form.get('supplier_vat_number') if expense_form else (editing_expense.get('Supplier VAT Number') if editing_expense else '') }}" placeholder="IE1234567A">{% if validation_errors.get('supplier_vat_number') %}<span class="field-error">{{ validation_errors.get('supplier_vat_number') }}</span>{% endif %}</div>
+            <div class="field optional"><label for="expense_receipt_reference">Receipt / invoice ref</label><input id="expense_receipt_reference" type="text" name="receipt_reference" value="{{ expense_form.get('receipt_reference') if expense_form else (editing_expense.get('Receipt / Invoice Ref') if editing_expense else '') }}" placeholder="INV-12345"></div>
+          </div>
+
+          <div class="form-section-heading">Receipt upload</div>
+          <div class="form-row form-row-1">
+            <div class="field optional">
+              <div class="receipt-dropzone receipt-dropzone-compact" id="expense_receipt_dropzone">
                 <input type="file" id="expense_receipt_file" name="receipt_file" accept="image/*,.pdf" style="display:none;">
                 <input type="file" id="expense_receipt_camera" accept="image/*" capture="environment" style="display:none;">
                 <span class="receipt-dropzone-text">Drag receipt here or click to upload</span>
@@ -3033,65 +3076,93 @@
               <input type="hidden" id="expense_ocr_language" name="ocr_language" value="{{ editing_expense.get('OCR Language') if editing_expense else '' }}">
               <input type="hidden" id="expense_ocr_raw_response" name="ocr_raw_response" value="{{ editing_expense.get('OCR Raw Response') if editing_expense else '' }}">
             </div>
-            <div class="field optional {% if validation_errors.get('supplier_vat_number') %}has-error{% endif %}"><label for="expense_supplier_vat">Supplier VAT number</label><input id="expense_supplier_vat" type="text" name="supplier_vat_number" value="{{ expense_form.get('supplier_vat_number') if expense_form else (editing_expense.get('Supplier VAT Number') if editing_expense else '') }}" placeholder="IE1234567A">{% if validation_errors.get('supplier_vat_number') %}<span class="field-error">{{ validation_errors.get('supplier_vat_number') }}</span>{% endif %}</div>
-            <div class="field optional"><label for="expense_receipt_reference">Receipt / invoice ref</label><input id="expense_receipt_reference" type="text" name="receipt_reference" value="{{ expense_form.get('receipt_reference') if expense_form else (editing_expense.get('Receipt / Invoice Ref') if editing_expense else '') }}" placeholder="INV-12345"></div>
-            <div class="field required"><label for="expense_category">Category <span class="info-icon" id="expense_category_info" tabindex="0">ⓘ<div class="popover category-tooltip"></div></span></label><select id="expense_category" name="category"><option value="">Select category</option>{% for option in expense_categories %}<option value="{{ option }}" {% if (expense_form and expense_form.get('category') == option) or (not expense_form and editing_expense and editing_expense.get('Category') == option) %}selected{% endif %}>{{ option }}</option>{% endfor %}</select>
-              <div class="compliance-panel" id="expense_category_panel" style="display:none;"></div>
-            </div>
-            <div class="field optional {% if validation_errors.get('base_net_amount') %}has-error{% endif %}"><label for="expense_base_net">Base net amount</label><input id="expense_base_net" type="number" step="0.01" name="base_net_amount" value="{{ expense_form.get('base_net_amount') if expense_form else (editing_expense.get('Base Net Amount (€)') if editing_expense and editing_expense.get('Base Net Amount (€)') else (editing_expense.get('Net Amount (€)') if editing_expense else '')) }}" placeholder="Base net amount">{% if validation_errors.get('base_net_amount') %}<span class="field-error">{{ validation_errors.get('base_net_amount') }}</span>{% endif %}</div>
-            <div class="field optional {% if validation_errors.get('delivery_amount') %}has-error{% endif %}"><label for="expense_delivery">Delivery</label><input id="expense_delivery" type="number" step="0.01" name="delivery_amount" value="{{ expense_form.get('delivery_amount') if expense_form else (editing_expense.get('Delivery (€)') if editing_expense else '') }}" placeholder="0.00">{% if validation_errors.get('delivery_amount') %}<span class="field-error">{{ validation_errors.get('delivery_amount') }}</span>{% endif %}</div>
-            <div class="field optional {% if validation_errors.get('fees_amount') %}has-error{% endif %}"><label for="expense_fees">Fees</label><input id="expense_fees" type="number" step="0.01" name="fees_amount" value="{{ expense_form.get('fees_amount') if expense_form else (editing_expense.get('Fees (€)') if editing_expense else '') }}" placeholder="0.00">{% if validation_errors.get('fees_amount') %}<span class="field-error">{{ validation_errors.get('fees_amount') }}</span>{% endif %}</div>
-            <div class="field optional {% if validation_errors.get('other_charges_amount') %}has-error{% endif %}"><label for="expense_other_charges">Other charges</label><input id="expense_other_charges" type="number" step="0.01" name="other_charges_amount" value="{{ expense_form.get('other_charges_amount') if expense_form else (editing_expense.get('Other Charges (€)') if editing_expense else '') }}" placeholder="0.00">{% if validation_errors.get('other_charges_amount') %}<span class="field-error">{{ validation_errors.get('other_charges_amount') }}</span>{% endif %}</div>
-            {% set expense_discount_type_value = expense_form.get('discount_type') if expense_form else (editing_expense.get('Discount Type') if editing_expense else '€') %}
-            <div class="field optional discount-field {% if validation_errors.get('discount_amount') %}has-error{% endif %}">
-              <label for="expense_discount_value">Discount</label>
-              <div class="discount-input-group">
-                <input id="expense_discount_value" type="number" step="0.01" name="discount_value" value="{{ expense_form.get('discount_value') if expense_form else (editing_expense.get('Discount Value') if editing_expense else '') }}" placeholder="0.00">
-                <select id="expense_discount_type" name="discount_type" class="discount-type-select">
-                  <option value="€" {% if expense_discount_type_value != '%' %}selected{% endif %}>€</option>
-                  <option value="%" {% if expense_discount_type_value == '%' %}selected{% endif %}>%</option>
-                </select>
-                <input id="expense_discount" type="text" readonly class="discount-computed" value="{{ editing_expense.get('Discount (€)') if editing_expense else '' }}" placeholder="€0.00">
-              </div>
-              {% if validation_errors.get('discount_amount') %}<span class="field-error">{{ validation_errors.get('discount_amount') }}</span>{% endif %}
-            </div>
-            <div class="field required {% if validation_errors.get('net_amount') %}has-error{% endif %}"><label for="expense_net">Taxable net (calculated)</label><input id="expense_net" type="number" step="0.01" name="net_amount" value="{{ expense_form.get('net_amount') if expense_form else (editing_expense.get('Net Amount (€)') if editing_expense else '') }}" placeholder="Taxable net" readonly>{% if validation_errors.get('net_amount') %}<span class="field-error">{{ validation_errors.get('net_amount') }}</span>{% endif %}
+          </div>
+
+          <div class="compliance-panel" id="expense_category_panel" style="display:none;"></div>
+
+          <div class="form-section-heading">Amounts</div>
+          <div class="form-row form-row-3">
+            <div class="field optional {% if validation_errors.get('base_net_amount') %}has-error{% endif %}"><label for="expense_base_net">Base net amount</label><input id="expense_base_net" type="number" step="0.01" name="base_net_amount" value="{{ expense_form.get('base_net_amount') if expense_form else (editing_expense.get('Base Net Amount (€)') if editing_expense and editing_expense.get('Base Net Amount (€)') else (editing_expense.get('Net Amount (€)') if editing_expense else '')) }}" placeholder="Base net amount">{% if validation_errors.get('base_net_amount') %}<span class="field-error">{{ validation_errors.get('base_net_amount') }}</span>{% endif %}{% if validation_errors.get('net_amount') %}<span class="field-error">{{ validation_errors.get('net_amount') }}</span>{% endif %}
               <span class="taxable-net-note" id="expense_net_nondeductible_note" style="display:none;">Non-deductible — excluded from tax calculation.</span>
               <div class="compliance-panel" id="expense_amount_panel" style="display:none;"></div>
             </div>
-            <div class="field optional field-total {% if validation_errors.get('total_amount') %}has-error{% endif %}"><label for="expense_total">Total amount (calculated)</label><input id="expense_total" type="number" step="0.01" name="total_amount" value="{{ expense_form.get('total_amount') if expense_form else (editing_expense.get('Total (€)') if editing_expense else '') }}" placeholder="Total amount" readonly>{% if validation_errors.get('total_amount') %}<span class="field-error">{{ validation_errors.get('total_amount') }}</span>{% endif %}</div>
             <div class="field optional"><label for="expense_vat_rate">VAT rate</label><select id="expense_vat_rate" name="vat_rate">{% for option in vat_rate_options %}<option value="{{ option }}" {% if (expense_form and expense_form.get('vat_rate') == option) or (not expense_form and editing_expense and editing_expense.get('VAT Rate') == option) or (not expense_form and not editing_expense and option == '23%') %}selected{% endif %}>{{ option }}</option>{% endfor %}</select>
               <div class="compliance-panel" id="expense_vat_panel" style="display:none;"></div>
             </div>
             <div class="field optional"><label for="expense_vat_amount">VAT amount (calculated)</label><input id="expense_vat_amount" type="number" step="0.01" name="vat_amount" value="{{ expense_form.get('vat_amount') if expense_form else (editing_expense.get('VAT Amount (€)') if editing_expense else '') }}" placeholder="VAT amount" readonly>
-              {% if not vat_registered %}<span class="mini" style="display:block;">VAT paid to suppliers — recorded for your records, not reclaimable while unregistered.</span>{% endif %}
+              {% if not vat_registered %}<span class="mini" style="display:block;">Paid to suppliers — not reclaimable while unregistered.</span>{% endif %}
             </div>
-            <div class="field optional"><label for="expense_vat_treatment">VAT treatment</label><select id="expense_vat_treatment" name="vat_treatment">{% for option in vat_treatment_options %}<option value="{{ option.value }}" {% if (expense_form and expense_form.get('vat_treatment') == option.value) or (not expense_form and editing_expense and editing_expense.get('VAT Treatment') == option.value) or (not expense_form and not editing_expense and option.value == 'standard') %}selected{% endif %}>{{ option.label }}</option>{% endfor %}</select></div>
-            <div class="field optional"><label for="expense_supply_type">Supply type</label><select id="expense_supply_type" name="supply_type">{% for option in supply_type_options %}<option value="{{ option.value }}" {% if (expense_form and expense_form.get('supply_type') == option.value) or (not expense_form and editing_expense and editing_expense.get('Supply Type') == option.value) or (not expense_form and not editing_expense and option.value == 'services') %}selected{% endif %}>{{ option.label }}</option>{% endfor %}</select></div>
-            <div class="field optional"><label for="expense_input_vat_reclaimable">Input VAT reclaimable</label><select id="expense_input_vat_reclaimable" name="input_vat_reclaimable">{% for option in expense_input_vat_options %}<option value="{{ option }}" {% if (expense_form and expense_form.get('input_vat_reclaimable') == option) or (not expense_form and editing_expense and editing_expense.get('Input VAT Reclaimable') == option) or (not expense_form and not editing_expense and option == 'Yes') %}selected{% endif %}>{{ option }}</option>{% endfor %}</select>
-              <span class="mini field-lock-hint" id="expense_input_vat_lock_hint" style="display:none;">Locked to No for Entertainment.</span>
-            </div>
-            <div class="field optional"><label for="expense_deductibility_status">Deductibility status</label><select id="expense_deductibility_status" name="deductibility_status">{% for option in expense_deductibility_options %}<option value="{{ option }}" {% if (expense_form and expense_form.get('deductibility_status') == option) or (not expense_form and editing_expense and editing_expense.get('Deductibility Status') == option) %}selected{% endif %}>{{ option }}</option>{% endfor %}</select>
+          </div>
+          <div class="form-row form-row-2">
+            <div class="field optional field-total field-total-large {% if validation_errors.get('total_amount') %}has-error{% endif %}"><label for="expense_total">Total amount (calculated)</label><input id="expense_total" type="number" step="0.01" name="total_amount" value="{{ expense_form.get('total_amount') if expense_form else (editing_expense.get('Total (€)') if editing_expense else '') }}" placeholder="Total amount" readonly>{% if validation_errors.get('total_amount') %}<span class="field-error">{{ validation_errors.get('total_amount') }}</span>{% endif %}</div>
+            <div class="field optional">
+              <label for="expense_deductibility_status">Deductibility status</label>
+              <select id="expense_deductibility_status" name="deductibility_status">{% for option in expense_deductibility_options %}<option value="{{ option }}" {% if (expense_form and expense_form.get('deductibility_status') == option) or (not expense_form and editing_expense and editing_expense.get('Deductibility Status') == option) %}selected{% endif %}>{{ option }}</option>{% endfor %}</select>
               <span class="field-locked-badge" id="expense_deductibility_badge" style="display:none;"></span>
               <span class="mini field-lock-hint" id="expense_deductibility_lock_hint" style="display:none;">Set automatically by category.</span>
             </div>
-            <div class="field optional"><label for="expense_capital_flag">Capital expenditure flag</label><select id="expense_capital_flag" name="capital_expenditure_flag">{% for option in yes_no_options %}<option value="{{ option }}" {% if (expense_form and expense_form.get('capital_expenditure_flag') == option) or (not expense_form and editing_expense and editing_expense.get('Capital Expenditure Flag') == option) %}selected{% endif %}>{{ option }}</option>{% endfor %}</select></div>
-            <div class="field optional {% if validation_errors.get('receipt_attached') %}has-error{% endif %}"><label for="expense_receipt_attached">Receipt attached</label><select id="expense_receipt_attached" name="receipt_attached">{% for option in yes_no_options %}<option value="{{ option }}" {% if (expense_form and expense_form.get('receipt_attached') == option) or (not expense_form and editing_expense and editing_expense.get('Receipt Attached') == option) or (not expense_form and not editing_expense and option == 'No') %}selected{% endif %}>{{ option }}</option>{% endfor %}</select>{% if validation_errors.get('receipt_attached') %}<span class="field-error">{{ validation_errors.get('receipt_attached') }}</span>{% endif %}
-              <div class="compliance-panel" id="expense_receipt_panel" style="display:none;"></div>
+          </div>
+          <input type="hidden" id="expense_net" name="net_amount" value="{{ expense_form.get('net_amount') if expense_form else (editing_expense.get('Net Amount (€)') if editing_expense else '') }}">
+
+          <button type="button" class="additional-charges-toggle" id="expense_additional_charges_toggle" aria-expanded="false" aria-controls="expense_additional_charges_body">
+            <span class="toggle-caret">▸</span> Add charges (delivery, fees, other charges, discount)
+          </button>
+          <div class="additional-charges-body" id="expense_additional_charges_body">
+            <div class="form-row form-row-4">
+              <div class="field optional {% if validation_errors.get('delivery_amount') %}has-error{% endif %}"><label for="expense_delivery">Delivery</label><input id="expense_delivery" type="number" step="0.01" name="delivery_amount" value="{{ expense_form.get('delivery_amount') if expense_form else (editing_expense.get('Delivery (€)') if editing_expense else '') }}" placeholder="0.00">{% if validation_errors.get('delivery_amount') %}<span class="field-error">{{ validation_errors.get('delivery_amount') }}</span>{% endif %}</div>
+              <div class="field optional {% if validation_errors.get('fees_amount') %}has-error{% endif %}"><label for="expense_fees">Fees</label><input id="expense_fees" type="number" step="0.01" name="fees_amount" value="{{ expense_form.get('fees_amount') if expense_form else (editing_expense.get('Fees (€)') if editing_expense else '') }}" placeholder="0.00">{% if validation_errors.get('fees_amount') %}<span class="field-error">{{ validation_errors.get('fees_amount') }}</span>{% endif %}</div>
+              <div class="field optional {% if validation_errors.get('other_charges_amount') %}has-error{% endif %}"><label for="expense_other_charges">Other charges</label><input id="expense_other_charges" type="number" step="0.01" name="other_charges_amount" value="{{ expense_form.get('other_charges_amount') if expense_form else (editing_expense.get('Other Charges (€)') if editing_expense else '') }}" placeholder="0.00">{% if validation_errors.get('other_charges_amount') %}<span class="field-error">{{ validation_errors.get('other_charges_amount') }}</span>{% endif %}</div>
+              {% set expense_discount_type_value = expense_form.get('discount_type') if expense_form else (editing_expense.get('Discount Type') if editing_expense else '€') %}
+              <div class="field optional discount-field {% if validation_errors.get('discount_amount') %}has-error{% endif %}">
+                <label for="expense_discount_value">Discount</label>
+                <div class="discount-input-group">
+                  <input id="expense_discount_value" type="number" step="0.01" name="discount_value" value="{{ expense_form.get('discount_value') if expense_form else (editing_expense.get('Discount Value') if editing_expense else '') }}" placeholder="0.00">
+                  <select id="expense_discount_type" name="discount_type" class="discount-type-select">
+                    <option value="€" {% if expense_discount_type_value != '%' %}selected{% endif %}>€</option>
+                    <option value="%" {% if expense_discount_type_value == '%' %}selected{% endif %}>%</option>
+                  </select>
+                  <input id="expense_discount" type="text" readonly class="discount-computed" value="{{ editing_expense.get('Discount (€)') if editing_expense else '' }}" placeholder="€0.00">
+                </div>
+                {% if validation_errors.get('discount_amount') %}<span class="field-error">{{ validation_errors.get('discount_amount') }}</span>{% endif %}
+              </div>
             </div>
-            <div class="field optional {% if validation_errors.get('bank_reconciliation') %}has-error{% endif %}"><label for="expense_bank_reconciliation">Bank reconciliation</label><select id="expense_bank_reconciliation" name="bank_reconciliation">{% for option in reconciliation_options %}<option value="{{ option }}" {% if (expense_form and expense_form.get('bank_reconciliation') == option) or (not expense_form and editing_expense and editing_expense.get('Bank Reconciliation') == option) or (not expense_form and not editing_expense and option == 'Unreconciled') %}selected{% endif %}>{{ option }}</option>{% endfor %}</select>{% if validation_errors.get('bank_reconciliation') %}<span class="field-error">{{ validation_errors.get('bank_reconciliation') }}</span>{% endif %}</div>
+            <div class="form-row form-row-2">
+              <div class="field optional"><label for="expense_vat_treatment">VAT treatment</label><select id="expense_vat_treatment" name="vat_treatment">{% for option in vat_treatment_options %}<option value="{{ option.value }}" {% if (expense_form and expense_form.get('vat_treatment') == option.value) or (not expense_form and editing_expense and editing_expense.get('VAT Treatment') == option.value) or (not expense_form and not editing_expense and option.value == 'standard') %}selected{% endif %}>{{ option.label }}</option>{% endfor %}</select></div>
+              <div class="field optional"><label for="expense_supply_type">Supply type</label><select id="expense_supply_type" name="supply_type">{% for option in supply_type_options %}<option value="{{ option.value }}" {% if (expense_form and expense_form.get('supply_type') == option.value) or (not expense_form and editing_expense and editing_expense.get('Supply Type') == option.value) or (not expense_form and not editing_expense and option.value == 'services') %}selected{% endif %}>{{ option.label }}</option>{% endfor %}</select></div>
+            </div>
+          </div>
+
+          <div class="calc-summary" id="expense_calc_summary">Net <span class="calc-summary-value" id="expense_summary_net">€0.00</span> + VAT <span class="calc-summary-value" id="expense_summary_vat">€0.00</span> = Total <span class="calc-summary-value calc-summary-total" id="expense_summary_total">€0.00</span></div>
+
+          <div class="form-section-heading">Classification</div>
+          <div class="form-row form-row-3">
             {% set expense_status_value = expense_form.get('status') if expense_form else (editing_expense.get('Status') if editing_expense else 'Pending') %}
             <div class="field required {% if validation_errors.get('status') %}has-error{% endif %}"><label for="expense_status">Status</label><select id="expense_status" name="status">{% for option in expense_status_options %}<option value="{{ option }}" {% if expense_status_value == option %}selected{% endif %}>{{ option }}</option>{% endfor %}{% if expense_status_value and expense_status_value not in expense_status_options %}<option value="{{ expense_status_value }}" selected>{{ expense_status_value }} (legacy)</option>{% endif %}</select>{% if validation_errors.get('status') %}<span class="field-error">{{ validation_errors.get('status') }}</span>{% endif %}</div>
             <div class="field required"><label for="expense_payment_method">Payment method</label><select id="expense_payment_method" name="payment_method"><option value="">Select payment method</option>{% for option in expense_payment_methods %}<option value="{{ option }}" {% if (expense_form and expense_form.get('payment_method') == option) or (not expense_form and editing_expense and editing_expense.get('Payment Method') == option) %}selected{% endif %}>{{ option }}</option>{% endfor %}</select>
               <div class="compliance-panel" id="expense_cash_panel" style="display:none;"></div>
             </div>
-            <div class="field optional" style="grid-column: 1 / -1;"><label for="expense_notes">Notes</label><textarea id="expense_notes" name="notes" rows="3" placeholder="Compliance or audit notes">{{ expense_form.get('notes') if expense_form else (editing_expense.get('Notes') if editing_expense else '') }}</textarea></div>
+            <div class="field optional {% if validation_errors.get('bank_reconciliation') %}has-error{% endif %}"><label for="expense_bank_reconciliation">Bank reconciliation</label><select id="expense_bank_reconciliation" name="bank_reconciliation">{% for option in reconciliation_options %}<option value="{{ option }}" {% if (expense_form and expense_form.get('bank_reconciliation') == option) or (not expense_form and editing_expense and editing_expense.get('Bank Reconciliation') == option) or (not expense_form and not editing_expense and option == 'Unreconciled') %}selected{% endif %}>{{ option }}</option>{% endfor %}</select>{% if validation_errors.get('bank_reconciliation') %}<span class="field-error">{{ validation_errors.get('bank_reconciliation') }}</span>{% endif %}</div>
           </div>
-          <div class="calc-summary" id="expense_calc_summary">Net <span class="calc-summary-value" id="expense_summary_net">€0.00</span> + VAT <span class="calc-summary-value" id="expense_summary_vat">€0.00</span> = Total <span class="calc-summary-value calc-summary-total" id="expense_summary_total">€0.00</span></div>
+          <div class="form-row form-row-3">
+            <div class="field optional {% if validation_errors.get('receipt_attached') %}has-error{% endif %}"><label for="expense_receipt_attached">Receipt attached</label><select id="expense_receipt_attached" name="receipt_attached">{% for option in yes_no_options %}<option value="{{ option }}" {% if (expense_form and expense_form.get('receipt_attached') == option) or (not expense_form and editing_expense and editing_expense.get('Receipt Attached') == option) or (not expense_form and not editing_expense and option == 'No') %}selected{% endif %}>{{ option }}</option>{% endfor %}</select>{% if validation_errors.get('receipt_attached') %}<span class="field-error">{{ validation_errors.get('receipt_attached') }}</span>{% endif %}
+              <div class="compliance-panel" id="expense_receipt_panel" style="display:none;"></div>
+            </div>
+            <div class="field optional"><label for="expense_capital_flag">Capital expenditure flag</label><select id="expense_capital_flag" name="capital_expenditure_flag">{% for option in yes_no_options %}<option value="{{ option }}" {% if (expense_form and expense_form.get('capital_expenditure_flag') == option) or (not expense_form and editing_expense and editing_expense.get('Capital Expenditure Flag') == option) %}selected{% endif %}>{{ option }}</option>{% endfor %}</select></div>
+            <div class="field optional"><label for="expense_input_vat_reclaimable">Input VAT reclaimable</label><select id="expense_input_vat_reclaimable" name="input_vat_reclaimable">{% for option in expense_input_vat_options %}<option value="{{ option }}" {% if (expense_form and expense_form.get('input_vat_reclaimable') == option) or (not expense_form and editing_expense and editing_expense.get('Input VAT Reclaimable') == option) or (not expense_form and not editing_expense and option == 'Yes') %}selected{% endif %}>{{ option }}</option>{% endfor %}</select>
+              <span class="mini field-lock-hint" id="expense_input_vat_lock_hint" style="display:none;">Locked to No for Entertainment.</span>
+            </div>
+          </div>
+
+          <div class="form-section-heading">Notes</div>
+          <div class="form-row form-row-1">
+            <div class="field optional"><label for="expense_notes">Notes</label><textarea id="expense_notes" name="notes" rows="3" placeholder="Compliance or audit notes">{{ expense_form.get('notes') if expense_form else (editing_expense.get('Notes') if editing_expense else '') }}</textarea></div>
+          </div>
+
           <input type="hidden" name="compliance_flags_json" id="expense_compliance_flags_json" value="[]">
           <input type="hidden" name="flags_acknowledged" id="expense_flags_acknowledged" value="0">
           <input type="hidden" name="flags_acknowledged_at" id="expense_flags_acknowledged_at" value="">
-          <div class="form-actions">
+          <div class="form-actions form-actions-right">
+            <button type="button" class="btn-secondary form-cancel-btn">Cancel</button>
             <button type="button" class="btn-secondary" id="expense_clear_ocr_btn" style="display:none;">Clear OCR</button>
             <button type="submit">{% if editing_expense %}Update expense{% else %}Save expense{% endif %}</button>
           </div>
@@ -5299,7 +5370,7 @@
         }
 
         var EXPENSE_CLEARABLE_FIELD_IDS = [
-          "expense_date", "expense_title", "expense_description", "expense_supplier",
+          "expense_date", "expense_description", "expense_supplier",
           "expense_supplier_vat", "expense_receipt_reference", "expense_category",
           "expense_base_net", "expense_delivery", "expense_fees", "expense_other_charges",
           "expense_discount_value", "expense_vat_rate", "expense_notes",
@@ -5776,18 +5847,21 @@
 
         document.querySelectorAll("form.form-shell").forEach(function (form) {
           var actions = form.querySelector(".form-actions");
-          if (!actions || actions.querySelector(".form-cancel-btn")) { return; }
-          var submitBtn = actions.querySelector("button[type='submit']");
+          if (!actions) { return; }
           var initialSnapshot = serializeForm(form);
 
-          var cancelBtn = document.createElement("button");
-          cancelBtn.type = "button";
-          cancelBtn.className = "btn-secondary form-cancel-btn";
-          cancelBtn.textContent = "Cancel";
-          if (submitBtn) {
-            actions.insertBefore(cancelBtn, submitBtn);
-          } else {
-            actions.appendChild(cancelBtn);
+          var cancelBtn = actions.querySelector(".form-cancel-btn");
+          if (!cancelBtn) {
+            var submitBtn = actions.querySelector("button[type='submit']");
+            cancelBtn = document.createElement("button");
+            cancelBtn.type = "button";
+            cancelBtn.className = "btn-secondary form-cancel-btn";
+            cancelBtn.textContent = "Cancel";
+            if (submitBtn) {
+              actions.insertBefore(cancelBtn, submitBtn);
+            } else {
+              actions.appendChild(cancelBtn);
+            }
           }
 
           cancelBtn.addEventListener("click", function () {
@@ -5798,6 +5872,25 @@
             window.location.href = window.location.pathname;
           });
         });
+
+        var additionalChargesToggle = document.getElementById("expense_additional_charges_toggle");
+        var additionalChargesBody = document.getElementById("expense_additional_charges_body");
+        if (additionalChargesToggle && additionalChargesBody) {
+          function setAdditionalChargesOpen(open) {
+            additionalChargesBody.classList.toggle("open", open);
+            additionalChargesToggle.setAttribute("aria-expanded", open ? "true" : "false");
+          }
+          additionalChargesToggle.addEventListener("click", function () {
+            setAdditionalChargesOpen(!additionalChargesBody.classList.contains("open"));
+          });
+          var additionalChargeFieldIds = ["expense_delivery", "expense_fees", "expense_other_charges", "expense_discount_value"];
+          var hasAdditionalChargeValue = additionalChargeFieldIds.some(function (fieldId) {
+            var field = document.getElementById(fieldId);
+            return field && parseFloat(field.value) > 0;
+          });
+          if (hasAdditionalChargeValue) { setAdditionalChargesOpen(true); }
+          window.expandExpenseAdditionalCharges = function () { setAdditionalChargesOpen(true); };
+        }
       })();
     </script>
   </body>

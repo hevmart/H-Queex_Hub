@@ -1106,7 +1106,7 @@ def _build_reconciliation_rows(data: dict[str, Any], payroll_entries: list[dict[
                 "payroll_id": "",
                 "date": transaction_date.isoformat() if transaction_date else str(expense.get("Date (Registered)") or ""),
                 "counterparty": str(expense.get("Supplier / Payee") or ""),
-                "reference": str(expense.get("Receipt / Invoice Ref") or expense.get("Title") or ""),
+                "reference": str(expense.get("Receipt / Invoice Ref") or expense.get("Description") or expense.get("Title") or ""),
                 "amount_eur": amount,
                 "status": status,
                 "is_paid": is_paid,
@@ -3262,9 +3262,7 @@ def _validate_income_payload(payload: dict[str, Any]) -> dict[str, str]:
 def _validate_expense_payload(payload: dict[str, Any]) -> dict[str, str]:
     errors: dict[str, str] = {}
     _validate_required_text(payload.get("Date (Registered)"), "date", "Expense date", errors)
-    if not str(payload.get("Title") or "").strip() and not str(payload.get("Description") or "").strip():
-        errors["title"] = "Expense title or description is required"
-        errors["description"] = "Expense title or description is required"
+    _validate_required_text(payload.get("Description"), "description", "Expense description", errors)
     _validate_positive_amount(payload.get("Net Amount (€)"), "net_amount", "Expense net amount", errors, allow_zero=True)
     _validate_positive_amount(payload.get("Total (€)"), "total_amount", "Expense total amount", errors)
     _validate_positive_amount(payload.get("Base Net Amount (€)"), "base_net_amount", "Expense base net amount", errors, allow_zero=True)
@@ -5284,11 +5282,36 @@ def _build_page_context(
     }
 
 
+def _migrate_expense_title_into_description(rows: list[dict[str, Any]]) -> bool:
+    """Idempotent: folds the retired Title field into Description, then blanks Title.
+    A no-op once every row's Title has already been merged in."""
+    changed = False
+    for row in rows:
+        title = str(row.get("Title") or "").strip()
+        description = str(row.get("Description") or "").strip()
+        if not title:
+            continue
+        if title == description:
+            merged = description
+        elif description:
+            merged = f"{title} — {description}"
+        else:
+            merged = title
+        if merged != row.get("Description"):
+            row["Description"] = merged
+        row["Title"] = ""
+        changed = True
+    return changed
+
+
 @lru_cache(maxsize=1)
 def load_finance_data() -> dict[str, Any]:
     sheets: dict[str, Any] = {}
     for sheet_name in ["Income", "Expenses", "Invoices", "Clients", "Suppliers"]:
         sheets[sheet_name] = _load_sheet_rows_with_row_numbers(sheet_name)
+
+    if _migrate_expense_title_into_description(sheets["Expenses"]):
+        _save_sheet_records_raw("Expenses", [{k: v for k, v in row.items() if not k.startswith("__")} for row in sheets["Expenses"]])
 
     for row in sheets["Expenses"]:
         if not row.get("Total (€)"):
@@ -7939,7 +7962,7 @@ def add_expense():
     is_one_off_payee = request.form.get("one_off_payee") == "Yes"
     payload = {
         "Date (Registered)": request.form.get("date", ""),
-        "Title": request.form.get("title", ""),
+        "Title": "",
         "Description": request.form.get("description", ""),
         "Supplier / Payee": supplier_name,
         "Supplier ID": _resolve_supplier_id_from_form(name=supplier_name, is_one_off=is_one_off_payee),
@@ -8006,7 +8029,6 @@ def add_expense():
             "expenses_view",
             _build_workbook_form_data(payload, {
                 "date": "Date (Registered)",
-                "title": "Title",
                 "description": "Description",
                 "supplier": "Supplier / Payee",
                 "supplier_vat_number": "Supplier VAT Number",
@@ -8055,7 +8077,7 @@ def update_expense():
     is_one_off_payee = request.form.get("one_off_payee") == "Yes"
     payload = {
         "Date (Registered)": request.form.get("date", ""),
-        "Title": request.form.get("title", ""),
+        "Title": "",
         "Description": request.form.get("description", ""),
         "Supplier / Payee": supplier_name,
         "Supplier ID": _resolve_supplier_id_from_form(name=supplier_name, is_one_off=is_one_off_payee),
@@ -8122,7 +8144,6 @@ def update_expense():
             "expenses_view",
             _build_workbook_form_data(payload, {
                 "date": "Date (Registered)",
-                "title": "Title",
                 "description": "Description",
                 "supplier": "Supplier / Payee",
                 "supplier_vat_number": "Supplier VAT Number",

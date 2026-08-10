@@ -1,8 +1,8 @@
 [
   {
     "Date (Registered)": "2026-08-08",
-    "Title": "HQ sample expense",
-    "Description": "HQ sample expense description",
+    "Title": "",
+    "Description": "HQ sample expense \u2014 HQ sample expense description",
     "Supplier / Payee": "HQ Supplier",
     "Supplier VAT Number": "IE1234567T",
     "Receipt / Invoice Ref": "HQ-EXP-001",
@@ -32,8 +32,8 @@
   },
   {
     "Date (Registered)": "2026-08-08",
-    "Title": "HQ expense via form",
-    "Description": "HQ expense form",
+    "Title": "",
+    "Description": "HQ expense via form \u2014 HQ expense form",
     "Supplier / Payee": "HQ Supplier",
     "Supplier VAT Number": "",
     "Receipt / Invoice Ref": "",
@@ -67,8 +67,8 @@
   },
   {
     "Date (Registered)": "2026-08-02",
-    "Title": "Entertainment ",
-    "Description": "H-Test",
+    "Title": "",
+    "Description": "Entertainment \u2014 H-Test",
     "Supplier / Payee": "",
     "Supplier VAT Number": "",
     "Receipt / Invoice Ref": "",
@@ -101,8 +101,8 @@
   },
   {
     "Date (Registered)": "2026-08-07",
-    "Title": "Live entertainment check",
-    "Description": "",
+    "Title": "",
+    "Description": "Live entertainment check",
     "Supplier / Payee": "",
     "One-Off Payee": "No",
     "Supplier VAT Number": "",

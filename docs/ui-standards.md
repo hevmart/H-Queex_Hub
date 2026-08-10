@@ -33,6 +33,14 @@ Font: Segoe UI throughout. No other typeface, no other colours.
 - Placeholder text is never a sentence describing what the field does — **one or two
   words only** (e.g. `"Search suppliers..."`, not `"Search or type a new supplier /
   payee"`).
+- **Exception: a primary Description field may use a realistic worked example as its
+  placeholder** (e.g. `"e.g. Adobe Creative Cloud subscription August 2026"`), exceeding
+  the normal character/word-count limits above. This applies only to the single primary
+  Description field on a form where the description itself is the record's main
+  identifying content (such as Expenses, where Title has been removed) — it does not
+  apply to Notes/Details fields or to standard single-line inputs. Pair it with a short
+  steel blue `.mini` hint line beneath explaining why specificity matters, rather than
+  relying on the placeholder alone.
 - Every input must be wide enough to display its expected content without horizontal
   scrolling (e.g. calculated currency fields sized for at least 8 characters including
   `€` and two decimals; free-text fields like Supplier / Payee spanning the full row).
