@@ -3170,7 +3170,12 @@
         <form method="post" action="{% if editing_expense %}/expenses/update{% else %}/expenses/add{% endif %}" class="form-shell" enctype="multipart/form-data" novalidate id="expense_manual_form" {% if not editing_expense %}style="display:none;"{% endif %}>
           {% if editing_expense %}<input type="hidden" name="row_number" value="{{ editing_expense.get('__row_number') }}">{% endif %}
           {% if not editing_expense %}
-          <input type="hidden" name="expense_type" id="expense_type_field" value="Receipt or Invoice">
+          <select name="expense_type" id="expense_type_field" style="display:none;">
+            <option value="Subscription">Subscription</option>
+            <option value="Receipt or Invoice" selected>Receipt or Invoice</option>
+            <option value="Travel and Subsistence">Travel and Subsistence</option>
+            <option value="Other">Other</option>
+          </select>
           <div class="form-section-heading">Expense type</div>
           <div class="form-row form-row-1">
             <div class="field optional">
@@ -5665,7 +5670,25 @@
         }
 
         function applyOcrFieldsToForm(fields) {
-          if (fields.subscription_match && window.selectExpenseType) { window.selectExpenseType("subscription"); }
+          // Single source of truth: the real expense_type_field <select> that lives
+          // inside the form. Both the review card dropdown and the full form's button
+          // group read/write this same element, so setting it here is enough for
+          // either view to show the right value — no separate "sync" state to drift.
+          var typeField = document.getElementById("expense_type_field");
+          if (typeField) {
+            var typeValue = "Receipt or Invoice";
+            if (fields.subscription_match) { typeValue = "Subscription"; }
+            else if (fields.category_suggestion === "Travel and Subsistence") { typeValue = "Travel and Subsistence"; }
+            typeField.value = typeValue;
+            typeField.dispatchEvent(new Event("change"));
+          }
+          // A receipt was successfully read, which is itself proof of payment.
+          var statusField = document.getElementById("expense_status");
+          if (statusField) {
+            statusField.value = "Paid";
+            statusField.dispatchEvent(new Event("change"));
+          }
+
           var isoDate = convertDateToIso(fields.date);
           if (isoDate) { setFieldValue("expense_date", isoDate); }
           applyOcrSupplier(fields.supplier_name);
@@ -5873,13 +5896,25 @@
             return parts[2] + "/" + parts[1] + "/" + parts[0];
           }
 
+          function formatDisplayAmount(value) {
+            if (value === null || value === undefined || value === "") { return ""; }
+            var numeric = parseFloat(value);
+            return Number.isFinite(numeric) ? "€" + numeric.toFixed(2) : value;
+          }
+
+          function formatDisplayForKind(kind, value) {
+            if (kind === "date") { return formatDisplayDate(value); }
+            if (kind === "amount") { return formatDisplayAmount(value); }
+            return value;
+          }
+
           function buildEditableValue(fieldId, kind, onCommit) {
             var realField = document.getElementById(fieldId);
             var valueWrap = document.createElement("span");
             valueWrap.className = "review-card-value";
 
             var displaySpan = document.createElement("span");
-            displaySpan.textContent = kind === "date" ? formatDisplayDate(realField ? realField.value : "") : (realField ? realField.value : "");
+            displaySpan.textContent = formatDisplayForKind(kind, realField ? realField.value : "");
             var editBtn = document.createElement("button");
             editBtn.type = "button";
             editBtn.className = "review-card-edit-icon";
@@ -5892,7 +5927,6 @@
               if (kind === "amount") { input.step = "0.01"; }
               input.value = realField ? realField.value : "";
               input.addEventListener("input", function () {
-                displaySpan.textContent = kind === "date" ? formatDisplayDate(input.value) : input.value;
                 if (realField) {
                   realField.value = input.value;
                   realField.dispatchEvent(new Event("input"));
@@ -5901,7 +5935,7 @@
                 if (onCommit) { onCommit(); }
               });
               input.addEventListener("blur", function () {
-                if (kind === "date") { displaySpan.textContent = formatDisplayDate(input.value); }
+                displaySpan.textContent = formatDisplayForKind(kind, input.value);
                 valueWrap.replaceChild(displaySpan, input);
               });
               valueWrap.replaceChild(input, displaySpan);
@@ -6075,6 +6109,42 @@
             return row;
           }
 
+          function buildCuratedSelectRow(labelText, fieldId, options, onCommit) {
+            var row = document.createElement("div");
+            row.className = "review-card-row";
+            var label = document.createElement("span");
+            label.className = "review-card-label";
+            label.textContent = labelText;
+            row.appendChild(label);
+
+            var realField = document.getElementById(fieldId);
+            var valueWrap = document.createElement("span");
+            valueWrap.className = "review-card-value";
+            var fieldWrap = document.createElement("div");
+            fieldWrap.className = "field optional";
+            fieldWrap.style.margin = "0";
+            var select = document.createElement("select");
+            options.forEach(function (optionValue) {
+              var option = document.createElement("option");
+              option.value = optionValue;
+              option.textContent = optionValue;
+              if (realField && realField.value === optionValue) { option.selected = true; }
+              select.appendChild(option);
+            });
+            select.addEventListener("change", function () {
+              if (realField) {
+                realField.value = select.value;
+                realField.dispatchEvent(new Event("input"));
+                realField.dispatchEvent(new Event("change"));
+              }
+              if (onCommit) { onCommit(); }
+            });
+            fieldWrap.appendChild(select);
+            valueWrap.appendChild(fieldWrap);
+            row.appendChild(valueWrap);
+            return row;
+          }
+
           function buildDeductibilityPill() {
             var badgeEl = document.getElementById("expense_deductibility_badge");
             var selectEl = document.getElementById("expense_deductibility_status");
@@ -6142,6 +6212,7 @@
             reviewBody.appendChild(buildSupplierRow(updateReviewSaveButtonState));
             reviewBody.appendChild(buildReviewRow("Description", "expense_description", "text", { missingText: "Not found — please add", onCommit: updateReviewSaveButtonState }));
             reviewBody.appendChild(buildReviewRow("Category", "expense_category", "select", { onCommit: function () { if (window.refreshAllExpensePanels) { window.refreshAllExpensePanels(); } updateReviewSaveButtonState(); } }));
+            reviewBody.appendChild(buildReviewRow("Expense type", "expense_type_field", "select", { onCommit: updateReviewSaveButtonState }));
 
             var amountsRow = document.createElement("div");
             amountsRow.className = "review-card-row review-card-row-group";
@@ -6186,30 +6257,7 @@
             reviewBody.appendChild(buildReviewRow("Receipt / invoice ref", "expense_receipt_reference", "text", { missingText: "Not found — please add", onCommit: updateReviewSaveButtonState }));
             reviewBody.appendChild(buildDeductibilityPill());
             reviewBody.appendChild(buildReviewRow("Payment method", "expense_payment_method", "select", { onCommit: updateReviewSaveButtonState }));
-
-            var phaseRow = document.createElement("div");
-            phaseRow.className = "review-card-row";
-            var phaseLabel = document.createElement("span");
-            phaseLabel.className = "review-card-label";
-            phaseLabel.textContent = "Phase";
-            var phaseValue = document.createElement("span");
-            phaseValue.className = "review-card-value";
-            var phasePill = document.createElement("span");
-            phasePill.className = "review-card-pill review-card-pill-phase";
-            phasePill.textContent = "…";
-            phaseValue.appendChild(phasePill);
-            phaseRow.appendChild(phaseLabel);
-            phaseRow.appendChild(phaseValue);
-            reviewBody.appendChild(phaseRow);
-            var dateField = document.getElementById("expense_date");
-            if (dateField && dateField.value) {
-              fetch("/api/expenses/phase-tag?date=" + encodeURIComponent(dateField.value))
-                .then(function (response) { return response.json(); })
-                .then(function (data) { phasePill.textContent = data.phase_tag || "Phase 1"; })
-                .catch(function () { phasePill.textContent = "Phase 1"; });
-            } else {
-              phasePill.textContent = "Phase 1";
-            }
+            reviewBody.appendChild(buildCuratedSelectRow("Status", "expense_status", ["Paid", "Pending", "Approved"], updateReviewSaveButtonState));
 
             if (fields.duplicate_warning) {
               reviewDuplicateWarning.textContent = fields.duplicate_warning;
@@ -6296,7 +6344,10 @@
           }
 
           if (reviewEditFullBtn) {
-            reviewEditFullBtn.addEventListener("click", function () { showExpenseStep("form"); });
+            reviewEditFullBtn.addEventListener("click", function () {
+              if (window.syncExpenseTypeButtonsFromField) { window.syncExpenseTypeButtonsFromField(); }
+              showExpenseStep("form");
+            });
           }
           if (reviewCancelBtn) {
             reviewCancelBtn.addEventListener("click", function () {
@@ -6348,6 +6399,18 @@
             categoryField.dispatchEvent(new Event("change"));
           }
           window.selectExpenseType = selectExpenseType;
+
+          window.syncExpenseTypeButtonsFromField = function () {
+            var typeField = document.getElementById("expense_type_field");
+            if (!typeField) { return; }
+            var matchedKey = Object.keys(EXPENSE_TYPE_LABELS).find(function (key) {
+              return EXPENSE_TYPE_LABELS[key] === typeField.value;
+            }) || "receipt";
+            typeButtons.forEach(function (btn) {
+              btn.classList.toggle("active", btn.getAttribute("data-expense-type") === matchedKey);
+            });
+            if (mileageBlock) { mileageBlock.style.display = matchedKey === "travel" ? "" : "none"; }
+          };
 
           typeButtons.forEach(function (btn) {
             btn.addEventListener("click", function () { selectExpenseType(btn.getAttribute("data-expense-type")); });

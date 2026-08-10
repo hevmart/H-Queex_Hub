@@ -5328,3 +5328,28 @@ def test_link_subscription_expense_does_not_advance_next_charge_for_past_period(
     assert subscription["next_charge_date"] == "2026-09-10"  # unchanged — 2026-06 isn't the due period
     assert subscription["periods"]["2026-06"]["expense_id"] == "EXP-099"
     assert subscription["periods"]["2026-06"]["receipt_attached"] is True
+
+
+def test_expense_review_card_has_visible_expense_type_and_status_dropdowns(workbook_copy):
+    """The OCR review card's Expense Type and Status fields must be real, visible
+    <select> elements wired to the same fields the full form submits — not a hidden
+    input the user can't see or correct. Also verifies the subscription-match branch
+    of the client-side type-assignment logic is present and wired to that field."""
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+
+    response = client.get('/expenses')
+    assert response.status_code == 200
+    html = response.data.decode("utf-8")
+
+    assert '<select name="expense_type" id="expense_type_field"' in html
+    assert '<option value="Subscription">Subscription</option>' in html
+    assert '<option value="Receipt or Invoice"' in html
+    assert '<option value="Travel and Subsistence">Travel and Subsistence</option>' in html
+
+    assert 'buildReviewRow("Expense type", "expense_type_field", "select"' in html
+    assert 'buildCuratedSelectRow("Status", "expense_status", ["Paid", "Pending", "Approved"]' in html
+
+    assert 'if (fields.subscription_match) { typeValue = "Subscription"; }' in html
+    assert 'statusField.value = "Paid";' in html

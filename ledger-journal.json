@@ -2105,5 +2105,42 @@
     "credit_total": 22.14,
     "entry_balanced": true,
     "phase_tag": "Phase 1"
+  },
+  {
+    "id": "930c8cbe-1d16-4aa5-917d-a650e9ff19e5",
+    "timestamp": "2026-08-10T17:38:08",
+    "action": "sync_post",
+    "entity_type": "expense",
+    "source": "subscription",
+    "row_number": 7,
+    "transaction_date": "2026-07-26",
+    "description": "Claude Pro monthly subscription \u2014 AI assistant for H-Queex business operations (Subscription charge)",
+    "category": "Software and Subscriptions",
+    "account_code": "5000",
+    "account_name": "Software and Subscriptions",
+    "tax_treatment": "deductible",
+    "vat_rate": "0%",
+    "vat_treatment": "standard",
+    "supply_type": "services",
+    "net_amount_eur": 22.14,
+    "vat_amount_eur": 0.0,
+    "total_amount_eur": 22.14,
+    "amount_eur": 22.14,
+    "journal_lines": [
+      {
+        "account_code": "5000",
+        "debit": 22.14,
+        "credit": 0.0
+      },
+      {
+        "account_code": "1000",
+        "debit": 0.0,
+        "credit": 22.14
+      }
+    ],
+    "debit_total": 22.14,
+    "credit_total": 22.14,
+    "entry_balanced": true,
+    "phase_tag": "Phase 1"
   }
 ]

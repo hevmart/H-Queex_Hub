@@ -221,5 +221,24 @@
     "Flags Acknowledged": "No",
     "Flags Acknowledged At": "",
     "id": "EXP-006"
+  },
+  {
+    "Date (Registered)": "2026-07-26",
+    "Title": "",
+    "Description": "Claude Pro \u2014 Claude Pro monthly subscription \u2014 AI assistant for H-Queex business operations (Subscription charge)",
+    "Supplier / Payee": "Anthropic, PBC",
+    "Category": "Software and Subscriptions",
+    "Expense Type": "Subscription",
+    "Subscription ID": "de267435-7f9e-4061-9867-63b19ceee8a6",
+    "Net Amount (\u20ac)": 18.0,
+    "Total (\u20ac)": 22.14,
+    "Input VAT Reclaimable": "No",
+    "Deductibility Status": "Fully Deductible",
+    "Capital Expenditure Flag": "No",
+    "Receipt Attached": "No",
+    "Bank Reconciliation": "Unreconciled",
+    "Status": "Auto-posted",
+    "Phase Tag": "Phase 1",
+    "id": "EXP-007"
   }
 ]

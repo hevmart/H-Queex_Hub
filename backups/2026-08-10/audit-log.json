@@ -3428,5 +3428,42 @@
         "Flags Acknowledged At": ""
       }
     }
+  },
+  {
+    "id": "d34fe47a-e47f-4879-bf55-8d21993f48ae",
+    "timestamp": "2026-08-10T17:37:22",
+    "action": "create",
+    "entity_type": "subscription",
+    "details": {
+      "subscription_id": "de267435-7f9e-4061-9867-63b19ceee8a6",
+      "record": {
+        "id": "de267435-7f9e-4061-9867-63b19ceee8a6",
+        "title": "Claude Pro",
+        "description": "Claude Pro monthly subscription %97 AI assistant for H-Queex business operations",
+        "supplier": "Anthropic, PBC",
+        "supplier_id": "",
+        "category": "Software and Subscriptions",
+        "net_amount": "18.00",
+        "total_amount": "22.14",
+        "frequency": "monthly",
+        "start_date": "2026-07-26",
+        "next_charge_date": "2026-07-26",
+        "last_posted_date": "",
+        "end_date": "",
+        "status": "active",
+        "notes": "Currency: EUR. Phase Tag: Pre-Trading (not a field the subscription schema currently supports %97 recorded here for reference).",
+        "created_at": "2026-08-10T17:37:22",
+        "last_updated_at": "2026-08-10T17:37:22"
+      }
+    }
+  },
+  {
+    "id": "2bea08df-2a31-4847-a048-b79799d28a87",
+    "timestamp": "2026-08-10T18:48:06",
+    "action": "sync",
+    "entity_type": "subscriptions",
+    "details": {
+      "posted_count": 0
+    }
   }
 ]
