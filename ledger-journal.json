@@ -2142,5 +2142,227 @@
     "credit_total": 22.14,
     "entry_balanced": true,
     "phase_tag": "Phase 1"
+  },
+  {
+    "id": "9286fd3f-67c9-4c9d-beaf-e33259900c6b",
+    "timestamp": "2026-08-10T20:13:08",
+    "action": "create",
+    "entity_type": "expense",
+    "source": "workbook",
+    "row_number": 8,
+    "transaction_date": "2026-06-26",
+    "description": "Claude Pro subscription - Jun 26 to Jul 26, 2026",
+    "category": "Software and Subscriptions",
+    "account_code": "5000",
+    "account_name": "Software and Subscriptions",
+    "tax_treatment": "deductible",
+    "vat_rate": "23%",
+    "vat_treatment": "standard",
+    "supply_type": "services",
+    "net_amount_eur": 22.14,
+    "vat_amount_eur": 0.0,
+    "total_amount_eur": 22.14,
+    "amount_eur": 22.14,
+    "journal_lines": [
+      {
+        "account_code": "5000",
+        "debit": 22.14,
+        "credit": 0.0
+      },
+      {
+        "account_code": "1000",
+        "debit": 0.0,
+        "credit": 22.14
+      }
+    ],
+    "debit_total": 22.14,
+    "credit_total": 22.14,
+    "entry_balanced": true,
+    "phase_tag": "Phase 1"
+  },
+  {
+    "id": "d6861761-3bfd-4d92-af75-ff051e69e442",
+    "timestamp": "2026-08-10T20:46:51",
+    "action": "archive",
+    "entity_type": "expense",
+    "source": "workbook",
+    "row_number": 6,
+    "transaction_date": "2026-07-26",
+    "description": "Claude Pro subscription - Jul 26 to Aug 26, 2026",
+    "category": "Software and Subscriptions",
+    "account_code": "5000",
+    "account_name": "Software and Subscriptions",
+    "tax_treatment": "deductible",
+    "vat_rate": "23%",
+    "vat_treatment": "standard",
+    "supply_type": "services",
+    "net_amount_eur": 22.14,
+    "vat_amount_eur": 0.0,
+    "total_amount_eur": 22.14,
+    "amount_eur": 22.14,
+    "journal_lines": [
+      {
+        "account_code": "1000",
+        "debit": 22.14,
+        "credit": 0.0
+      },
+      {
+        "account_code": "5000",
+        "debit": 0.0,
+        "credit": 22.14
+      }
+    ],
+    "debit_total": 22.14,
+    "credit_total": 22.14,
+    "entry_balanced": true,
+    "phase_tag": "Phase 1"
+  },
+  {
+    "id": "24575be8-e98b-417d-917f-739a25cf4bac",
+    "timestamp": "2026-08-10T20:47:08",
+    "action": "archive",
+    "entity_type": "expense",
+    "source": "workbook",
+    "row_number": 6,
+    "transaction_date": "2026-07-26",
+    "description": "Claude Pro \u2014 Claude Pro monthly subscription \u2014 AI assistant for H-Queex business operations (Subscription charge)",
+    "category": "Software and Subscriptions",
+    "account_code": "5000",
+    "account_name": "Software and Subscriptions",
+    "tax_treatment": "deductible",
+    "vat_rate": "0%",
+    "vat_treatment": "standard",
+    "supply_type": "services",
+    "net_amount_eur": 22.14,
+    "vat_amount_eur": 0.0,
+    "total_amount_eur": 22.14,
+    "amount_eur": 22.14,
+    "journal_lines": [
+      {
+        "account_code": "1000",
+        "debit": 22.14,
+        "credit": 0.0
+      },
+      {
+        "account_code": "5000",
+        "debit": 0.0,
+        "credit": 22.14
+      }
+    ],
+    "debit_total": 22.14,
+    "credit_total": 22.14,
+    "entry_balanced": true,
+    "phase_tag": "Phase 1"
+  },
+  {
+    "id": "54e45762-2103-48a9-a229-e41caf283f55",
+    "timestamp": "2026-08-10T20:47:18",
+    "action": "archive",
+    "entity_type": "expense",
+    "source": "workbook",
+    "row_number": 6,
+    "transaction_date": "2026-06-26",
+    "description": "Claude Pro subscription - Jun 26 to Jul 26, 2026",
+    "category": "Software and Subscriptions",
+    "account_code": "5000",
+    "account_name": "Software and Subscriptions",
+    "tax_treatment": "deductible",
+    "vat_rate": "23%",
+    "vat_treatment": "standard",
+    "supply_type": "services",
+    "net_amount_eur": 22.14,
+    "vat_amount_eur": 0.0,
+    "total_amount_eur": 22.14,
+    "amount_eur": 22.14,
+    "journal_lines": [
+      {
+        "account_code": "1000",
+        "debit": 22.14,
+        "credit": 0.0
+      },
+      {
+        "account_code": "5000",
+        "debit": 0.0,
+        "credit": 22.14
+      }
+    ],
+    "debit_total": 22.14,
+    "credit_total": 22.14,
+    "entry_balanced": true,
+    "phase_tag": "Phase 1"
+  },
+  {
+    "id": "4a36564b-105e-47f9-be5e-a8e42dcf1ae1",
+    "timestamp": "2026-08-10T21:56:35",
+    "action": "create",
+    "entity_type": "invoice",
+    "source": "workbook",
+    "row_number": 2,
+    "transaction_date": "2026-08-01",
+    "description": "Test",
+    "category": "",
+    "account_code": "4000",
+    "account_name": "Consulting / Project Fees",
+    "tax_treatment": "trading",
+    "vat_rate": "0%",
+    "vat_treatment": "standard",
+    "supply_type": "services",
+    "net_amount_eur": 100.0,
+    "vat_amount_eur": 0.0,
+    "total_amount_eur": 100.0,
+    "amount_eur": 100.0,
+    "journal_lines": [
+      {
+        "account_code": "1100",
+        "debit": 100.0,
+        "credit": 0.0
+      },
+      {
+        "account_code": "4000",
+        "debit": 0.0,
+        "credit": 100.0
+      }
+    ],
+    "debit_total": 100.0,
+    "credit_total": 100.0,
+    "entry_balanced": true,
+    "phase_tag": "Phase 1"
+  },
+  {
+    "id": "acd8af55-d8b1-4390-8714-16e629c9775d",
+    "timestamp": "2026-08-10T21:56:37",
+    "action": "update",
+    "entity_type": "invoice",
+    "source": "workbook",
+    "row_number": 2,
+    "transaction_date": "2026-08-01",
+    "description": "Test",
+    "category": "",
+    "account_code": "4000",
+    "account_name": "Consulting / Project Fees",
+    "tax_treatment": "trading",
+    "vat_rate": "0%",
+    "vat_treatment": "standard",
+    "supply_type": "services",
+    "net_amount_eur": 100.0,
+    "vat_amount_eur": 0.0,
+    "total_amount_eur": 100.0,
+    "amount_eur": 100.0,
+    "journal_lines": [
+      {
+        "account_code": "1100",
+        "debit": 100.0,
+        "credit": 0.0
+      },
+      {
+        "account_code": "4000",
+        "debit": 0.0,
+        "credit": 100.0
+      }
+    ],
+    "debit_total": 100.0,
+    "credit_total": 100.0,
+    "entry_balanced": true,
+    "phase_tag": "Phase 1"
   }
 ]

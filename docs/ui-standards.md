@@ -88,11 +88,23 @@ Font: Segoe UI throughout. No other typeface, no other colours.
 - **Destructive actions must never appear as prominent buttons in list views — they
   belong inside the edit context only.** Archive/Cancel is never a button on a table row
   or a list card. Edit is the sole row-level action everywhere (Services, Clients,
-  Suppliers, Income, Expenses, Invoices, Payroll, Subscriptions). The archive/cancel
-  action lives at the bottom of the record's edit form or edit modal, below a full-width
-  divider, styled as a small red `#C62828` text link ("Archive this record" — "Cancel
+  Suppliers, Income, Expenses, Invoices, Payroll, Subscriptions, Leads, Proposals, SOPs,
+  Delivery Log, Documents, Projects). The archive/cancel action lives at the bottom of the
+  record's edit form or edit modal, inside its own **Danger Zone**: a bordered, faint-red
+  box (`rgba(198, 40, 40, 0.03)` background, `rgba(198, 40, 40, 0.18)` 1px border, 8px
+  radius, ~28px margin above so it never crowds the field/button above it) with a small
+  steel-blue uppercase "Danger zone" label at the top, a thin internal divider, then a
+  small red `#C62828` text link with a trash icon ("Archive this record" — "Cancel
   invoice" for Invoices) using the shared `archive_in_modal()` macro (see Component
-  Patterns) so every instance across the app is identical.
+  Patterns) so every instance across the app is identical. The box itself is what
+  separates this from whatever section follows (e.g. a list table) — don't rely on the
+  parent container's default spacing.
+- **A Danger Zone can hold more than one action** (e.g. Invoices: Cancel + Bad Debt, or
+  Reverse Payment when a payment is recorded). Use the `danger_zone_item()` macro for each
+  individual action and wrap them together in one shared zone box — `archive_in_modal()` is
+  just `danger_zone_item()` pre-wrapped for the common single-action case. Every action still
+  gets its own inline confirm step; a `blocked_message` on any one item replaces just that
+  item with an explanatory line, it doesn't have to block the whole zone.
 - Archive/cancel confirmation is an inline step below the link ("Are you sure? This will
   archive the record. Yes, archive / Cancel"), never a full modal on top of a modal and
   never a floating tooltip.
@@ -220,6 +232,32 @@ sight.
   on every load, a no-op once every record already has a correctly-formatted id, and
   responsible for repointing any known cross-references if an id changes shape (e.g. an
   old UUID being replaced by its `PREFIX-NNN` equivalent).
+
+### Invoice lifecycle
+
+- **Invoices are never deleted.** The only removal path is Cancel, which flips `Status`
+  to `Cancelled`, stamps `Cancellation Date`, and keeps the row in the register (hidden
+  from the default register view, visible via the "Show cancelled" toggle) — audit trail
+  first.
+- **Only a `Draft` invoice can be edited.** Once `Status` is anything else (`Issued`,
+  `Paid`, `Partially Paid`, `Overdue`, `Bad Debt`, `Cancelled`), the edit form renders with
+  every field disabled (wrapped in a `<fieldset disabled>`) and a warning banner: "This
+  invoice has been issued. To make changes you must cancel it and create a new invoice."
+  The backend enforces this too (`update_invoice` rejects any update where the invoice's
+  current status isn't Draft) — the disabled form is a UX courtesy, not the real guard.
+- **Status has two tiers: manual and system-computed.** `Draft`, `Issued`, `Bad Debt` are
+  the only values a user can pick from a dropdown (`INVOICE_MANUAL_STATUS_OPTIONS`).
+  `Paid`, `Partially Paid`, `Overdue`, `Cancelled` are computed by the system (a recorded
+  payment, a due date passing, the Cancel action) and rendered as a read-only status pill
+  instead of a dropdown once reached. The same manual/auto split applies to Income:
+  `Received` is never manually selected — logging a non-invoiced income entry means the
+  money was already received, so it's set automatically and shown as a badge; only
+  `Pending`/`Cancelled` remain a dropdown choice.
+- **Paid/Partially Paid invoices must have their payment reversed before Cancel or Bad
+  Debt.** Both actions check this and, if blocked, show "This invoice has payments
+  recorded. Reverse the payments before cancelling." with a Reverse Payment action in the
+  Danger Zone instead — it resets the balance to the full total, clears the payment
+  record, and reopens the invoice as `Issued` (or `Overdue` if past due date).
 
 ### Subscription ↔ Expense linking
 

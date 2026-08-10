@@ -172,6 +172,9 @@ SUPPLY_TYPE_OPTIONS = [
     {"value": "goods", "label": "Goods"},
 ]
 INVOICE_STATUS_OPTIONS = ["Draft", "Issued", "Paid", "Partially Paid", "Overdue", "Bad Debt", "Cancelled"]
+# Paid/Partially Paid/Overdue/Cancelled are computed by the system (payments, due
+# dates, the cancel/reverse-payment actions) — never offered as a manual choice.
+INVOICE_MANUAL_STATUS_OPTIONS = ["Draft", "Issued", "Bad Debt"]
 INCOME_STATUS_OPTIONS = ["Received", "Pending", "Cancelled"]
 INCOME_SOURCES = ("manual", "invoiced")
 EXPENSE_STATUS_OPTIONS = ["Pending", "Approved", "Paid", "Auto-posted", "Cancelled"]
@@ -1577,6 +1580,14 @@ def _normalize_invoice_status(value: Any) -> str:
     return status_map.get(status, "Draft")
 
 
+def _normalize_manual_invoice_status(value: Any) -> str:
+    """Clamps a user-submitted status to the manually-selectable set. Paid, Partially
+    Paid, Overdue and Cancelled are computed by the system (payments, due dates, the
+    cancel/reverse-payment actions) — a manual form submission can never set them."""
+    status = _normalize_invoice_status(value)
+    return status if status in INVOICE_MANUAL_STATUS_OPTIONS else "Draft"
+
+
 def _auto_flag_overdue_invoices(invoices: list[dict[str, Any]]) -> bool:
     """Flip Issued invoices past their due date to Overdue in place. Returns True if anything changed."""
     changed = False
@@ -2312,20 +2323,16 @@ def _supplier_name_for_id(supplier_rows: list[dict[str, Any]], supplier_id: Any)
     return ""
 
 
-def _resolve_supplier_id_from_form(*, name: str, is_one_off: bool, form_field: str = "supplier_id") -> str:
+def _resolve_supplier_id_from_form(*, name: str, form_field: str = "supplier_id") -> str:
     """The smart-search field posts the id it resolved client-side; fall back to a
     name lookup for older cached pages/tests that only submit the name."""
-    if is_one_off:
-        return ""
     submitted_id = str(request.form.get(form_field) or "").strip()
     if submitted_id:
         return submitted_id
     return _supplier_id_for_name(load_finance_data()["sheets"]["Suppliers"], name)
 
 
-def _resolve_client_id_from_form(*, name: str, is_one_off: bool = False, form_field: str = "client_id") -> str:
-    if is_one_off:
-        return ""
+def _resolve_client_id_from_form(*, name: str, form_field: str = "client_id") -> str:
     submitted_id = str(request.form.get(form_field) or "").strip()
     if submitted_id:
         return submitted_id
@@ -4041,6 +4048,7 @@ def _normalize_delivery_entry(record: dict[str, Any]) -> dict[str, Any]:
         "invoice_id": str(record.get("invoice_id") or "").strip(),
         "created_at": str(record.get("created_at") or now),
         "last_updated_at": str(record.get("last_updated_at") or now),
+        "archived": bool(record.get("archived", False)),
     }
 
 
@@ -4114,6 +4122,7 @@ def _normalize_sop(record: dict[str, Any]) -> dict[str, Any]:
         "notes": str(record.get("notes") or "").strip(),
         "created_at": str(record.get("created_at") or now),
         "last_updated_at": str(record.get("last_updated_at") or now),
+        "archived": bool(record.get("archived", False)),
     }
 
 
@@ -4217,6 +4226,7 @@ def _normalize_lead(record: dict[str, Any]) -> dict[str, Any]:
         "notes": str(record.get("notes") or "").strip(),
         "converted_client_id": str(record.get("converted_client_id") or "").strip(),
         "activity_log": [entry for entry in activity_log if isinstance(entry, dict)],
+        "archived": bool(record.get("archived", False)),
     }
 
 
@@ -4371,6 +4381,7 @@ def _normalize_proposal(record: dict[str, Any]) -> dict[str, Any]:
         "notes": str(record.get("notes") or "").strip(),
         "converted_invoice_id": str(record.get("converted_invoice_id") or "").strip(),
         "updated_at": str(record.get("updated_at") or now),
+        "archived": bool(record.get("archived", False)),
     }
 
 
@@ -6138,7 +6149,8 @@ def update_dmaic_phase():
 @app.route("/operations/delivery")
 def operations_delivery_view():
     data = load_finance_data()
-    entries = _load_delivery_log()
+    entries = [entry for entry in _load_delivery_log() if not entry.get("archived")]
+    editing_delivery = _find_record_by_id(entries, request.args.get("edit_id"))
     client_filter = str(request.args.get("client_filter") or "")
     project_filter = str(request.args.get("project_filter") or "")
     billing_period_filter = str(request.args.get("billing_period_filter") or "")
@@ -6155,6 +6167,7 @@ def operations_delivery_view():
             "Delivery Log",
             "operations_delivery",
             data,
+            editing_delivery=editing_delivery,
             delivery_form={"client_filter": client_filter, "project_filter": project_filter, "billing_period_filter": billing_period_filter},
             message=request.args.get("message"),
         ),
@@ -6215,6 +6228,76 @@ def add_delivery_entry():
     _save_delivery_log(entries)
     _record_audit("create", "delivery_entry", {"entry_id": entry["id"], "record": entry})
     return redirect(url_for("operations_delivery_view", message="Delivery logged"))
+
+
+@app.route("/operations/delivery/update", methods=["POST"])
+def update_delivery_entry():
+    delivery_id = str(request.form.get("delivery_id") or "").strip()
+    data = load_finance_data()
+    entries = _load_delivery_log()
+    entry = _find_record_by_id(entries, delivery_id)
+    if entry is None:
+        return redirect(url_for("operations_delivery_view", message="Delivery entry not found"))
+
+    project_id = str(request.form.get("project_id") or "").strip()
+    projects = _load_projects()
+    project = _find_record_by_id(projects, project_id)
+    if project:
+        client_id = project.get("client_id", "")
+        client_name = project.get("client_name", "")
+    else:
+        client_id = str(request.form.get("client_id") or "").strip()
+        client_name = _client_name_for_id_operations(data, client_id)
+
+    payload = {
+        "date": str(request.form.get("date") or date.today().isoformat()).strip(),
+        "project_id": project_id,
+        "client_id": client_id,
+        "client_name": client_name,
+        "service_type": str(request.form.get("service_type") or "Other").strip(),
+        "description": str(request.form.get("description") or "").strip(),
+        "hours_spent": request.form.get("hours_spent") or None,
+        # Billing period is locked once invoiced — the field renders disabled, so
+        # form data won't include it at all; keep the entry's existing value.
+        "billing_period": str(request.form.get("billing_period") or "").strip() if not entry.get("invoiced") else entry.get("billing_period", ""),
+    }
+
+    errors: dict[str, str] = {}
+    _validate_required_text(payload.get("description"), "description", "Description", errors)
+    _validate_required_text(client_name, "client_name", "Client", errors)
+    if not _parse_transaction_date(payload.get("date")):
+        errors["date"] = "Date must be valid"
+
+    if errors:
+        return _redirect_with_form_errors("operations_delivery_view", payload, errors, edit_id=delivery_id)
+
+    stored_filename, upload_error = _save_uploaded_delivery_file(request.files.get("deliverable_file"))
+    if upload_error:
+        return _redirect_with_form_errors("operations_delivery_view", payload, {"deliverable_file": upload_error}, edit_id=delivery_id)
+
+    entry.update(payload)
+    if stored_filename:
+        entry["deliverable_filename"] = stored_filename
+    entry["last_updated_at"] = datetime.now().isoformat(timespec="seconds")
+    _save_delivery_log(entries)
+    _record_audit("update", "delivery_entry", {"entry_id": delivery_id, "record": entry})
+    return redirect(url_for("operations_delivery_view", message="Delivery entry updated"))
+
+
+@app.route("/operations/delivery/archive", methods=["POST"])
+def archive_delivery_entry():
+    delivery_id = str(request.form.get("delivery_id") or "").strip()
+    entries = _load_delivery_log()
+    entry = _find_record_by_id(entries, delivery_id)
+    if entry is None:
+        return redirect(url_for("operations_delivery_view", message="Delivery entry not found"))
+    if entry.get("invoiced"):
+        return redirect(url_for("operations_delivery_view", message="This entry has already been invoiced — it cannot be archived"))
+    entry["archived"] = True
+    entry["last_updated_at"] = datetime.now().isoformat(timespec="seconds")
+    _save_delivery_log(entries)
+    _record_audit("archive", "delivery_entry", {"entry_id": delivery_id, "record": entry})
+    return redirect(url_for("operations_delivery_view", message="Delivery entry archived"))
 
 
 @app.route("/operations/delivery/generate-invoice/<client_id>/<period>", methods=["POST"])
@@ -6416,6 +6499,20 @@ def update_sop():
     return redirect(url_for("operations_sops_view", message="SOP updated"))
 
 
+@app.route("/operations/sops/archive", methods=["POST"])
+def archive_sop():
+    sop_id = str(request.form.get("sop_id") or "").strip()
+    sops = _load_sops()
+    sop = _find_record_by_id(sops, sop_id)
+    if sop is None:
+        return redirect(url_for("operations_sops_view", message="SOP not found"))
+    sop["archived"] = True
+    sop["last_updated_at"] = datetime.now().isoformat(timespec="seconds")
+    _save_sops(sops)
+    _record_audit("archive", "sop", {"sop_id": sop_id, "record": sop})
+    return redirect(url_for("operations_sops_view", message="SOP archived"))
+
+
 @app.route("/sops/<path:filename>")
 def serve_sop_file(filename):
     as_attachment = request.args.get("download") == "1"
@@ -6481,7 +6578,7 @@ def _validate_lead_payload(payload: dict[str, Any]) -> dict[str, str]:
 @app.route("/crm/leads")
 def crm_leads_view():
     data = load_finance_data()
-    leads = _load_leads()
+    leads = [lead for lead in _load_leads() if not lead.get("archived")]
     editing_lead = _find_record_by_id(leads, request.args.get("edit_id"))
     return render_template(
         "index.html",
@@ -6562,6 +6659,20 @@ def update_lead():
     _save_leads(leads)
     _record_audit("update", "lead", {"lead_id": lead_id, "record": lead})
     return redirect(url_for("crm_leads_view", message="Lead updated"))
+
+
+@app.route("/crm/leads/archive", methods=["POST"])
+def archive_lead():
+    lead_id = str(request.form.get("lead_id") or "").strip()
+    leads = _load_leads()
+    lead = _find_record_by_id(leads, lead_id)
+    if lead is None:
+        return redirect(url_for("crm_leads_view", message="Lead not found"))
+    lead["archived"] = True
+    lead["updated_at"] = datetime.now().isoformat(timespec="seconds")
+    _save_leads(leads)
+    _record_audit("archive", "lead", {"lead_id": lead_id, "record": lead})
+    return redirect(url_for("crm_leads_view", message="Lead archived"))
 
 
 @app.route("/crm/leads/status", methods=["POST"])
@@ -6702,7 +6813,7 @@ def _validate_proposal_payload(payload: dict[str, Any]) -> dict[str, str]:
 @app.route("/crm/proposals")
 def crm_proposals_view():
     data = load_finance_data()
-    proposals = _load_proposals()
+    proposals = [proposal for proposal in _load_proposals() if not proposal.get("archived")]
     editing_proposal = _find_record_by_id(proposals, request.args.get("edit_id"))
     return render_template(
         "index.html",
@@ -6792,6 +6903,22 @@ def update_proposal():
     _save_proposals(proposals)
     _record_audit("update", "proposal", {"proposal_id": proposal_id, "record": proposal})
     return redirect(url_for("crm_proposals_view", message="Proposal updated"))
+
+
+@app.route("/crm/proposals/archive", methods=["POST"])
+def archive_proposal():
+    proposal_id = str(request.form.get("proposal_id") or "").strip()
+    proposals = _load_proposals()
+    proposal = _find_record_by_id(proposals, proposal_id)
+    if proposal is None:
+        return redirect(url_for("crm_proposals_view", message="Proposal not found"))
+    if proposal.get("converted_invoice_id"):
+        return redirect(url_for("crm_proposals_view", message="Proposal is linked to an invoice — edit the invoice to change it"))
+    proposal["archived"] = True
+    proposal["updated_at"] = datetime.now().isoformat(timespec="seconds")
+    _save_proposals(proposals)
+    _record_audit("archive", "proposal", {"proposal_id": proposal_id, "record": proposal})
+    return redirect(url_for("crm_proposals_view", message="Proposal archived"))
 
 
 @app.route("/crm/proposals/mark-sent", methods=["POST"])
@@ -7108,7 +7235,16 @@ def invoices_view():
     rows = data["sheets"].get("Invoices", [])
     validation_errors, invoice_form = _build_validation_state("invoices")
     editing_invoice = _find_row_by_number(rows, request.args.get("edit_row"))
-    return render_template("index.html", **_build_page_context("Invoices", "invoices", data, invoices=rows, editing_invoice=editing_invoice, invoice_form=invoice_form, validation_errors=validation_errors, message=request.args.get("message")))
+    show_cancelled = request.args.get("show_cancelled") == "1"
+    visible_rows = rows if show_cancelled else [row for row in rows if _normalize_invoice_status(row.get("Status")) != "Cancelled"]
+    return render_template("index.html", **_build_page_context(
+        "Invoices", "invoices", data,
+        invoices=visible_rows,
+        editing_invoice=editing_invoice,
+        invoice_form=invoice_form,
+        validation_errors=validation_errors,
+        message=request.args.get("message"),
+    ), invoice_manual_status_options=INVOICE_MANUAL_STATUS_OPTIONS, show_cancelled_invoices=show_cancelled)
 
 
 @app.route("/services")
@@ -8071,19 +8207,17 @@ def expense_ocr():
 @app.route("/expenses/add", methods=["POST"])
 def add_expense():
     supplier_name = request.form.get("supplier", "")
-    is_one_off_payee = request.form.get("one_off_payee") == "Yes"
     payload = {
         "Date (Registered)": request.form.get("date", ""),
         "Title": "",
         "Description": request.form.get("description", ""),
         "Supplier / Payee": supplier_name,
-        "Supplier ID": _resolve_supplier_id_from_form(name=supplier_name, is_one_off=is_one_off_payee),
-        "One-Off Payee": "Yes" if is_one_off_payee else "No",
+        "Supplier ID": _resolve_supplier_id_from_form(name=supplier_name),
         "Supplier VAT Number": request.form.get("supplier_vat_number", ""),
         "Receipt / Invoice Ref": request.form.get("receipt_reference", ""),
         "Receipt Filename": "",
         "Category": request.form.get("category", ""),
-        "Expense Type": request.form.get("expense_type", "Receipt or Invoice"),
+        "Expense Type": request.form.get("expense_type", ""),
         "Subscription ID": "",
         "Base Net Amount (€)": request.form.get("base_net_amount", request.form.get("net_amount", "")),
         "Delivery (€)": request.form.get("delivery_amount", ""),
@@ -8217,14 +8351,12 @@ def update_expense():
 
     existing_expense_row = _find_row_by_number(_load_sheet_rows_with_row_numbers("Expenses"), row_number) or {}
     supplier_name = request.form.get("supplier", "")
-    is_one_off_payee = request.form.get("one_off_payee") == "Yes"
     payload = {
         "Date (Registered)": request.form.get("date", ""),
         "Title": "",
         "Description": request.form.get("description", ""),
         "Supplier / Payee": supplier_name,
-        "Supplier ID": _resolve_supplier_id_from_form(name=supplier_name, is_one_off=is_one_off_payee),
-        "One-Off Payee": "Yes" if is_one_off_payee else "No",
+        "Supplier ID": _resolve_supplier_id_from_form(name=supplier_name),
         "Supplier VAT Number": request.form.get("supplier_vat_number", ""),
         "Receipt / Invoice Ref": request.form.get("receipt_reference", ""),
         "Receipt Filename": existing_expense_row.get("Receipt Filename", ""),
@@ -8379,14 +8511,14 @@ def add_invoice():
         "Issue Date": request.form.get("issue_date", ""),
         "Due Date": request.form.get("due_date", ""),
         "Client Name": invoice_client_name,
-        "Client ID": _resolve_client_id_from_form(name=invoice_client_name, is_one_off=request.form.get("one_off_client") == "Yes"),
+        "Client ID": _resolve_client_id_from_form(name=invoice_client_name),
         "Client VAT Number": request.form.get("client_vat_number", ""),
         "Client Address": request.form.get("client_address", ""),
         "Service / Product": request.form.get("service_product", ""),
         "VAT Treatment": request.form.get("vat_treatment", "standard"),
         "Supply Type": request.form.get("supply_type", "services"),
         "Balance Due (€)": request.form.get("balance_due", ""),
-        "Status": _normalize_invoice_status(request.form.get("status", "Draft")),
+        "Status": _normalize_manual_invoice_status(request.form.get("status", "Draft")),
         "Payment Method": request.form.get("payment_method", ""),
         "Payment Date": request.form.get("payment_date", ""),
         "Bank Reconciliation": request.form.get("bank_reconciliation", "Unreconciled"),
@@ -8420,7 +8552,7 @@ def add_invoice():
                 "vat_treatment": request.form.get("vat_treatment", "standard"),
                 "supply_type": request.form.get("supply_type", "services"),
                 "balance_due": request.form.get("balance_due", ""),
-                "status": _normalize_invoice_status(request.form.get("status", "Draft")),
+                "status": _normalize_manual_invoice_status(request.form.get("status", "Draft")),
                 "payment_method": request.form.get("payment_method", ""),
                 "payment_date": request.form.get("payment_date", ""),
                 "bank_reconciliation": request.form.get("bank_reconciliation", "Unreconciled"),
@@ -8448,20 +8580,22 @@ def update_invoice():
         return redirect(url_for("invoices_view", message="Invoice could not be updated"))
 
     current_row = _find_sheet_row_or_raise("Invoices", row_number)
+    if _normalize_invoice_status(current_row.get("Status")) != "Draft":
+        return redirect(url_for("invoices_view", message="This invoice has been issued. To make changes you must cancel it and create a new invoice."))
     invoice_client_name = request.form.get("client_name", "")
     payload = {
         "Invoice #": str(current_row.get("Invoice #") or request.form.get("invoice_number", "")),
         "Issue Date": request.form.get("issue_date", ""),
         "Due Date": request.form.get("due_date", ""),
         "Client Name": invoice_client_name,
-        "Client ID": _resolve_client_id_from_form(name=invoice_client_name, is_one_off=request.form.get("one_off_client") == "Yes"),
+        "Client ID": _resolve_client_id_from_form(name=invoice_client_name),
         "Client VAT Number": request.form.get("client_vat_number", ""),
         "Client Address": request.form.get("client_address", ""),
         "Service / Product": request.form.get("service_product", ""),
         "VAT Treatment": request.form.get("vat_treatment", "standard"),
         "Supply Type": request.form.get("supply_type", "services"),
         "Balance Due (€)": request.form.get("balance_due", ""),
-        "Status": _normalize_invoice_status(request.form.get("status", "Draft")),
+        "Status": _normalize_manual_invoice_status(request.form.get("status", "Draft")),
         "Payment Method": request.form.get("payment_method", ""),
         "Payment Date": request.form.get("payment_date", ""),
         "Bank Reconciliation": request.form.get("bank_reconciliation", "Unreconciled"),
@@ -8495,7 +8629,7 @@ def update_invoice():
                 "vat_treatment": request.form.get("vat_treatment", "standard"),
                 "supply_type": request.form.get("supply_type", "services"),
                 "balance_due": request.form.get("balance_due", ""),
-                "status": _normalize_invoice_status(request.form.get("status", "Draft")),
+                "status": _normalize_manual_invoice_status(request.form.get("status", "Draft")),
                 "payment_method": request.form.get("payment_method", ""),
                 "payment_date": request.form.get("payment_date", ""),
                 "bank_reconciliation": request.form.get("bank_reconciliation", "Unreconciled"),
@@ -8517,21 +8651,79 @@ def update_invoice():
     return redirect(url_for("invoices_view", message=message))
 
 
-@app.route("/invoices/delete", methods=["POST"])
-def delete_invoice():
+@app.route("/invoices/cancel", methods=["POST"])
+def cancel_invoice():
+    """Invoices are never deleted — this is the only way to remove one from active
+    use, and it only ever flips Status to Cancelled (retained for the audit trail).
+    Paid/Partially Paid invoices must have their payment reversed first (see
+    /invoices/reverse-payment) so a cancellation can never silently erase a payment
+    record."""
     row_number = _parse_row_number(request.form.get("row_number"))
     if row_number is None:
-        return redirect(url_for("invoices_view", message="Invoice could not be removed"))
+        return redirect(url_for("invoices_view", message="Invoice could not be updated"))
 
     row = _find_sheet_row_or_raise("Invoices", row_number)
-    if _normalize_invoice_status(row.get("Status")) != "Cancelled":
+    status = _normalize_invoice_status(row.get("Status"))
+    if status in ("Paid", "Partially Paid"):
+        return redirect(url_for("invoices_view", message="This invoice has payments recorded. Reverse the payments before cancelling."))
+    if status != "Cancelled":
         row["Status"] = "Cancelled"
+        row["Cancellation Date"] = date.today().isoformat()
     _update_row_in_sheet("Invoices", row_number, row)
     _sync_invoice_income_entry(row)
     load_finance_data.cache_clear()
     _record_audit("cancel", "invoice", {"row_number": row_number, "record": row})
     _record_ledger_entry("cancel", "invoice", row, source="workbook", row_number=row_number)
     return redirect(url_for("invoices_view", message="Invoice cancelled and retained for audit trail"))
+
+
+@app.route("/invoices/reverse-payment", methods=["POST"])
+def reverse_invoice_payment():
+    """Undoes a recorded payment so a Paid/Partially Paid invoice can be cancelled —
+    resets the balance to the full total, clears the payment record, and removes the
+    linked Income entry (via _sync_invoice_income_entry, since the invoice is no
+    longer Paid/Partially Paid)."""
+    row_number = _parse_row_number(request.form.get("row_number"))
+    if row_number is None:
+        return redirect(url_for("invoices_view", message="Invoice could not be updated"))
+
+    row = _find_sheet_row_or_raise("Invoices", row_number)
+    if _normalize_invoice_status(row.get("Status")) not in ("Paid", "Partially Paid"):
+        return redirect(url_for("invoices_view", message="This invoice has no recorded payment to reverse"))
+
+    total = _coerce_number(row.get("Total (€)"))
+    row["Balance Due (€)"] = f"{total:.2f}"
+    row["Payment Date"] = ""
+    row["Payment Method"] = ""
+    row["Status"] = "Issued"
+    _auto_flag_overdue_invoices([row])
+    _update_row_in_sheet("Invoices", row_number, row)
+    _sync_invoice_income_entry(row)
+    load_finance_data.cache_clear()
+    _record_audit("reverse_payment", "invoice", {"row_number": row_number, "record": row})
+    _record_ledger_entry("update", "invoice", row, source="workbook", row_number=row_number)
+    return redirect(url_for("invoices_view", message="Payment reversed — invoice can now be cancelled"))
+
+
+@app.route("/invoices/bad-debt", methods=["POST"])
+def mark_invoice_bad_debt():
+    row_number = _parse_row_number(request.form.get("row_number"))
+    if row_number is None:
+        return redirect(url_for("invoices_view", message="Invoice could not be updated"))
+
+    row = _find_sheet_row_or_raise("Invoices", row_number)
+    status = _normalize_invoice_status(row.get("Status"))
+    if status in ("Paid", "Partially Paid"):
+        return redirect(url_for("invoices_view", message="This invoice has payments recorded. Reverse the payments before marking it as bad debt."))
+    if status == "Cancelled":
+        return redirect(url_for("invoices_view", message="Cancelled invoices cannot be marked as bad debt"))
+    row["Status"] = "Bad Debt"
+    _update_row_in_sheet("Invoices", row_number, row)
+    _sync_invoice_income_entry(row)
+    load_finance_data.cache_clear()
+    _record_audit("bad_debt", "invoice", {"row_number": row_number, "record": row})
+    _record_ledger_entry("update", "invoice", row, source="workbook", row_number=row_number)
+    return redirect(url_for("invoices_view", message="Invoice marked as bad debt"))
 
 
 @app.route("/invoices/record-payment", methods=["POST"])
@@ -8571,7 +8763,7 @@ def add_subscription():
         "title": request.form.get("title", "").strip(),
         "description": request.form.get("description", "").strip(),
         "supplier": subscription_supplier_name,
-        "supplier_id": _resolve_supplier_id_from_form(name=subscription_supplier_name, is_one_off=request.form.get("one_off_payee") == "Yes"),
+        "supplier_id": _resolve_supplier_id_from_form(name=subscription_supplier_name),
         "category": request.form.get("category", "").strip(),
         "net_amount": request.form.get("net_amount", ""),
         "total_amount": request.form.get("total_amount", ""),
@@ -8631,7 +8823,7 @@ def update_subscription():
         "title": request.form.get("title", "").strip(),
         "description": request.form.get("description", "").strip(),
         "supplier": subscription_supplier_name,
-        "supplier_id": _resolve_supplier_id_from_form(name=subscription_supplier_name, is_one_off=request.form.get("one_off_payee") == "Yes"),
+        "supplier_id": _resolve_supplier_id_from_form(name=subscription_supplier_name),
         "category": request.form.get("category", "").strip(),
         "net_amount": request.form.get("net_amount", ""),
         "total_amount": request.form.get("total_amount", ""),

@@ -43,5 +43,23 @@
     "Flags Acknowledged": "No",
     "Flags Acknowledged At": "",
     "Client ID": "CLT-001"
+  },
+  {
+    "Date": "2026-08-05",
+    "Description": "Test",
+    "Client / Source": "Client A",
+    "Category": "Consulting / Project Fees",
+    "Invoice #": "HQ-2026-011",
+    "Invoice ID": "HQ-2026-011",
+    "Source": "invoiced",
+    "Amount (\u20ac)": "100.00",
+    "Total incl. VAT (\u20ac)": "100.00",
+    "VAT Rate": "0%",
+    "VAT Amount (\u20ac)": "0.00",
+    "VAT Treatment": "standard",
+    "Supply Type": "services",
+    "Status": "Received",
+    "Payment Method": "Cash",
+    "Phase Tag": "Phase 1"
   }
 ]

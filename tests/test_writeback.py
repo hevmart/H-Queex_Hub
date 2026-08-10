@@ -1079,63 +1079,6 @@ def test_expense_paid_requires_payment_method(workbook_copy):
     assert b'Payment method is required when status is Paid' in response.data
 
 
-def test_invoice_paid_requires_payment_method_and_date(workbook_copy):
-    app.WORKBOOK_PATH = workbook_copy
-    app.load_finance_data.cache_clear()
-
-    response = app.app.test_client().post(
-        '/invoices/add',
-        data={
-            "issue_date": "",
-            "due_date": "2026-08-20",
-            "client_name": "Client A",
-            "client_vat_number": "IE1234567A",
-            "client_address": "1 Example Street, Dublin",
-            "service_product": "Validation",
-            "net_amount": "100.00",
-            "total_amount": "123.00",
-            "balance_due": "0.00",
-            "status": "Paid",
-            "payment_method": "",
-            "payment_date": "",
-            "bank_reconciliation": "Unreconciled",
-        },
-        follow_redirects=True,
-    )
-
-    assert response.status_code == 200
-    assert b'Payment method is required when status is Paid' in response.data
-    assert b'Payment date is required when status is Paid' in response.data
-
-
-def test_invoice_add_flash_mentions_payment_date_autofill(workbook_copy):
-    app.WORKBOOK_PATH = workbook_copy
-    app.load_finance_data.cache_clear()
-
-    response = app.app.test_client().post(
-        '/invoices/add',
-        data={
-            "issue_date": "2026-08-10",
-            "due_date": "2026-08-20",
-            "client_name": "Client A",
-            "client_vat_number": "IE1234567A",
-            "client_address": "1 Example Street, Dublin",
-            "service_product": "Invoice flash",
-            "line_items_json": _invoice_line_items_payload("Invoice flash", 100.00),
-            "balance_due": "0.00",
-            "status": "Paid",
-            "payment_method": "Business Bank",
-            "payment_date": "",
-            "bank_reconciliation": "Unreconciled",
-        },
-        follow_redirects=True,
-    )
-
-    assert response.status_code == 200
-    assert b'Invoice added' in response.data
-    assert b'payment date auto-filled from issue date' in response.data
-
-
 def test_invoice_paid_defaults_payment_date_from_issue_date():
     payload = {
         "Status": "Paid",
@@ -1282,10 +1225,21 @@ def test_reconciliation_exports_include_queue_and_exceptions(workbook_copy):
             "service_product": "Reconciliation test",
             "line_items_json": _invoice_line_items_payload("Reconciliation test", 200.00),
             "balance_due": "0.00",
-            "status": "Paid",
+            "status": "Issued",
             "bank_reconciliation": "Unreconciled",
-                "payment_method": "Business Bank",
-                "payment_date": "2026-07-01",
+        },
+    )
+    app.load_finance_data.cache_clear()
+    reconciliation_invoice = next(
+        row for row in app.load_finance_data()["sheets"]["Invoices"] if row.get("Service / Product") == "Reconciliation test"
+    )
+    app.app.test_client().post(
+        '/invoices/record-payment',
+        data={
+            "row_number": str(reconciliation_invoice["__row_number"]),
+            "amount_received": str(reconciliation_invoice.get("Total (€)") or "246.00"),
+            "payment_date": "2026-07-01",
+            "payment_method": "Business Bank",
         },
     )
 
@@ -1741,7 +1695,7 @@ def test_invoice_crud_routes_update_and_remove_rows(workbook_copy):
     assert update_response.status_code == 200
     assert b'Invoice updated' in update_response.data
 
-    delete_response = app.app.test_client().post('/invoices/delete', data={"row_number": str(target["__row_number"])}, follow_redirects=True)
+    delete_response = app.app.test_client().post('/invoices/cancel', data={"row_number": str(target["__row_number"])}, follow_redirects=True)
     assert delete_response.status_code == 200
     assert b'Invoice cancelled and retained for audit trail' in delete_response.data
 
@@ -2102,22 +2056,15 @@ def test_invoice_bad_debt_removes_linked_income_entry(workbook_copy):
     paid_invoice = next(row for row in app.load_finance_data()["sheets"]["Invoices"] if row["__row_number"] == invoice["__row_number"])
     assert any(row.get("Invoice ID") == paid_invoice["Invoice #"] for row in app.load_finance_data()["sheets"]["Income"])
 
-    update_payload = {
-        "row_number": str(invoice["__row_number"]),
-        "invoice_number": str(paid_invoice["Invoice #"]),
-        "issue_date": "2026-08-01",
-        "due_date": "2026-08-31",
-        "client_name": "Client A",
-        "client_vat_number": "IE1234567A",
-        "client_address": "1 Example Street, Dublin",
-        "service_product": "Consulting engagement",
-        "line_items_json": _invoice_line_items_payload("Consulting engagement", 500.00, vat_rate="0%"),
-        "balance_due": "500.00",
-        "status": "Bad Debt",
-    }
-    response = client.post('/invoices/update', data=update_payload, follow_redirects=True)
+    # Paid invoices must have their payment reversed before a status like Bad Debt
+    # can be applied — reverse first, then mark bad debt via the dedicated route
+    # (Bad Debt is a system-controlled status, no longer settable via /invoices/update).
+    reverse_response = client.post('/invoices/reverse-payment', data={"row_number": str(invoice["__row_number"])}, follow_redirects=True)
+    assert reverse_response.status_code == 200
+
+    response = client.post('/invoices/bad-debt', data={"row_number": str(invoice["__row_number"])}, follow_redirects=True)
     assert response.status_code == 200
-    assert b'Validation:' not in response.data
+    assert b'Invoice marked as bad debt' in response.data
 
     app.load_finance_data.cache_clear()
     remaining_links = [row for row in app.load_finance_data()["sheets"]["Income"] if row.get("Invoice ID") == paid_invoice["Invoice #"]]
@@ -2137,7 +2084,13 @@ def test_invoice_cancelled_removes_linked_income_entry(workbook_copy):
     )
     app.load_finance_data.cache_clear()
 
-    response = client.post('/invoices/delete', data={"row_number": str(invoice["__row_number"])}, follow_redirects=True)
+    # Paid invoices cannot be cancelled directly — reverse the payment first.
+    blocked_response = client.post('/invoices/cancel', data={"row_number": str(invoice["__row_number"])}, follow_redirects=True)
+    assert b'Reverse the payments before cancelling' in blocked_response.data
+
+    client.post('/invoices/reverse-payment', data={"row_number": str(invoice["__row_number"])}, follow_redirects=True)
+
+    response = client.post('/invoices/cancel', data={"row_number": str(invoice["__row_number"])}, follow_redirects=True)
     assert response.status_code == 200
     assert b'Invoice cancelled' in response.data
 
@@ -4546,21 +4499,6 @@ def test_expense_stores_supplier_id_alongside_supplier_name(workbook_copy):
     expenses = app.load_finance_data()["sheets"]["Expenses"]
     expense = next(row for row in expenses if row.get("Description") == "Supplier ID check")
     assert expense["Supplier ID"] == supplier_a_id
-
-
-def test_expense_one_off_payee_gets_no_supplier_id(workbook_copy):
-    app.WORKBOOK_PATH = workbook_copy
-    app.load_finance_data.cache_clear()
-    client = app.app.test_client()
-
-    data = _expense_add_payload(description="One-off payee check", category="Software and Subscriptions", supplier="Totally New Payee")
-    data["one_off_payee"] = "Yes"
-    client.post('/expenses/add', data=data, follow_redirects=True)
-
-    app.load_finance_data.cache_clear()
-    expenses = app.load_finance_data()["sheets"]["Expenses"]
-    expense = next(row for row in expenses if row.get("Description") == "One-off payee check")
-    assert expense["Supplier ID"] == ""
 
 
 def test_delivery_log_and_sop_resolve_client_id_join_key(workbook_copy):

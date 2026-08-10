@@ -2,42 +2,39 @@
 <a href="{{ url }}" class="edit-link">Edit</a>
 {%- endmacro %}
 
-{% macro archive_in_modal(action_url, field_name, field_value, label='Archive this record', confirm_message='Are you sure? This will archive the record.', confirm_action_label='Yes, archive', blocked_message=None) -%}
-<div class="modal-archive-divider"></div>
+{% macro danger_zone_item(action_url, field_name, field_value, label='Archive this record', confirm_message='Are you sure? This will archive the record.', confirm_action_label='Yes, archive', blocked_message=None) -%}
 {% if blocked_message %}
 <p class="modal-archive-blocked">{{ blocked_message }}</p>
 {% else %}
-<div class="modal-archive-section">
-  <button type="button" class="modal-archive-link">{{ label }}</button>
+<div class="modal-archive-section" data-archive-url="{{ action_url }}" data-archive-field="{{ field_name }}" data-archive-value="{{ field_value }}">
+  <button type="button" class="modal-archive-link">
+    <svg class="modal-archive-icon" viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><path fill="currentColor" d="M6 1a1 1 0 0 0-1 1v1H2.5a.5.5 0 0 0 0 1H3v9.5A1.5 1.5 0 0 0 4.5 15h7a1.5 1.5 0 0 0 1.5-1.5V4h.5a.5.5 0 0 0 0-1H11V2a1 1 0 0 0-1-1H6Zm0 1h4v1H6V2ZM4.5 4h7v9.5a.5.5 0 0 1-.5.5h-6a.5.5 0 0 1-.5-.5V4Zm2 2a.5.5 0 0 0-.5.5v6a.5.5 0 0 0 1 0v-6a.5.5 0 0 0-.5-.5Zm3 0a.5.5 0 0 0-.5.5v6a.5.5 0 0 0 1 0v-6a.5.5 0 0 0-.5-.5Z"/></svg>
+    {{ label }}
+  </button>
   <div class="modal-archive-confirm">
     <span class="modal-archive-confirm-text">{{ confirm_message }}</span>
     <button type="button" class="modal-archive-confirm-yes">{{ confirm_action_label }}</button>
     <button type="button" class="modal-archive-confirm-cancel">Cancel</button>
   </div>
-  <form method="post" action="{{ action_url }}" class="modal-archive-form" style="display:none;">
-    <input type="hidden" name="{{ field_name }}" value="{{ field_value }}">
-  </form>
 </div>
 {% endif %}
 {%- endmacro %}
 
-{% macro supplier_search_field(id_prefix, value, one_off_checked, name_field='supplier', one_off_name='one_off_payee', entity_key='supplier', entity_label='Supplier / payee', placeholder='Search suppliers...', one_off_label='One-off payee', one_off_hint="Won't be added to your supplier list.", id_field_name=none, record_id='') -%}
+{% macro archive_in_modal(action_url, field_name, field_value, label='Archive this record', confirm_message='Are you sure? This will archive the record.', confirm_action_label='Yes, archive', blocked_message=None) -%}
+<div class="modal-archive-zone">
+  <span class="modal-archive-zone-label">Danger zone</span>
+  <div class="modal-archive-divider"></div>
+  {{ danger_zone_item(action_url, field_name, field_value, label, confirm_message, confirm_action_label, blocked_message) }}
+</div>
+{%- endmacro %}
+
+{% macro supplier_search_field(id_prefix, value, name_field='supplier', entity_key='supplier', entity_label='Supplier / payee', placeholder='Search suppliers...', id_field_name=none, record_id='') -%}
 <div class="field optional supplier-combo" style="grid-column: 1 / -1;">
   <label for="{{ id_prefix }}_{{ entity_key }}">{{ entity_label }}</label>
   <div class="supplier-combo-input-wrap">
     <input id="{{ id_prefix }}_{{ entity_key }}" type="text" name="{{ name_field }}" autocomplete="off" placeholder="{{ placeholder }}" value="{{ value }}">
     <input type="hidden" id="{{ id_prefix }}_{{ entity_key }}_record_id" name="{{ id_field_name or (name_field ~ '_id') }}" value="{{ record_id }}">
     <div class="supplier-combo-dropdown" id="{{ id_prefix }}_{{ entity_key }}_dropdown"></div>
-  </div>
-  <div class="supplier-one-off-toggle">
-    <label class="toggle-switch">
-      <input type="checkbox" id="{{ id_prefix }}_{{ entity_key }}_one_off" name="{{ one_off_name }}" value="Yes" {% if one_off_checked %}checked{% endif %}>
-      <span class="toggle-track"><span class="toggle-knob"></span></span>
-    </label>
-    <div class="supplier-one-off-text">
-      <span class="one-off-label">{{ one_off_label }}</span>
-      <span class="one-off-hint">{{ one_off_hint }}</span>
-    </div>
   </div>
 </div>
 {%- endmacro %}
@@ -405,16 +402,12 @@
       }
       .supplier-combo-add:hover { background: var(--brand-bg-light); color: var(--brand-navy); }
       .supplier-combo-add .add-icon { font-size: 12px; font-weight: 700; }
-      .supplier-one-off-toggle { display: flex; align-items: flex-start; gap: 8px; margin-top: 8px; }
       .toggle-switch { position: relative; display: inline-block; width: 34px; height: 20px; flex-shrink: 0; cursor: pointer; margin-top: 1px; }
       .toggle-switch input { position: absolute; inset: 0; opacity: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; min-height: auto; }
       .toggle-track { position: absolute; inset: 0; background: var(--brand-border); border-radius: 999px; transition: background 150ms ease; }
       .toggle-knob { position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: var(--brand-white); box-shadow: 0 1px 2px rgba(22, 41, 74, 0.3); transition: transform 150ms ease; }
       .toggle-switch input:checked + .toggle-track { background: var(--brand-gold); }
       .toggle-switch input:checked + .toggle-track .toggle-knob { transform: translateX(14px); }
-      .supplier-one-off-text { display: flex; flex-direction: column; line-height: 1.3; }
-      .one-off-label { font-size: 13px; font-weight: 400; text-transform: none; letter-spacing: normal; color: var(--brand-charcoal); font-family: 'Segoe UI', sans-serif; }
-      .one-off-hint { font-size: 11px; font-weight: 400; text-transform: none; letter-spacing: normal; color: var(--brand-steel); margin-top: 2px; }
       .supplier-badge-incomplete {
         display: inline-block; padding: 2px 8px; border-radius: 999px; background: var(--brand-gold); color: var(--brand-white);
         font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.3px;
@@ -441,12 +434,22 @@
       .service-modal-box .modal-actions { margin-top: 18px; }
       .table-action-stack { align-items: center; }
       .edit-link { min-height: 34px; display: inline-flex; align-items: center; }
-      .modal-archive-divider { border-top: 1px solid var(--brand-border); margin: 20px 0 14px; width: 100%; }
+      .modal-archive-zone {
+        margin: 28px 0 4px; width: 100%; box-sizing: border-box; padding: 16px 18px;
+        background: rgba(198, 40, 40, 0.03); border: 1px solid rgba(198, 40, 40, 0.18); border-radius: 8px;
+      }
+      .modal-archive-zone-label {
+        display: block; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;
+        color: var(--brand-steel); font-family: 'Segoe UI', sans-serif; margin-bottom: 10px;
+      }
+      .modal-archive-divider { border-top: 1px solid rgba(198, 40, 40, 0.18); margin: 0 0 12px; width: 100%; }
       .modal-archive-section { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; }
       .modal-archive-link {
         background: none; border: 0; padding: 0; color: var(--brand-error); font-size: 13px; font-weight: 600;
         cursor: pointer; font-family: 'Segoe UI', sans-serif; text-decoration: underline;
+        display: inline-flex; align-items: center; gap: 6px;
       }
+      .modal-archive-icon { flex-shrink: 0; }
       .modal-archive-link:hover { color: #a31f1f; }
       .modal-archive-confirm {
         display: none; align-items: center; gap: 10px; flex-wrap: wrap; background: rgba(198, 40, 40, 0.06);
@@ -1101,7 +1104,7 @@
       <div class="section">
         <div class="edit-banner">
           <h2>Compliance timeline</h2>
-          <a href="/company/compliance#compliance-add-modal" class="btn-secondary" id="compliance_add_btn">+ Add Deadline</a>
+          <a href="/company/compliance#compliance-add-modal" class="btn-secondary" id="compliance_add_btn">+ New Deadline</a>
         </div>
         {% if compliance_deadlines %}
         <div class="actions-list" style="gap:10px;">
@@ -1133,7 +1136,7 @@
       <div class="modal-overlay" id="compliance_add_modal_overlay">
         <div class="modal-box compliance-modal-box form-modal-box">
           <div class="compliance-modal-header">
-            <h3>Add Deadline</h3>
+            <h3>New Deadline</h3>
           </div>
           <div class="compliance-modal-body">
             <form method="post" action="/company/compliance/add" class="form-shell" novalidate>
@@ -1776,7 +1779,7 @@
 
         <h3 style="color:var(--brand-navy);font-size:16px;font-weight:700;margin:16px 0 8px;">All delivery entries</h3>
         <table class="services-table">
-          <tr><th>Date</th><th>Client</th><th>Type</th><th class="col-name">Description</th><th>Hours</th><th>Billing period</th><th>Invoiced</th></tr>
+          <tr><th>Date</th><th>Client</th><th>Type</th><th class="col-name">Description</th><th>Hours</th><th>Billing period</th><th>Invoiced</th><th class="col-actions"></th></tr>
           {% for entry in delivery_entries_filtered %}
           <tr>
             <td>{{ entry.date }}</td>
@@ -1786,6 +1789,11 @@
             <td>{{ entry.hours_spent or '—' }}</td>
             <td>{{ entry.billing_period or '—' }}</td>
             <td>{% if entry.invoiced %}<span class="status-pill filed">Invoiced ({{ entry.invoice_id }})</span>{% else %}<span class="status-pill pending">Not invoiced</span>{% endif %}</td>
+            <td class="col-actions">
+              <div class="table-action-stack">
+                {{ edit_button('/operations/delivery?edit_id=' ~ entry.id ~ '#delivery-edit-modal') }}
+              </div>
+            </td>
           </tr>
           {% endfor %}
         </table>
@@ -1863,14 +1871,90 @@
           </div>
         </div>
       </div>
-      <script>window.DELIVERY_ADD_MODAL_OPEN = {{ 'true' if validation_errors else 'false' }};</script>
+      <script>window.DELIVERY_ADD_MODAL_OPEN = {{ 'true' if (validation_errors and not editing_delivery) else 'false' }};</script>
+
+      {% if editing_delivery %}
+      <div class="modal-overlay" id="delivery_edit_modal_overlay">
+        <div class="modal-box compliance-modal-box form-modal-box">
+          <div class="compliance-modal-header"><h3>Edit Delivery Entry</h3></div>
+          <div class="compliance-modal-body">
+            <form method="post" action="/operations/delivery/update" class="form-shell" enctype="multipart/form-data" novalidate>
+              <input type="hidden" name="delivery_id" value="{{ editing_delivery.id }}">
+              <div class="form-grid">
+                <div class="field required {% if validation_errors.get('date') %}has-error{% endif %}">
+                  <label for="delivery_edit_date">Date</label>
+                  <input id="delivery_edit_date" type="date" name="date" value="{{ delivery_form.get('date') if delivery_form else editing_delivery.date }}">
+                  {% if validation_errors.get('date') %}<span class="field-error">{{ validation_errors.get('date') }}</span>{% endif %}
+                </div>
+                <div class="field optional">
+                  <label for="delivery_edit_project_id">Project</label>
+                  <select id="delivery_edit_project_id" name="project_id">
+                    <option value="">No linked project</option>
+                    {% for project in projects if project.status not in ['Cancelled'] %}
+                    <option value="{{ project.id }}" {% if (delivery_form.get('project_id') if delivery_form else editing_delivery.project_id) == project.id %}selected{% endif %}>{{ project.title }} — {{ project.client_name }}</option>
+                    {% endfor %}
+                  </select>
+                </div>
+                <div class="field required {% if validation_errors.get('client_name') %}has-error{% endif %}">
+                  <label for="delivery_edit_client_name">Client</label>
+                  <select id="delivery_edit_client_name" name="client_id">
+                    <option value="">Select client (or choose a project above)</option>
+                    {% for client in clients_catalog %}
+                    <option value="{{ client.id }}" {% if (delivery_form.get('client_id') if delivery_form else editing_delivery.client_id) == client.id %}selected{% endif %}>{{ client.name }}</option>
+                    {% endfor %}
+                  </select>
+                  {% if validation_errors.get('client_name') %}<span class="field-error">{{ validation_errors.get('client_name') }}</span>{% endif %}
+                </div>
+                <div class="field required">
+                  <label for="delivery_edit_service_type">Service type</label>
+                  <select id="delivery_edit_service_type" name="service_type">
+                    {% for service_type in delivery_service_types %}
+                    <option value="{{ service_type }}" {% if (delivery_form.get('service_type') if delivery_form else editing_delivery.service_type) == service_type %}selected{% endif %}>{{ service_type }}</option>
+                    {% endfor %}
+                  </select>
+                </div>
+                <div class="field optional">
+                  <label for="delivery_edit_hours_spent">Hours spent</label>
+                  <input id="delivery_edit_hours_spent" type="number" step="0.25" name="hours_spent" value="{{ delivery_form.get('hours_spent') if delivery_form else editing_delivery.hours_spent }}" placeholder="0.00">
+                </div>
+                <div class="field optional">
+                  <label for="delivery_edit_billing_period">Billing period</label>
+                  <input id="delivery_edit_billing_period" type="text" name="billing_period" value="{{ delivery_form.get('billing_period') if delivery_form else editing_delivery.billing_period }}" placeholder="e.g. August 2026" {% if editing_delivery.invoiced %}disabled{% endif %}>
+                  {% if editing_delivery.invoiced %}<span class="mini">Already invoiced — billing period is locked.</span>{% endif %}
+                </div>
+                <div class="field required {% if validation_errors.get('description') %}has-error{% endif %}" style="grid-column: 1 / -1;">
+                  <label for="delivery_edit_description">Description</label>
+                  <textarea id="delivery_edit_description" name="description" rows="3" placeholder="Description">{{ delivery_form.get('description') if delivery_form else editing_delivery.description }}</textarea>
+                  {% if validation_errors.get('description') %}<span class="field-error">{{ validation_errors.get('description') }}</span>{% endif %}
+                </div>
+                <div class="field optional {% if validation_errors.get('deliverable_file') %}has-error{% endif %}" style="grid-column: 1 / -1;">
+                  <label for="delivery_edit_file">Attachment</label>
+                  <div class="receipt-dropzone" id="delivery_edit_file_dropzone">
+                    <input type="file" id="delivery_edit_file" name="deliverable_file" accept=".pdf,.docx,.png,.jpg,.jpeg,.xlsx,.csv" style="display:none;">
+                    <span class="receipt-dropzone-text">Drag file here or click to upload</span>
+                    <span class="receipt-dropzone-filename" id="delivery_edit_file_filename">{% if editing_delivery.deliverable_filename %}Current file: {{ editing_delivery.deliverable_filename }}{% endif %}</span>
+                  </div>
+                  {% if validation_errors.get('deliverable_file') %}<span class="field-error">{{ validation_errors.get('deliverable_file') }}</span>{% endif %}
+                </div>
+              </div>
+              {{ archive_in_modal('/operations/delivery/archive', 'delivery_id', editing_delivery.id, label='Archive this delivery entry', confirm_message='Are you sure? This will archive the delivery entry.', blocked_message='This entry has already been invoiced — it cannot be archived.' if editing_delivery.invoiced else None) }}
+              <div class="modal-actions">
+                <a href="/operations/delivery" class="btn-go-back">Cancel</a>
+                <button type="submit" class="btn-confirm-save">Update Entry</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>
+      <script>window.DELIVERY_EDIT_MODAL_OPEN = true;</script>
+      {% endif %}
       {% endif %}
 
       {% if active_tab == 'operations_sops' %}
       <div class="section">
         <div class="edit-banner">
           <h2>SOP Library</h2>
-          <a href="/operations/sops#sop-add-modal" class="btn-secondary" id="sop_add_btn">+ Add SOP</a>
+          <a href="/operations/sops#sop-add-modal" class="btn-secondary" id="sop_add_btn">+ New SOP</a>
         </div>
         <form method="get" action="/operations/sops" class="table-actions" style="gap:12px;margin-bottom:14px;flex-wrap:wrap;">
           <label class="field optional" style="margin:0;min-width:200px;">
@@ -1893,7 +1977,7 @@
           </label>
         </form>
 
-        {% set visible_sops = sops %}
+        {% set visible_sops = sops|rejectattr('archived')|list %}
         {% if sop_form.get('client_filter') %}{% set visible_sops = visible_sops|selectattr('client_name', 'equalto', sop_form.get('client_filter'))|list %}{% endif %}
         {% if sop_form.get('status_filter') %}{% set visible_sops = visible_sops|selectattr('status', 'equalto', sop_form.get('status_filter'))|list %}{% endif %}
 
@@ -1925,7 +2009,7 @@
 
       <div class="modal-overlay" id="sop_add_modal_overlay">
         <div class="modal-box compliance-modal-box form-modal-box">
-          <div class="compliance-modal-header"><h3>Add SOP</h3></div>
+          <div class="compliance-modal-header"><h3>New SOP</h3></div>
           <div class="compliance-modal-body">
             <form method="post" action="/operations/sops/add" class="form-shell" enctype="multipart/form-data" novalidate>
               <div class="form-grid">
@@ -2031,6 +2115,7 @@
                 {% endif %}
                 {% endif %}
               </div>
+              {{ archive_in_modal('/operations/sops/archive', 'sop_id', editing_sop.id, label='Archive this SOP', confirm_message='Are you sure? This will archive the SOP.') }}
               <div class="modal-actions">
                 <a href="/operations/sops" class="btn-go-back">Cancel</a>
                 <button type="submit" class="btn-confirm-save">Update SOP</button>
@@ -2319,6 +2404,7 @@
                   <textarea id="lead_edit_notes" name="notes" rows="3" placeholder="Notes">{{ lead_form.get('notes') if lead_form else editing_lead.notes }}</textarea>
                 </div>
               </div>
+              {{ archive_in_modal('/crm/leads/archive', 'lead_id', editing_lead.id, label='Archive this lead', confirm_message='Are you sure? This will archive the lead.') }}
               <div class="modal-actions">
                 <a href="/crm/leads" class="btn-go-back">Cancel</a>
                 <button type="submit" class="btn-confirm-save">Update Lead</button>
@@ -2570,6 +2656,7 @@
                   <textarea id="proposal_edit_notes" name="notes" rows="2" placeholder="Internal notes">{{ proposal_form.get('notes') if proposal_form else editing_proposal.notes }}</textarea>
                 </div>
               </div>
+              {{ archive_in_modal('/crm/proposals/archive', 'proposal_id', editing_proposal.id, label='Archive this proposal', confirm_message='Are you sure? This will archive the proposal.', blocked_message=('This proposal has been converted to invoice ' ~ editing_proposal.converted_invoice_id ~ ' — edit the invoice to change it.') if editing_proposal.converted_invoice_id else None) }}
               <div class="modal-actions">
                 <a href="/crm/proposals" class="btn-go-back">Cancel</a>
                 <button type="submit" class="btn-confirm-save">Update Proposal</button>
@@ -3044,7 +3131,7 @@
 
       <div class="section">
         <div class="edit-banner">
-          <h2>{% if editing_income %}Edit non-invoiced income{% else %}Non-invoiced income{% endif %}</h2>
+          <h2>{% if editing_income %}Edit Income Entry{% else %}New Income Entry{% endif %}</h2>
           {% if editing_income %}<a href="/income" class="cancel-link">Cancel edit</a>{% endif %}
         </div>
         <p class="mini">For money received without an invoice — grants, cash receipts, BTWEA, bank interest, etc.</p>
@@ -3064,7 +3151,17 @@
             <div class="field optional"><label for="income_vat_treatment">VAT treatment</label><select id="income_vat_treatment" name="vat_treatment">{% for option in vat_treatment_options %}<option value="{{ option.value }}" {% if (income_form and income_form.get('vat_treatment') == option.value) or (not income_form and editing_income and editing_income.get('VAT Treatment') == option.value) or (not income_form and not editing_income and option.value == 'standard') %}selected{% endif %}>{{ option.label }}</option>{% endfor %}</select></div>
             <div class="field optional"><label for="income_total_vat">Total incl. VAT</label><input id="income_total_vat" type="number" step="0.01" name="total_incl_vat" value="{{ income_form.get('total_incl_vat') if income_form else (editing_income.get('Total incl. VAT (€)') if editing_income else '') }}" placeholder="Total incl. VAT"></div>
             {% endif %}
-            <div class="field required"><label for="income_status">Status</label><select id="income_status" name="status">{% for option in income_status_options %}<option value="{{ option }}" {% if (income_form and income_form.get('status') == option) or (not income_form and editing_income and editing_income.get('Status') == option) or (not income_form and not editing_income and option == 'Received') %}selected{% endif %}>{{ option }}</option>{% endfor %}</select></div>
+            {% set current_income_status = income_form.get('status') if income_form else (editing_income.get('Status') if editing_income else 'Received') %}
+            <div class="field required">
+              <label for="income_status">Status</label>
+              {% if current_income_status == 'Received' %}
+              <div><span class="status-pill income-received">Received</span></div>
+              <input type="hidden" name="status" value="Received">
+              <span class="mini">Set automatically — logging an entry here means the money was received.</span>
+              {% else %}
+              <select id="income_status" name="status">{% for option in income_status_options %}<option value="{{ option }}" {% if current_income_status == option %}selected{% endif %}>{{ option }}</option>{% endfor %}</select>
+              {% endif %}
+            </div>
             <div class="field required"><label for="income_payment_method">Payment method</label><select id="income_payment_method" name="payment_method"><option value="">Select payment method</option>{% for option in income_payment_methods %}<option value="{{ option }}" {% if (income_form and income_form.get('payment_method') == option) or (not income_form and editing_income and editing_income.get('Payment Method') == option) %}selected{% endif %}>{{ option }}</option>{% endfor %}</select></div>
             <div class="field optional" style="grid-column: 1 / -1;"><label for="income_notes">Notes</label><textarea id="income_notes" name="notes" rows="3" placeholder="Notes">{{ income_form.get('notes') if income_form else (editing_income.get('Notes') if editing_income else '') }}</textarea></div>
           </div>
@@ -3121,13 +3218,13 @@
       </div>
       <div class="section">
         <div class="edit-banner">
-          <h2>{% if editing_expense %}Edit expense{% else %}Add expense{% endif %}</h2>
+          <h2>{% if editing_expense %}Edit Expense{% else %}New Expense{% endif %}</h2>
           {% if editing_expense %}<a href="/expenses" class="cancel-link">Cancel edit</a>{% endif %}
         </div>
 
         {% if not editing_expense %}
         <div class="section" id="expense_upload_step">
-          <div class="form-section-heading">Add expense</div>
+          <div class="form-section-heading">New expense</div>
           <div class="receipt-dropzone receipt-dropzone-large" id="expense_upload_step_dropzone">
             <input type="file" id="expense_upload_step_file" accept="image/*,.pdf" style="display:none;">
             <input type="file" id="expense_upload_step_camera" accept="image/*" capture="environment" style="display:none;">
@@ -3171,8 +3268,9 @@
           {% if editing_expense %}<input type="hidden" name="row_number" value="{{ editing_expense.get('__row_number') }}">{% endif %}
           {% if not editing_expense %}
           <select name="expense_type" id="expense_type_field" style="display:none;">
+            <option value="" selected>Select expense type</option>
             <option value="Subscription">Subscription</option>
-            <option value="Receipt or Invoice" selected>Receipt or Invoice</option>
+            <option value="Receipt or Invoice">Receipt or Invoice</option>
             <option value="Travel and Subsistence">Travel and Subsistence</option>
             <option value="Other">Other</option>
           </select>
@@ -3181,7 +3279,7 @@
             <div class="field optional">
               <div class="expense-type-selector" id="expense_type_selector">
                 <button type="button" class="expense-type-btn" data-expense-type="subscription">Subscription</button>
-                <button type="button" class="expense-type-btn active" data-expense-type="receipt">Receipt or Invoice</button>
+                <button type="button" class="expense-type-btn" data-expense-type="receipt">Receipt or Invoice</button>
                 <button type="button" class="expense-type-btn" data-expense-type="travel">Travel and Subsistence</button>
                 <button type="button" class="expense-type-btn" data-expense-type="other">Other</button>
               </div>
@@ -3219,13 +3317,13 @@
             </div>
           </div>
           <div class="form-row form-row-1">
-            {{ supplier_search_field('expense', expense_form.get('supplier') if expense_form else (editing_expense.get('Supplier / Payee') if editing_expense else ''), (expense_form and expense_form.get('one_off_payee') == 'Yes'), record_id=(expense_form.get('supplier_id') if expense_form else (editing_expense.get('Supplier ID') if editing_expense else ''))) }}
+            {{ supplier_search_field('expense', expense_form.get('supplier') if expense_form else (editing_expense.get('Supplier / Payee') if editing_expense else ''), record_id=(expense_form.get('supplier_id') if expense_form else (editing_expense.get('Supplier ID') if editing_expense else ''))) }}
           </div>
           <div class="form-row form-row-3">
             <div class="field required"><label for="expense_category">Category <span class="info-icon" id="expense_category_info" tabindex="0">ⓘ<div class="popover category-tooltip"></div></span></label><select id="expense_category" name="category"><option value="">Select category</option>{% for option in expense_categories %}<option value="{{ option }}" {% if (expense_form and expense_form.get('category') == option) or (not expense_form and editing_expense and editing_expense.get('Category') == option) %}selected{% endif %}>{{ option }}</option>{% endfor %}</select>
             </div>
-            <div class="field optional {% if validation_errors.get('supplier_vat_number') %}has-error{% endif %}"><label for="expense_supplier_vat">Supplier VAT number</label><input id="expense_supplier_vat" type="text" name="supplier_vat_number" value="{{ expense_form.get('supplier_vat_number') if expense_form else (editing_expense.get('Supplier VAT Number') if editing_expense else '') }}" placeholder="IE1234567A">{% if validation_errors.get('supplier_vat_number') %}<span class="field-error">{{ validation_errors.get('supplier_vat_number') }}</span>{% endif %}</div>
-            <div class="field optional"><label for="expense_receipt_reference">Receipt / invoice ref</label><input id="expense_receipt_reference" type="text" name="receipt_reference" value="{{ expense_form.get('receipt_reference') if expense_form else (editing_expense.get('Receipt / Invoice Ref') if editing_expense else '') }}" placeholder="INV-12345"></div>
+            <div class="field optional {% if validation_errors.get('supplier_vat_number') %}has-error{% endif %}"><label for="expense_supplier_vat">Supplier VAT number</label><input id="expense_supplier_vat" type="text" name="supplier_vat_number" value="{{ expense_form.get('supplier_vat_number') if expense_form else (editing_expense.get('Supplier VAT Number') if editing_expense else '') }}" placeholder="e.g. IE1234567890">{% if validation_errors.get('supplier_vat_number') %}<span class="field-error">{{ validation_errors.get('supplier_vat_number') }}</span>{% endif %}</div>
+            <div class="field optional"><label for="expense_receipt_reference">Receipt / invoice ref</label><input id="expense_receipt_reference" type="text" name="receipt_reference" value="{{ expense_form.get('receipt_reference') if expense_form else (editing_expense.get('Receipt / Invoice Ref') if editing_expense else '') }}" placeholder="e.g. INV-001"></div>
           </div>
 
           <div class="form-section-heading">Receipt upload</div>
@@ -3424,14 +3522,14 @@
 
       <div class="section">
         <div class="edit-banner">
-          <h2>{% if editing_subscription %}Edit subscription{% else %}Add subscription{% endif %}</h2>
+          <h2>{% if editing_subscription %}Edit Subscription{% else %}New Subscription{% endif %}</h2>
           {% if editing_subscription %}<a href="/subscriptions" class="cancel-link">Cancel edit</a>{% endif %}
         </div>
         <form method="post" action="{% if editing_subscription %}/subscriptions/update{% else %}/subscriptions/add{% endif %}" class="form-shell">
           {% if editing_subscription %}<input type="hidden" name="subscription_id" value="{{ editing_subscription.get('id') }}">{% endif %}
           <div class="form-grid">
             <div class="field {% if validation_errors.get('title') %}has-error{% endif %}"><label for="subscription_title">Subscription name</label><input id="subscription_title" type="text" name="title" value="{{ subscription_form.get('title') if subscription_form else (editing_subscription.get('title') if editing_subscription else '') }}" placeholder="Adobe Creative Cloud" required>{% if validation_errors.get('title') %}<span class="field-error">{{ validation_errors.get('title') }}</span>{% endif %}</div>
-            {{ supplier_search_field('subscription', subscription_form.get('supplier') if subscription_form else (editing_subscription.get('supplier') if editing_subscription else ''), (subscription_form and subscription_form.get('one_off_payee') == 'Yes'), record_id=(subscription_form.get('supplier_id') if subscription_form else (editing_subscription.get('supplier_id') if editing_subscription else ''))) }}
+            {{ supplier_search_field('subscription', subscription_form.get('supplier') if subscription_form else (editing_subscription.get('supplier') if editing_subscription else ''), record_id=(subscription_form.get('supplier_id') if subscription_form else (editing_subscription.get('supplier_id') if editing_subscription else ''))) }}
             <div class="field"><label for="subscription_category">Category</label><select id="subscription_category" name="category"><option value="">Select category</option>{% for option in expense_categories %}<option value="{{ option }}" {% if (subscription_form and subscription_form.get('category') == option) or (not subscription_form and editing_subscription and editing_subscription.get('category') == option) %}selected{% endif %}>{{ option }}</option>{% endfor %}</select></div>
             <div class="field {% if validation_errors.get('frequency') %}has-error{% endif %}"><label for="subscription_frequency">Frequency</label><select id="subscription_frequency" name="frequency">{% for option in subscription_frequencies %}<option value="{{ option }}" {% if (subscription_form and subscription_form.get('frequency') == option) or (not subscription_form and editing_subscription and editing_subscription.get('frequency') == option) %}selected{% endif %}>{{ option|title }}</option>{% endfor %}</select>{% if validation_errors.get('frequency') %}<span class="field-error">{{ validation_errors.get('frequency') }}</span>{% endif %}</div>
             <div class="field {% if validation_errors.get('start_date') %}has-error{% endif %}"><label for="subscription_start_date">First charge date</label><input id="subscription_start_date" type="date" name="start_date" value="{{ subscription_form.get('start_date') if subscription_form else (editing_subscription.get('start_date') if editing_subscription else today_iso) }}" required>{% if validation_errors.get('start_date') %}<span class="field-error">{{ validation_errors.get('start_date') }}</span>{% endif %}</div>
@@ -3440,8 +3538,8 @@
             <div class="field {% if validation_errors.get('net_amount') %}has-error{% endif %}"><label for="subscription_net_amount">Net amount</label><input id="subscription_net_amount" type="number" step="0.01" name="net_amount" value="{{ subscription_form.get('net_amount') if subscription_form else (editing_subscription.get('net_amount') if editing_subscription else '') }}" placeholder="0.00">{% if validation_errors.get('net_amount') %}<span class="field-error">{{ validation_errors.get('net_amount') }}</span>{% endif %}</div>
             <div class="field {% if validation_errors.get('total_amount') %}has-error{% endif %}"><label for="subscription_total_amount">Total amount</label><input id="subscription_total_amount" type="number" step="0.01" name="total_amount" value="{{ subscription_form.get('total_amount') if subscription_form else (editing_subscription.get('total_amount') if editing_subscription else '') }}" placeholder="0.00" required>{% if validation_errors.get('total_amount') %}<span class="field-error">{{ validation_errors.get('total_amount') }}</span>{% endif %}</div>
             <div class="field {% if validation_errors.get('status') %}has-error{% endif %}"><label for="subscription_status">Status</label><select id="subscription_status" name="status">{% for option in subscription_statuses %}<option value="{{ option }}" {% if (subscription_form and subscription_form.get('status') == option) or (not subscription_form and ((editing_subscription and editing_subscription.get('status') == option) or (not editing_subscription and option == 'active'))) %}selected{% endif %}>{{ option|title }}</option>{% endfor %}</select>{% if validation_errors.get('status') %}<span class="field-error">{{ validation_errors.get('status') }}</span>{% endif %}</div>
-            <div class="field" style="grid-column: 1 / -1;"><label for="subscription_description">Description</label><textarea id="subscription_description" name="description" rows="4" placeholder="Design software">{{ subscription_form.get('description') if subscription_form else (editing_subscription.get('description') if editing_subscription else '') }}</textarea></div>
-            <div class="field" style="grid-column: 1 / -1;"><label for="subscription_notes">Notes</label><textarea id="subscription_notes" name="notes" rows="3" placeholder="VAT included, annual renewal, company card">{{ subscription_form.get('notes') if subscription_form else (editing_subscription.get('notes') if editing_subscription else '') }}</textarea></div>
+            <div class="field" style="grid-column: 1 / -1;"><label for="subscription_description">Description</label><textarea id="subscription_description" name="description" rows="4" placeholder="e.g. Design software">{{ subscription_form.get('description') if subscription_form else (editing_subscription.get('description') if editing_subscription else '') }}</textarea></div>
+            <div class="field" style="grid-column: 1 / -1;"><label for="subscription_notes">Notes</label><textarea id="subscription_notes" name="notes" rows="3" placeholder="e.g. VAT included, annual renewal, company card">{{ subscription_form.get('notes') if subscription_form else (editing_subscription.get('notes') if editing_subscription else '') }}</textarea></div>
           </div>
           <div class="form-actions"><button type="submit">{% if editing_subscription %}Update subscription{% else %}Save subscription{% endif %}</button></div>
           {% if editing_subscription %}
@@ -3507,14 +3605,14 @@
 
       <div class="section">
         <div class="edit-banner">
-          <h2>{% if editing_payroll %}Edit payroll entry{% else %}Add payroll entry{% endif %}</h2>
+          <h2>{% if editing_payroll %}Edit Payroll Entry{% else %}New Payroll Entry{% endif %}</h2>
           {% if editing_payroll %}<a href="/payroll" class="cancel-link">Cancel edit</a>{% endif %}
         </div>
         <form method="post" action="{% if editing_payroll %}/payroll/update{% else %}/payroll/add{% endif %}" class="form-shell" novalidate>
           {% if editing_payroll %}<input type="hidden" name="payroll_id" value="{{ editing_payroll.get('id') }}">{% endif %}
           <div class="form-grid">
             <div class="field optional {% if validation_errors.get('pay_date') %}has-error{% endif %}"><label for="payroll_pay_date">Pay date</label><input id="payroll_pay_date" type="date" name="pay_date" value="{{ payroll_form.get('pay_date') if payroll_form else (editing_payroll.get('Pay Date') if editing_payroll else '') }}">{% if validation_errors.get('pay_date') %}<span class="field-error">{{ validation_errors.get('pay_date') }}</span>{% endif %}</div>
-            <div class="field optional"><label for="payroll_period">Payroll period</label><input id="payroll_period" type="text" name="payroll_period" value="{{ payroll_form.get('payroll_period') if payroll_form else (editing_payroll.get('Payroll Period') if editing_payroll else '') }}" placeholder="2026-08"></div>
+            <div class="field optional"><label for="payroll_period">Payroll period</label><input id="payroll_period" type="text" name="payroll_period" value="{{ payroll_form.get('payroll_period') if payroll_form else (editing_payroll.get('Payroll Period') if editing_payroll else '') }}" placeholder="e.g. 2026-08"></div>
             <div class="field required {% if validation_errors.get('employee_name') %}has-error{% endif %}"><label for="payroll_employee_name">Employee name</label><input id="payroll_employee_name" type="text" name="employee_name" value="{{ payroll_form.get('employee_name') if payroll_form else (editing_payroll.get('Employee Name') if editing_payroll else '') }}" placeholder="Employee">{% if validation_errors.get('employee_name') %}<span class="field-error">{{ validation_errors.get('employee_name') }}</span>{% endif %}</div>
             <div class="field required {% if validation_errors.get('gross_pay') %}has-error{% endif %}"><label for="payroll_gross_pay">Gross pay</label><input id="payroll_gross_pay" type="number" step="0.01" name="gross_pay" value="{{ payroll_form.get('gross_pay') if payroll_form else (editing_payroll.get('Gross Pay (€)') if editing_payroll else '') }}" placeholder="0.00">{% if validation_errors.get('gross_pay') %}<span class="field-error">{{ validation_errors.get('gross_pay') }}</span>{% endif %}</div>
             <div class="field optional {% if validation_errors.get('paye') %}has-error{% endif %}"><label for="payroll_paye">PAYE</label><input id="payroll_paye" type="number" step="0.01" name="paye" value="{{ payroll_form.get('paye') if payroll_form else (editing_payroll.get('PAYE (€)') if editing_payroll else '') }}" placeholder="0.00">{% if validation_errors.get('paye') %}<span class="field-error">{{ validation_errors.get('paye') }}</span>{% endif %}</div>
@@ -3576,18 +3674,24 @@
       </div>
       <div class="section">
         <div class="edit-banner">
-          <h2>{% if editing_invoice %}Edit invoice{% else %}Add invoice{% endif %}</h2>
+          <h2>{% if editing_invoice %}Edit Invoice{% else %}New Invoice{% endif %}</h2>
           {% if editing_invoice %}<a href="/invoices" class="cancel-link">Cancel edit</a>{% endif %}
         </div>
+        {% set invoice_current_status = editing_invoice.get('Status') if editing_invoice else 'Draft' %}
+        {% set invoice_locked = editing_invoice and invoice_current_status != 'Draft' %}
+        {% if invoice_locked %}
+        <div class="compliance-panel severity-warning" style="margin-bottom:14px;">This invoice has been issued. To make changes you must cancel it and create a new invoice.</div>
+        {% endif %}
         <form method="post" action="{% if editing_invoice %}/invoices/update{% else %}/invoices/add{% endif %}" class="form-shell" novalidate>
           {% if editing_invoice %}<input type="hidden" name="row_number" value="{{ editing_invoice.get('__row_number') }}">{% endif %}
+          <fieldset {% if invoice_locked %}disabled{% endif %} style="border:0; padding:0; margin:0; min-width:0; display:contents;">
           <div class="form-grid">
             <div class="field optional {% if validation_errors.get('invoice_number') %}has-error{% endif %}"><label for="invoice_number">Invoice #</label><input id="invoice_number" type="text" name="invoice_number" value="{{ invoice_form.get('invoice_number') if invoice_form else (editing_invoice.get('Invoice #') if editing_invoice else 'Auto-generated on save') }}" {% if not editing_invoice %}readonly{% endif %}>{% if validation_errors.get('invoice_number') %}<span class="field-error">{{ validation_errors.get('invoice_number') }}</span>{% endif %}</div>
             <div class="field required"><label for="invoice_issue_date">Issue date</label><input id="invoice_issue_date" type="date" name="issue_date" value="{{ invoice_form.get('issue_date') if invoice_form else (editing_invoice.get('Issue Date') if editing_invoice else '') }}"></div>
             <div class="field required {% if validation_errors.get('due_date') %}has-error{% endif %}"><label for="invoice_due_date">Due date</label><input id="invoice_due_date" type="date" name="due_date" value="{{ invoice_form.get('due_date') if invoice_form else (editing_invoice.get('Due Date') if editing_invoice else '') }}">{% if validation_errors.get('due_date') %}<span class="field-error">{{ validation_errors.get('due_date') }}</span>{% endif %}</div>
-            {{ supplier_search_field('invoice', invoice_form.get('client_name') if invoice_form else (editing_invoice.get('Client Name') if editing_invoice else ''), (invoice_form and invoice_form.get('one_off_client') == 'Yes'), name_field='client_name', one_off_name='one_off_client', entity_key='client_name', entity_label='Client', placeholder='Search clients...', one_off_label='One-off client', one_off_hint="Won't be added to your client list.", id_field_name='client_id', record_id=(invoice_form.get('client_id') if invoice_form else (editing_invoice.get('Client ID') if editing_invoice else ''))) }}
+            {{ supplier_search_field('invoice', invoice_form.get('client_name') if invoice_form else (editing_invoice.get('Client Name') if editing_invoice else ''), name_field='client_name', entity_key='client_name', entity_label='Client', placeholder='Search clients...', id_field_name='client_id', record_id=(invoice_form.get('client_id') if invoice_form else (editing_invoice.get('Client ID') if editing_invoice else ''))) }}
             {% if validation_errors.get('client_name') %}<span class="field-error">{{ validation_errors.get('client_name') }}</span>{% endif %}
-            <div class="field optional {% if validation_errors.get('client_vat_number') %}has-error{% endif %}"><label for="invoice_client_vat_number">Client VAT number</label><input id="invoice_client_vat_number" type="text" name="client_vat_number" value="{{ invoice_form.get('client_vat_number') if invoice_form else (editing_invoice.get('Client VAT Number') if editing_invoice else '') }}" placeholder="IE1234567A">{% if validation_errors.get('client_vat_number') %}<span class="field-error">{{ validation_errors.get('client_vat_number') }}</span>{% endif %}</div>
+            <div class="field optional {% if validation_errors.get('client_vat_number') %}has-error{% endif %}"><label for="invoice_client_vat_number">Client VAT number</label><input id="invoice_client_vat_number" type="text" name="client_vat_number" value="{{ invoice_form.get('client_vat_number') if invoice_form else (editing_invoice.get('Client VAT Number') if editing_invoice else '') }}" placeholder="e.g. IE1234567890">{% if validation_errors.get('client_vat_number') %}<span class="field-error">{{ validation_errors.get('client_vat_number') }}</span>{% endif %}</div>
             <div class="field optional {% if validation_errors.get('client_address') %}has-error{% endif %}"><label for="invoice_client_address">Client address</label><input id="invoice_client_address" type="text" name="client_address" value="{{ invoice_form.get('client_address') if invoice_form else (editing_invoice.get('Client Address') if editing_invoice else '') }}" placeholder="Client legal address">{% if validation_errors.get('client_address') %}<span class="field-error">{{ validation_errors.get('client_address') }}</span>{% endif %}</div>
             {% if vat_registered %}
             <div class="field optional"><label for="invoice_vat_treatment">VAT treatment</label><select id="invoice_vat_treatment" name="vat_treatment">{% for option in vat_treatment_options %}<option value="{{ option.value }}" {% if (invoice_form and invoice_form.get('vat_treatment') == option.value) or (not invoice_form and editing_invoice and editing_invoice.get('VAT Treatment') == option.value) or (not invoice_form and not editing_invoice and option.value == 'standard') %}selected{% endif %}>{{ option.label }}</option>{% endfor %}</select></div>
@@ -3606,21 +3710,45 @@
           </div>
           <div class="form-grid">
             <div class="field optional {% if validation_errors.get('balance_due') %}has-error{% endif %}"><label for="invoice_balance_due">Balance due</label><input id="invoice_balance_due" type="number" step="0.01" name="balance_due" value="{{ invoice_form.get('balance_due') if invoice_form else (editing_invoice.get('Balance Due (€)') if editing_invoice else '') }}" placeholder="0.00">{% if validation_errors.get('balance_due') %}<span class="field-error">{{ validation_errors.get('balance_due') }}</span>{% endif %}</div>
-            <div class="field optional"><label for="invoice_status">Status</label><select id="invoice_status" name="status">{% for option in invoice_status_options %}<option value="{{ option }}" {% if (invoice_form and invoice_form.get('status') == option) or (not invoice_form and editing_invoice and editing_invoice.get('Status') == option) or (not invoice_form and not editing_invoice and option == 'Draft') %}selected{% endif %}>{{ option }}</option>{% endfor %}</select></div>
+            <div class="field optional">
+              <label for="invoice_status">Status</label>
+              {% if not editing_invoice or invoice_current_status == 'Draft' %}
+              <select id="invoice_status" name="status">{% for option in invoice_manual_status_options %}<option value="{{ option }}" {% if (invoice_form and invoice_form.get('status') == option) or (not invoice_form and editing_invoice and invoice_current_status == option) or (not invoice_form and not editing_invoice and option == 'Draft') %}selected{% endif %}>{{ option }}</option>{% endfor %}</select>
+              {% else %}
+              <div><span class="status-pill {{ invoice_current_status|lower|replace(' ', '-') }}">{{ invoice_current_status }}</span></div>
+              <span class="mini">Set automatically by the system — cancel or mark as bad debt in the Danger Zone below to change it.</span>
+              {% endif %}
+            </div>
             <div class="field optional {% if validation_errors.get('payment_method') %}has-error{% endif %}"><label for="invoice_payment_method">Payment method</label><select id="invoice_payment_method" name="payment_method"><option value="">Select payment method</option>{% for option in expense_payment_methods %}<option value="{{ option }}" {% if (invoice_form and invoice_form.get('payment_method') == option) or (not invoice_form and editing_invoice and editing_invoice.get('Payment Method') == option) %}selected{% endif %}>{{ option }}</option>{% endfor %}</select>{% if validation_errors.get('payment_method') %}<span class="field-error">{{ validation_errors.get('payment_method') }}</span>{% endif %}</div>
             <div class="field optional {% if validation_errors.get('payment_date') %}has-error{% endif %}"><label for="invoice_payment_date">Payment date</label><input id="invoice_payment_date" type="date" name="payment_date" value="{{ invoice_form.get('payment_date') if invoice_form else (editing_invoice.get('Payment Date') if editing_invoice else '') }}">{% if validation_errors.get('payment_date') %}<span class="field-error">{{ validation_errors.get('payment_date') }}</span>{% endif %}</div>
             <div class="field optional"><label for="invoice_bank_reconciliation">Bank reconciliation</label><select id="invoice_bank_reconciliation" name="bank_reconciliation"><option value="Reconciled" {% if (invoice_form and invoice_form.get('bank_reconciliation') == 'Reconciled') or (not invoice_form and editing_invoice and editing_invoice.get('Bank Reconciliation') == 'Reconciled') %}selected{% endif %}>Reconciled</option><option value="Unreconciled" {% if (invoice_form and invoice_form.get('bank_reconciliation') == 'Unreconciled') or (not invoice_form and editing_invoice and editing_invoice.get('Bank Reconciliation') == 'Unreconciled') or (not invoice_form and not editing_invoice) %}selected{% endif %}>Unreconciled</option></select></div>
             <div class="field optional" style="grid-column: 1 / -1;"><label for="invoice_notes">Notes</label><textarea id="invoice_notes" name="notes" rows="3" placeholder="Internal or compliance notes">{{ invoice_form.get('notes') if invoice_form else (editing_invoice.get('Notes') if editing_invoice else '') }}</textarea></div>
           </div>
           <div class="form-actions"><button type="submit">{% if editing_invoice %}Update invoice{% else %}Save invoice{% endif %}</button></div>
+          </fieldset>
           {% if editing_invoice %}
-          {{ archive_in_modal('/invoices/delete', 'row_number', editing_invoice.get('__row_number'), label='Cancel invoice', confirm_message='Are you sure? This will cancel the invoice.', confirm_action_label='Yes, cancel') }}
+          <div class="modal-archive-zone">
+            <span class="modal-archive-zone-label">Danger zone</span>
+            <div class="modal-archive-divider"></div>
+            {% if invoice_current_status in ['Paid', 'Partially Paid'] %}
+            {{ danger_zone_item('/invoices/reverse-payment', 'row_number', editing_invoice.get('__row_number'), label='Reverse payment', confirm_message='Are you sure? This will undo the recorded payment and reopen the invoice as Issued.', confirm_action_label='Yes, reverse payment') }}
+            <p class="modal-archive-blocked">This invoice has payments recorded. Reverse the payments before cancelling.</p>
+            {% else %}
+            {{ danger_zone_item('/invoices/cancel', 'row_number', editing_invoice.get('__row_number'), label='Cancel invoice', confirm_message='Are you sure? This will cancel the invoice.', confirm_action_label='Yes, cancel', blocked_message='This invoice is already cancelled.' if invoice_current_status == 'Cancelled' else None) }}
+            {% if invoice_current_status not in ['Cancelled', 'Bad Debt'] %}
+            {{ danger_zone_item('/invoices/bad-debt', 'row_number', editing_invoice.get('__row_number'), label='Mark as bad debt', confirm_message='Are you sure? This marks the invoice as bad debt — it will never be paid.', confirm_action_label='Yes, mark as bad debt') }}
+            {% endif %}
+            {% endif %}
+          </div>
           {% endif %}
         </form>
       </div>
-      {% if invoices %}
       <div class="section">
-        <h2>Invoice register</h2>
+        <div class="edit-banner">
+          <h2>Invoice register</h2>
+          <a href="/invoices{% if not show_cancelled_invoices %}?show_cancelled=1{% endif %}" class="cancel-link">{% if show_cancelled_invoices %}Hide cancelled{% else %}Show cancelled{% endif %}</a>
+        </div>
+        {% if invoices %}
         <table>
           <tr><th>Invoice #</th><th>Client</th><th>Services</th><th>Total (€)</th><th>Balance Due (€)</th><th>Status</th><th></th></tr>
           {% for row in invoices %}
@@ -3663,6 +3791,9 @@
           </tr>
           {% endfor %}
         </table>
+        {% else %}
+        <p class="mini">{% if show_cancelled_invoices %}No invoices yet.{% else %}No active invoices — {% endif %}<a href="/invoices{% if not show_cancelled_invoices %}?show_cancelled=1{% endif %}">{% if not show_cancelled_invoices %}show cancelled invoices{% endif %}</a></p>
+        {% endif %}
       </div>
 
       <div class="modal-overlay" id="payment_modal_overlay">
@@ -3711,13 +3842,12 @@
         }
       </script>
       {% endif %}
-      {% endif %}
 
       {% if active_tab == 'services' %}
       <div class="section">
         <div class="edit-banner">
           <h2>Core service tiers</h2>
-          <a href="/services#service-modal" class="btn-secondary" id="service_add_btn">+ Add Service</a>
+          <a href="/services#service-modal" class="btn-secondary" id="service_add_btn">+ New Service</a>
         </div>
         <div class="tier-card-grid">
           {% for service in services if service.tier == 'core' and service.status == 'active' %}
@@ -3786,7 +3916,7 @@
       <div class="modal-overlay" id="service_modal_overlay">
         <div class="modal-box compliance-modal-box service-modal-box">
           <div class="compliance-modal-header">
-            <h3 id="service_modal_title">{% if editing_service %}Edit Service{% else %}Add Service{% endif %}</h3>
+            <h3 id="service_modal_title">{% if editing_service %}Edit Service{% else %}New Service{% endif %}</h3>
           </div>
           <div class="compliance-modal-body">
             <form method="post" action="{% if editing_service %}/services/update{% else %}/services/add{% endif %}" class="form-shell" novalidate>
@@ -3888,7 +4018,7 @@
       <div class="section">
         <div class="edit-banner">
           <h2>Clients</h2>
-          <a href="/clients#client-modal" class="btn-secondary" id="client_add_btn">+ Add Client</a>
+          <a href="/clients#client-modal" class="btn-secondary" id="client_add_btn">+ New Client</a>
         </div>
         <table>
           <tr><th>Client Name</th><th>Contact Person</th><th>Email</th><th>Phone</th><th>Service Tier</th><th></th></tr>
@@ -3912,7 +4042,7 @@
       <div class="section">
         <div class="edit-banner">
           <h2>Clients</h2>
-          <a href="/clients#client-modal" class="btn-secondary" id="client_add_btn">+ Add Client</a>
+          <a href="/clients#client-modal" class="btn-secondary" id="client_add_btn">+ New Client</a>
         </div>
       </div>
       {% endif %}
@@ -3920,7 +4050,7 @@
       <div class="modal-overlay" id="client_modal_overlay">
         <div class="modal-box compliance-modal-box form-modal-box">
           <div class="compliance-modal-header">
-            <h3>{% if editing_client %}Edit Client{% else %}Add Client{% endif %}</h3>
+            <h3>{% if editing_client %}Edit Client{% else %}New Client{% endif %}</h3>
           </div>
           <div class="compliance-modal-body">
             <form method="post" action="{% if editing_client %}/clients/update{% else %}/clients/add{% endif %}" class="form-shell" novalidate>
@@ -4011,7 +4141,7 @@
       <div class="section">
         <div class="edit-banner">
           <h2>Suppliers</h2>
-          <a href="/suppliers#supplier-modal" class="btn-secondary" id="supplier_add_btn">+ Add Supplier</a>
+          <a href="/suppliers#supplier-modal" class="btn-secondary" id="supplier_add_btn">+ New Supplier</a>
         </div>
         <table>
           <tr><th>Supplier Name</th><th>Contact Person</th><th>Email</th><th>Country</th><th></th><th></th></tr>
@@ -4035,7 +4165,7 @@
       <div class="section">
         <div class="edit-banner">
           <h2>Suppliers</h2>
-          <a href="/suppliers#supplier-modal" class="btn-secondary" id="supplier_add_btn">+ Add Supplier</a>
+          <a href="/suppliers#supplier-modal" class="btn-secondary" id="supplier_add_btn">+ New Supplier</a>
         </div>
       </div>
       {% endif %}
@@ -4043,7 +4173,7 @@
       <div class="modal-overlay" id="supplier_modal_overlay">
         <div class="modal-box compliance-modal-box form-modal-box">
           <div class="compliance-modal-header">
-            <h3>{% if editing_supplier %}Edit Supplier{% else %}Add Supplier{% endif %}</h3>
+            <h3>{% if editing_supplier %}Edit Supplier{% else %}New Supplier{% endif %}</h3>
           </div>
           <div class="compliance-modal-body">
             <form method="post" action="{% if editing_supplier %}/suppliers/update{% else %}/suppliers/add{% endif %}" class="form-shell" novalidate>
@@ -4054,7 +4184,7 @@
                 <div class="field optional"><label for="supplier_email">Email</label><input id="supplier_email" type="email" name="email" value="{{ supplier_form.get('email') if supplier_form else (editing_supplier.get('Email') if editing_supplier else '') }}" placeholder="Email"></div>
                 <div class="field optional"><label for="supplier_phone">Phone</label><input id="supplier_phone" type="text" name="phone" value="{{ supplier_form.get('phone') if supplier_form else (editing_supplier.get('Phone') if editing_supplier else '') }}" placeholder="Phone"></div>
                 <div class="field optional"><label for="supplier_country">Country</label><input id="supplier_country" type="text" name="country" value="{{ supplier_form.get('country') if supplier_form else (editing_supplier.get('Country') if editing_supplier else '') }}" placeholder="Country"></div>
-                <div class="field optional"><label for="supplier_vat">Default VAT treatment</label><input id="supplier_vat" type="text" name="default_vat_treatment" value="{{ supplier_form.get('default_vat_treatment') if supplier_form else (editing_supplier.get('Default VAT Treatment') if editing_supplier else '') }}" placeholder="Standard"></div>
+                <div class="field optional"><label for="supplier_vat">Default VAT treatment</label><input id="supplier_vat" type="text" name="default_vat_treatment" value="{{ supplier_form.get('default_vat_treatment') if supplier_form else (editing_supplier.get('Default VAT Treatment') if editing_supplier else '') }}" placeholder="e.g. Standard"></div>
               </div>
               {% if editing_supplier %}
               {{ archive_in_modal('/suppliers/delete', 'row_number', editing_supplier.get('__row_number')) }}
@@ -5336,7 +5466,6 @@
         var input = document.getElementById(idPrefix + "_" + entityKey);
         var dropdown = document.getElementById(idPrefix + "_" + entityKey + "_dropdown");
         var wrapper = input ? input.closest(".supplier-combo") : null;
-        var oneOffCheckbox = document.getElementById(idPrefix + "_" + entityKey + "_one_off");
         var recordIdField = document.getElementById(idPrefix + "_" + entityKey + "_record_id");
         if (!input || !dropdown) { return; }
 
@@ -5414,10 +5543,6 @@
         }
 
         function search(query) {
-          if (oneOffCheckbox && oneOffCheckbox.checked) {
-            closeDropdown();
-            return;
-          }
           if (query.length < 2) {
             closeDropdown();
             return;
@@ -5443,19 +5568,6 @@
             closeDropdown();
           }
         });
-        var searchPlaceholder = input.getAttribute("placeholder") || "Search suppliers...";
-        if (oneOffCheckbox) {
-          oneOffCheckbox.addEventListener("change", function () {
-            closeDropdown();
-            if (recordIdField) { recordIdField.value = ""; }
-            if (oneOffCheckbox.checked) {
-              input.value = "";
-              input.setAttribute("placeholder", "Enter " + entityNoun + " name.");
-            } else {
-              input.setAttribute("placeholder", searchPlaceholder);
-            }
-          });
-        }
         }
 
         initSupplierCombo("expense");
@@ -5676,7 +5788,11 @@
           // either view to show the right value — no separate "sync" state to drift.
           var typeField = document.getElementById("expense_type_field");
           if (typeField) {
-            var typeValue = "Receipt or Invoice";
+            // Never guess: only auto-set when OCR gives us a confident signal.
+            // A confirmed subscription match or an exact "Travel and Subsistence"
+            // category are the only cases treated as confident — everything else
+            // (including "Receipt or Invoice") is left blank for the user to choose.
+            var typeValue = "";
             if (fields.subscription_match) { typeValue = "Subscription"; }
             else if (fields.category_suggestion === "Travel and Subsistence") { typeValue = "Travel and Subsistence"; }
             typeField.value = typeValue;
@@ -6175,18 +6291,30 @@
 
           function updateReviewSaveButtonState() {
             if (!reviewSaveBtn) { return; }
+            var typeField = document.getElementById("expense_type_field");
+            var typeSelected = !!(typeField && typeField.value);
             var paymentField = document.getElementById("expense_payment_method");
             var paymentSelected = !!(paymentField && paymentField.value);
             var redFlags = window.collectComplianceFlags ? window.collectComplianceFlags("expense").filter(function (f) { return f.severity === "danger"; }) : [];
             var flagsAcknowledged = document.getElementById("expense_flags_acknowledged");
             var acknowledged = !!(flagsAcknowledged && flagsAcknowledged.value === "1");
-            var blocked = !paymentSelected || (redFlags.length > 0 && !acknowledged);
+            var missing = [];
+            if (!typeSelected) { missing.push("expense type"); }
+            if (!paymentSelected) { missing.push("payment method"); }
+            var blocked = missing.length > 0 || (redFlags.length > 0 && !acknowledged);
             reviewSaveBtn.disabled = blocked;
-            reviewSaveBtn.title = blocked
-              ? (!paymentSelected ? "Select a payment method before saving" : "Resolve the compliance flag before saving")
-              : "";
+            reviewSaveBtn.title = missing.length
+              ? ("Select " + missing.join(" and ") + " before saving")
+              : (blocked ? "Resolve the compliance flag before saving" : "");
             var saveHint = document.getElementById("expense_review_save_hint");
-            if (saveHint) { saveHint.style.display = !paymentSelected ? "block" : "none"; }
+            if (saveHint) {
+              if (missing.length) {
+                saveHint.textContent = "Select " + missing.join(" and ") + " to save";
+                saveHint.style.display = "block";
+              } else {
+                saveHint.style.display = "none";
+              }
+            }
           }
 
           function renderReviewCard(fields) {
@@ -6391,7 +6519,7 @@
             });
             if (mileageBlock) { mileageBlock.style.display = type === "travel" ? "" : "none"; }
             var typeField = document.getElementById("expense_type_field");
-            if (typeField) { typeField.value = EXPENSE_TYPE_LABELS[type] || "Receipt or Invoice"; }
+            if (typeField) { typeField.value = EXPENSE_TYPE_LABELS[type] || ""; }
             var categoryField = document.getElementById("expense_category");
             if (!categoryField) { return; }
             if (type === "subscription") { categoryField.value = "Software and Subscriptions"; }
@@ -6405,7 +6533,7 @@
             if (!typeField) { return; }
             var matchedKey = Object.keys(EXPENSE_TYPE_LABELS).find(function (key) {
               return EXPENSE_TYPE_LABELS[key] === typeField.value;
-            }) || "receipt";
+            });
             typeButtons.forEach(function (btn) {
               btn.classList.toggle("active", btn.getAttribute("data-expense-type") === matchedKey);
             });
@@ -6615,8 +6743,23 @@
           }
           if (event.target.classList.contains("modal-archive-confirm-yes")) {
             var section2 = event.target.closest(".modal-archive-section");
-            var form = section2 ? section2.querySelector(".modal-archive-form") : null;
-            if (form) { form.submit(); }
+            if (section2) {
+              // Built and submitted here rather than via a <form> in the markup:
+              // this section lives inside the record's edit <form>, and a <form>
+              // nested inside another <form> is invalid HTML — the browser's parser
+              // silently drops the nested tag, so it never existed to submit.
+              var archiveForm = document.createElement("form");
+              archiveForm.method = "post";
+              archiveForm.action = section2.getAttribute("data-archive-url");
+              archiveForm.style.display = "none";
+              var hiddenField = document.createElement("input");
+              hiddenField.type = "hidden";
+              hiddenField.name = section2.getAttribute("data-archive-field");
+              hiddenField.value = section2.getAttribute("data-archive-value");
+              archiveForm.appendChild(hiddenField);
+              document.body.appendChild(archiveForm);
+              archiveForm.submit();
+            }
             return;
           }
           if (!event.target.closest(".modal-archive-section")) {
