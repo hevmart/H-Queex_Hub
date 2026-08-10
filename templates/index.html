@@ -597,6 +597,7 @@
       .review-card-supplier-option { padding: 8px 12px; cursor: pointer; font-size: 13px; color: var(--brand-charcoal); }
       .review-card-supplier-option:hover { background: var(--brand-bg-light); }
       #expense_review_save_btn:disabled { opacity: 0.5; cursor: not-allowed; }
+      .review-card-save-hint { color: var(--brand-steel); font-size: 12px; margin-bottom: 10px; }
       .services-table { table-layout: fixed; }
       .services-table .col-name { text-align: left; width: 26%; }
       .services-table th.col-description { text-align: left; }
@@ -3152,9 +3153,15 @@
               <div id="expense_review_body"></div>
               <div class="compliance-panel severity-warning" id="expense_review_duplicate_warning" style="display:none; margin-top: 14px;"></div>
             </div>
-            <div class="review-card-footer">
-              <button type="button" class="btn-secondary" id="expense_review_edit_full_btn">Edit in full form</button>
-              <button type="button" class="btn-primary" id="expense_review_save_btn">Looks good — Save</button>
+            <div class="review-card-footer" style="flex-direction: column; align-items: stretch;">
+              <span class="mini review-card-save-hint" id="expense_review_save_hint" style="display:none;">Select a payment method to save</span>
+              <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;">
+                <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                  <button type="button" class="btn-secondary" id="expense_review_cancel_btn">Cancel — Start Over</button>
+                  <button type="button" class="btn-secondary" id="expense_review_edit_full_btn">Edit in full form</button>
+                </div>
+                <button type="button" class="btn-primary" id="expense_review_save_btn">Looks good — Save</button>
+              </div>
             </div>
           </div>
         </div>
@@ -5812,6 +5819,7 @@
           var reviewBody = document.getElementById("expense_review_body");
           var reviewDuplicateWarning = document.getElementById("expense_review_duplicate_warning");
           var reviewEditFullBtn = document.getElementById("expense_review_edit_full_btn");
+          var reviewCancelBtn = document.getElementById("expense_review_cancel_btn");
           var reviewSaveBtn = document.getElementById("expense_review_save_btn");
 
           function showExpenseStep(step) {
@@ -6105,6 +6113,8 @@
             reviewSaveBtn.title = blocked
               ? (!paymentSelected ? "Select a payment method before saving" : "Resolve the compliance flag before saving")
               : "";
+            var saveHint = document.getElementById("expense_review_save_hint");
+            if (saveHint) { saveHint.style.display = !paymentSelected ? "block" : "none"; }
           }
 
           function renderReviewCard(fields) {
@@ -6285,6 +6295,19 @@
 
           if (reviewEditFullBtn) {
             reviewEditFullBtn.addEventListener("click", function () { showExpenseStep("form"); });
+          }
+          if (reviewCancelBtn) {
+            reviewCancelBtn.addEventListener("click", function () {
+              clearExpenseFieldsForOcr();
+              if (uploadFileInput) { uploadFileInput.value = ""; }
+              if (fileInput) { fileInput.value = ""; }
+              if (uploadFilenameLabel) { uploadFilenameLabel.textContent = ""; }
+              if (filenameLabel) { filenameLabel.textContent = ""; }
+              if (uploadError) { uploadError.style.display = "none"; }
+              reviewDuplicateWarning.style.display = "none";
+              reviewBody.innerHTML = "";
+              showExpenseStep("upload");
+            });
           }
           if (reviewSaveBtn) {
             reviewSaveBtn.addEventListener("click", function () {

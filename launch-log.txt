@@ -123,3 +123,7 @@ Press CTRL+C to quit
 [2026-08-10 15:59:50] Python start command issued (PID: 16600)
 [2026-08-10 15:59:52] App HTTP endpoint is responsive
 [2026-08-10 15:59:53] Browser open command issued (explorer)
+[2026-08-10 16:08:00] Launch requested
+[2026-08-10 16:08:03] Python start command issued (PID: 25588)
+[2026-08-10 16:08:06] App HTTP endpoint is responsive
+[2026-08-10 16:08:06] Browser open command issued (explorer)
