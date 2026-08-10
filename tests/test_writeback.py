@@ -320,6 +320,19 @@ def test_finance_landing_page_renders_module_cards(workbook_copy):
     assert b'/archive' in response.data
 
 
+def test_crm_landing_page_renders_subtitle_only_on_landing_view(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+
+    landing_response = app.app.test_client().get('/crm')
+    assert landing_response.status_code == 200
+    assert b'Customer Relationship Management' in landing_response.data
+
+    leads_response = app.app.test_client().get('/crm/leads')
+    assert leads_response.status_code == 200
+    assert b'Customer Relationship Management' not in leads_response.data
+
+
 def test_refresh_route_redirects_back_to_page(workbook_copy):
     app.WORKBOOK_PATH = workbook_copy
     app.load_finance_data.cache_clear()

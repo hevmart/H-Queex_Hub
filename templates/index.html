@@ -618,6 +618,7 @@
       .breadcrumb { margin: 0 0 4px; font-size: 12px; font-weight: 600; color: var(--brand-steel); }
       .breadcrumb-sep { margin: 0 4px; }
       .finance-page-title { margin: 0 0 18px; font-size: 24px; font-weight: 700; color: var(--brand-navy); font-family: 'Segoe UI', sans-serif; }
+      .crm-landing-subtitle { margin: 4px 0 18px; color: var(--brand-steel); font-size: 0.9rem; font-family: 'Segoe UI', sans-serif; }
       .btn-export-xlsm {
         background: var(--brand-white); color: var(--brand-gold); border: 1.5px solid var(--brand-gold); border-radius: 8px;
         padding: 11px 18px; font-weight: 700; font-size: 14px; cursor: pointer; font-family: 'Segoe UI', sans-serif;
@@ -754,8 +755,8 @@
           <a href="/services" class="nav-item {% if active_tab == 'services' %}active{% endif %}">Services</a>
           <a href="/crm" class="nav-item {% if active_tab in crm_tabs %}active{% endif %}">CRM</a>
           <a href="/clients" class="nav-item {% if active_tab == 'clients' %}active{% endif %}">Clients</a>
-          <a href="/company" class="nav-item {% if active_tab in company_tabs %}active{% endif %}">Company</a>
           <a href="/suppliers" class="nav-item {% if active_tab == 'suppliers' %}active{% endif %}">Suppliers</a>
+          <a href="/company" class="nav-item {% if active_tab in company_tabs %}active{% endif %}">Company</a>
           <a href="/operations" class="nav-item {% if active_tab in operations_tabs %}active{% endif %}">Operations</a>
         </div>
       </nav>
@@ -833,13 +834,15 @@
         ('crm_leads', 'Leads', '/crm/leads'),
         ('crm_proposals', 'Proposals', '/crm/proposals'),
       ] %}
-      {% if active_tab in crm_tabs and active_tab != 'crm' %}
+      {% if active_tab == 'crm' %}
+      <h1 class="finance-page-title">{{ page_title }}</h1>
+      <p class="crm-landing-subtitle">Customer Relationship Management</p>
+      {% elif active_tab in crm_tabs %}
       <nav class="finance-subnav">
         {% for tab_key, tab_label, tab_url in crm_nav_items %}
         <a href="{{ tab_url }}" class="finance-subnav-tab {% if active_tab == tab_key or (tab_key == 'crm_leads' and active_tab == 'crm_lead_detail') or (tab_key == 'crm_proposals' and active_tab == 'crm_proposal_detail') %}active{% endif %}">{{ tab_label }}</a>
         {% endfor %}
       </nav>
-      <p class="breadcrumb">CRM <span class="breadcrumb-sep">›</span> {% if active_tab == 'crm_lead_detail' %}<a href="/crm/leads" style="color:inherit;">Leads</a> <span class="breadcrumb-sep">›</span> {{ page_title }}{% elif active_tab == 'crm_proposal_detail' %}<a href="/crm/proposals" style="color:inherit;">Proposals</a> <span class="breadcrumb-sep">›</span> {{ page_title }}{% else %}{{ page_title }}{% endif %}</p>
       <h1 class="finance-page-title">{{ page_title }}</h1>
       {% endif %}
 
@@ -2152,7 +2155,7 @@
         <div class="card">
           <h3>Pipeline value</h3>
           <div class="value">{{ format_currency(pipeline_value) }}</div>
-          <div class="pill">Open leads</div>
+          <div class="pill"><a href="/crm/leads" style="color:inherit;">Open leads</a></div>
         </div>
         <div class="card">
           <h3>Proposals outstanding</h3>
