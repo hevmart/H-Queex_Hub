@@ -200,6 +200,9 @@ sight.
     created by a user action) |
   | `HQ-LEAD` | CRM leads |
   | `HQ-PROP` | CRM proposals |
+  | `EXP` | Expenses (needed so a subscription record can link back to the exact
+    expense that paid a given billing period — see Subscription ↔ Expense Linking
+    below) |
 
   Projects carry two ids by design: the internal `id` (plain UUID) is the actual join
   key used by Delivery Log and SOPs; `project_number` (`HQ-PRJ-2026-001`) is the
@@ -217,3 +220,66 @@ sight.
   on every load, a no-op once every record already has a correctly-formatted id, and
   responsible for repointing any known cross-references if an id changes shape (e.g. an
   old UUID being replaced by its `PREFIX-NNN` equivalent).
+
+### Subscription ↔ Expense linking
+
+- Each subscription record carries a `periods` dict keyed by `YYYY-MM`
+  (`{"2026-08": {"expense_id", "receipt_attached", "paid", "linked_at"}}`) — this is the
+  billing-period ledger, not the rolling `next_charge_date`/`last_posted_date` fields
+  (which only ever describe the single next/most-recent charge).
+- Saving an expense whose supplier matches an active subscription (`_match_subscription_by_supplier`)
+  tags it `Expense Type: Subscription` + `Subscription ID`, and links it into that
+  period's `periods` entry.
+- If the matched period already has an expense linked with `Status == "Auto-posted"`
+  (i.e. the subscription auto-sync job created a placeholder expense before a real
+  receipt arrived), the new save **updates that same row in place** rather than creating
+  a duplicate — the stable `EXP-NNN` id is what makes this possible.
+- `next_charge_date` only advances when the period being linked is the one currently
+  due. Relinking a past period (e.g. attaching a receipt after the fact) must never push
+  future billing dates forward.
+
+## Client-side state: single source of truth
+
+- **A value must live in exactly one real form element — never a hidden field mirrored
+  by a separate visible control.** If a value needs to be both edited compactly (e.g. a
+  button group) and shown/edited elsewhere (e.g. a review card), both UIs must read from
+  and write to the *same* underlying `<input>`/`<select>`, not two elements kept in sync
+  by JS. Syncing two copies of the same state is exactly the kind of bug that is easy to
+  introduce and hard to spot — "it's set in the button group but the other view still
+  shows the old value" is a symptom of this, not a one-off bug to patch around.
+- Concretely: on the expense form, `expense_type_field` is a single real `<select>`
+  (visually hidden inside the full form, visibly rendered on the OCR review card via
+  `buildReviewRow(..., "select", ...)`, which clones its `<option>`s and wires `change`
+  back onto the same element). The type-selector buttons in the full form and the OCR
+  auto-detection logic both write to this one element; neither reads or writes a second,
+  parallel field. Form submission always reads this same element regardless of which
+  view was last visible, so there is nothing to "propagate" between views.
+- When adding a field that needs to appear in more than one place (a compact form and a
+  review/summary card, a table row and its edit modal, etc.), reach for this pattern
+  first rather than inventing a hidden-field-plus-sync approach.
+
+## Component Patterns — OCR Review Card
+
+The expense-add flow is receipt-first: Upload → OCR Review Card → (edit in) Full Form.
+The review card (`#expense_review_step` in `templates/index.html`) has its own
+established look, distinct from a standard form section:
+
+- White card, 1px `#E2E2E3` border, gold `#B08D57` left accent border, rounded corners.
+- Navy `#16294A` header bar across the top with the card title in white and a confidence
+  badge on the right (gold pill ≥ 80%, muted gold 60–79%, red < 60% — there is no green
+  in the brand palette, so "good" confidence is gold, not green).
+- Body uses a two-column row layout (`review-card-row`): steel-blue uppercase label on
+  the left, value on the right, thin bottom border separating rows. Edit pencils (gold)
+  only appear on hover, keeping the default view uncluttered.
+- A field OCR could not read shows an inline amber pill ("Not found — please add") that
+  expands into an editable input on click — never a large red banner for a merely-missing
+  optional field. Reserve red exclusively for values that are genuinely blocking (e.g. a
+  field the record cannot be saved without).
+- Total Amount is the one deliberately oversized value (gold, bold, 24px) — it is the
+  number the user is most likely to sanity-check before saving.
+- Footer is a distinct light-grey band below a divider: Cancel (left) / Edit in full form
+  (left, next to Cancel) / Save (right, primary navy+gold, disabled with an explanatory
+  steel-blue hint until required fields — e.g. Payment Method — are set).
+- Every dropdown or editable value on the card is bound to the *same* real form field the
+  full form uses (see Single Source of Truth above) — the card is a view, not a second
+  copy of the data.
