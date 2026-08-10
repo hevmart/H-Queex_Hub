@@ -1,6 +1,6 @@
 [
   {
-    "id": "96974fbd-babb-459e-8e91-7430e28bcff7",
+    "id": "SVC-001",
     "name": "Clarity Base",
     "tier": "core",
     "group": null,
@@ -17,7 +17,7 @@
     "date_updated": "2026-08-07T23:15:13"
   },
   {
-    "id": "05aad541-3560-4ebf-b460-e856de85e7ee",
+    "id": "SVC-002",
     "name": "Clarity Plus",
     "tier": "core",
     "group": null,
@@ -34,7 +34,7 @@
     "date_updated": "2026-08-07T23:15:13"
   },
   {
-    "id": "a6b8e409-abcb-4d71-8f0b-7e6f3ecdb18b",
+    "id": "SVC-003",
     "name": "Clarity Partner",
     "tier": "core",
     "group": null,
@@ -51,7 +51,7 @@
     "date_updated": "2026-08-07T23:15:13"
   },
   {
-    "id": "2f23de35-de1b-40bf-ba09-a74273f1024e",
+    "id": "SVC-004",
     "name": "Implementation Roadmap Document",
     "tier": "addon",
     "group": "Communication and Strategic Assets",
@@ -68,7 +68,7 @@
     "date_updated": "2026-08-07T23:30:38"
   },
   {
-    "id": "6495e77c-d020-4020-8e0c-974c638d8235",
+    "id": "SVC-005",
     "name": "Process Communication Pack",
     "tier": "addon",
     "group": "Communication and Strategic Assets",
@@ -85,7 +85,7 @@
     "date_updated": "2026-08-07T23:15:13"
   },
   {
-    "id": "67607ab1-3e55-45dc-8433-dadd05b4bd2b",
+    "id": "SVC-006",
     "name": "Stakeholder Report Template",
     "tier": "addon",
     "group": "Communication and Strategic Assets",
@@ -102,7 +102,7 @@
     "date_updated": "2026-08-07T23:15:13"
   },
   {
-    "id": "39320226-76e5-4277-9bc7-0e7dbc8f79f3",
+    "id": "SVC-007",
     "name": "Data Audit and Cleanup",
     "tier": "addon",
     "group": "Data and Reporting Tools",
@@ -119,7 +119,7 @@
     "date_updated": "2026-08-07T23:15:13"
   },
   {
-    "id": "be91d528-3219-4217-80e2-380ba9ba1f7f",
+    "id": "SVC-008",
     "name": "KPI Dashboard Design",
     "tier": "addon",
     "group": "Data and Reporting Tools",
@@ -136,7 +136,7 @@
     "date_updated": "2026-08-07T23:15:13"
   },
   {
-    "id": "4efabc55-ba07-4c1d-ad44-eaa9117c7bf3",
+    "id": "SVC-009",
     "name": "Reporting Template Pack",
     "tier": "addon",
     "group": "Data and Reporting Tools",
@@ -153,7 +153,7 @@
     "date_updated": "2026-08-07T23:15:13"
   },
   {
-    "id": "73233c9a-4c11-418f-96d9-ebd5679587dd",
+    "id": "SVC-010",
     "name": "Knowledge Base Setup",
     "tier": "addon",
     "group": "Documentation and Knowledge Assets",
@@ -170,7 +170,7 @@
     "date_updated": "2026-08-07T23:15:13"
   },
   {
-    "id": "2009883a-80c5-4a24-9464-954dd3f2c91c",
+    "id": "SVC-011",
     "name": "Process Manual (full)",
     "tier": "addon",
     "group": "Documentation and Knowledge Assets",
@@ -187,7 +187,7 @@
     "date_updated": "2026-08-07T23:15:13"
   },
   {
-    "id": "b7c80cd3-87a5-4186-b2bb-3059e42db720",
+    "id": "SVC-012",
     "name": "SOP Creation (per procedure)",
     "tier": "addon",
     "group": "Documentation and Knowledge Assets",

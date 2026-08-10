@@ -2264,6 +2264,106 @@ def _migrate_subscription_supplier_ids(name_to_id: dict[str, str]) -> None:
         _save_json_records(SUBSCRIPTIONS_PATH, records)
 
 
+# --- Stable IDs: generic PREFIX-NNN generator, used for every remaining entity ---
+# (Documents, SOPs, Delivery Log, Compliance Calendar, Services). See "Data
+# Standards" in docs/ui-standards.md: every JSON record gets a stable id assigned
+# once at creation and never modified; join keys always use the id, never a name.
+
+def _generate_prefixed_id(existing_rows: list[dict[str, Any]], prefix: str, id_field: str = "id") -> str:
+    full_prefix = f"{prefix}-"
+    highest = 0
+    for row in existing_rows:
+        value = str(row.get(id_field) or "")
+        if value.startswith(full_prefix):
+            try:
+                highest = max(highest, int(value[len(full_prefix):]))
+            except ValueError:
+                continue
+    return f"{full_prefix}{highest + 1:03d}"
+
+
+def _migrate_prefixed_ids(records: list[dict[str, Any]], prefix: str, id_field: str = "id") -> tuple[dict[str, str], bool]:
+    """Assigns a PREFIX-NNN id to any record with no id, or a legacy id in the wrong
+    format (e.g. an old uuid4). Idempotent — already-correct ids are left untouched.
+    Returns ({old_id: new_id} for every renumbered record, so callers can repoint
+    cross-references, and whether anything changed at all — including blank-id
+    records, which have nothing to remap but still need saving)."""
+    full_prefix = f"{prefix}-"
+    remap: dict[str, str] = {}
+    changed = False
+    for record in records:
+        current = str(record.get(id_field) or "")
+        if current.startswith(full_prefix):
+            continue
+        new_id = _generate_prefixed_id(records, prefix, id_field)
+        if current:
+            remap[current] = new_id
+        record[id_field] = new_id
+        changed = True
+    return remap, changed
+
+
+def _migrate_remaining_entity_ids() -> None:
+    """Second wave of the stable-id migration: Documents (DOC), SOPs (SOP), Delivery
+    Log (DLV), Compliance Calendar (CMP), Services (SVC). Also repoints the only two
+    known cross-references to these ids — a compliance entry's linked_document_id,
+    and service_id on invoice/proposal/project line items — whenever a legacy id
+    gets renumbered. Idempotent."""
+    documents = _load_json_records(COMPANY_DOCUMENTS_PATH)
+    doc_remap, docs_changed = _migrate_prefixed_ids(documents, "DOC")
+    if docs_changed:
+        _save_json_records(COMPANY_DOCUMENTS_PATH, documents)
+
+    compliance_entries = _load_json_records(COMPLIANCE_CALENDAR_PATH)
+    _, compliance_changed = _migrate_prefixed_ids(compliance_entries, "CMP")
+    if doc_remap:
+        for entry in compliance_entries:
+            linked = str(entry.get("linked_document_id") or "")
+            if linked in doc_remap:
+                entry["linked_document_id"] = doc_remap[linked]
+                compliance_changed = True
+    if compliance_changed:
+        _save_json_records(COMPLIANCE_CALENDAR_PATH, compliance_entries)
+
+    sops = _load_json_records(SOPS_PATH)
+    _, sops_changed = _migrate_prefixed_ids(sops, "SOP")
+    if sops_changed:
+        _save_json_records(SOPS_PATH, sops)
+
+    delivery_entries = _load_json_records(DELIVERY_LOG_PATH)
+    _, delivery_changed = _migrate_prefixed_ids(delivery_entries, "DLV")
+    if delivery_changed:
+        _save_json_records(DELIVERY_LOG_PATH, delivery_entries)
+
+    services = _load_json_records(SERVICES_PATH)
+    svc_remap, services_changed = _migrate_prefixed_ids(services, "SVC")
+    if services_changed:
+        _save_json_records(SERVICES_PATH, services)
+    if svc_remap:
+        def _remap_line_item_service_ids(line_items: Any) -> bool:
+            item_changed = False
+            for item in line_items if isinstance(line_items, list) else []:
+                if not isinstance(item, dict):
+                    continue
+                old_service_id = str(item.get("service_id") or "")
+                if old_service_id in svc_remap:
+                    item["service_id"] = svc_remap[old_service_id]
+                    item_changed = True
+            return item_changed
+
+        invoices = _load_sheet_records_raw("Invoices")
+        if any(_remap_line_item_service_ids(row.get("line_items")) for row in invoices):
+            _save_sheet_records_raw("Invoices", invoices)
+
+        proposals = _load_json_records(PROPOSALS_PATH)
+        if any(_remap_line_item_service_ids(proposal.get("line_items")) for proposal in proposals):
+            _save_json_records(PROPOSALS_PATH, proposals)
+
+        projects = _load_json_records(PROJECTS_PATH)
+        if any(_remap_line_item_service_ids(project.get("line_items")) for project in projects):
+            _save_json_records(PROJECTS_PATH, projects)
+
+
 def _load_chart_of_accounts() -> list[dict[str, Any]]:
     accounts = _load_json_records(CHART_OF_ACCOUNTS_PATH)
     if accounts:
@@ -3328,7 +3428,7 @@ def _default_company_documents() -> list[dict[str, Any]]:
     now = datetime.now().isoformat(timespec="seconds")
     return [
         {
-            "id": str(uuid4()),
+            "id": "DOC-001",
             "name": "CRO Certificate of Registration",
             "category": "Compliance",
             "description": "",
@@ -3464,6 +3564,14 @@ def _compliance_deadline_severity(due_date: date, *, today: date | None = None) 
     return "green"
 
 
+def _vat_period_id(period_start: date) -> str:
+    """Stable id for a bi-monthly VAT3 period, e.g. VAT-2026-01 for Jan-Feb 2026
+    through VAT-2026-06 for Nov-Dec 2026. Deterministic from the date — no
+    persistence or migration needed, unlike the other PREFIX-NNN entities."""
+    period_number = (period_start.month - 1) // 2 + 1
+    return f"VAT-{period_start.year}-{period_number:02d}"
+
+
 def _vat3_period_due_dates(year: int) -> list[tuple[date, date, date]]:
     """Returns (period_start, period_end, due_date) for each of the 6 VAT3 bi-monthly periods in a year."""
     periods = []
@@ -3500,7 +3608,7 @@ def _build_compliance_deadlines(
                 continue
             deadlines.append(
                 {
-                    "id": f"vat3-{period_start.isoformat()}",
+                    "id": _vat_period_id(period_start),
                     "name": f"VAT 3 return — {period_start.strftime('%b')} to {period_end.strftime('%b %Y')}",
                     "due_date": due_date.isoformat(),
                     "description": "Bi-monthly VAT 3 return and payment due to Revenue.",
@@ -5073,6 +5181,7 @@ def load_finance_data() -> dict[str, Any]:
     for path in (PROJECTS_PATH, DELIVERY_LOG_PATH, SOPS_PATH, PROPOSALS_PATH):
         _migrate_json_store_client_ids(path, client_name_to_id)
     _migrate_lead_converted_client_ids(client_name_to_id)
+    _migrate_remaining_entity_ids()
 
     income_total = sum(
         _coerce_number(row.get("Amount (€)", row.get("Total incl. VAT (€)", 0)))
@@ -5276,8 +5385,9 @@ def upload_company_document():
         )
 
     now = datetime.now().isoformat(timespec="seconds")
+    documents = _load_company_documents()
     document = {
-        "id": str(uuid4()),
+        "id": _generate_prefixed_id(documents, "DOC"),
         "name": name,
         "category": category,
         "description": description,
@@ -5290,7 +5400,6 @@ def upload_company_document():
         "created_at": now,
         "last_updated_at": now,
     }
-    documents = _load_company_documents()
     documents.append(document)
     _save_company_documents(documents)
     _record_audit("create", "company_document", {"document_id": document["id"], "record": document})
@@ -5401,8 +5510,9 @@ def add_compliance_entry():
         )
 
     now = datetime.now().isoformat(timespec="seconds")
+    entries = _load_compliance_entries()
     entry = {
-        "id": str(uuid4()),
+        "id": _generate_prefixed_id(entries, "CMP"),
         "name": name,
         "due_date": due_date,
         "description": description,
@@ -5412,7 +5522,6 @@ def add_compliance_entry():
         "created_at": now,
         "last_updated_at": now,
     }
-    entries = _load_compliance_entries()
     entries.append(entry)
     _save_compliance_entries(entries)
     _record_audit("create", "compliance_entry", {"entry_id": entry["id"], "record": entry})
@@ -5904,16 +6013,16 @@ def add_delivery_entry():
         return _redirect_with_form_errors("operations_delivery_view", payload, {"deliverable_file": upload_error})
 
     now = datetime.now().isoformat(timespec="seconds")
+    entries = _load_delivery_log()
     entry = _normalize_delivery_entry({
         **payload,
-        "id": str(uuid4()),
+        "id": _generate_prefixed_id(entries, "DLV"),
         "deliverable_filename": stored_filename,
         "invoiced": False,
         "invoice_id": "",
         "created_at": now,
         "last_updated_at": now,
     })
-    entries = _load_delivery_log()
     entries.append(entry)
     _save_delivery_log(entries)
     _record_audit("create", "delivery_entry", {"entry_id": entry["id"], "record": entry})
@@ -6060,7 +6169,7 @@ def add_sop():
 
     now = datetime.now().isoformat(timespec="seconds")
     sop = _normalize_sop({
-        "id": str(uuid4()),
+        "id": _generate_prefixed_id(sops, "SOP"),
         "title": title,
         "client_id": client_id,
         "client_name": client_name,
@@ -8332,7 +8441,7 @@ def _service_form_fields(form_source) -> dict[str, str]:
 def add_service():
     now = datetime.now().isoformat(timespec="seconds")
     payload = {
-        "id": str(uuid4()),
+        "id": _generate_prefixed_id(_load_services(), "SVC"),
         "name": request.form.get("name", ""),
         "tier": request.form.get("tier", "addon"),
         "group": request.form.get("group", ""),

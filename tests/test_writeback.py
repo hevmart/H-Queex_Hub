@@ -72,6 +72,7 @@ def isolated_subscription_file(tmp_path):
     original_sops_path = app.SOPS_PATH
     original_sop_files_dir = app.SOP_FILES_DIR
     original_delivery_files_dir = app.DELIVERY_FILES_DIR
+    original_services_path = app.SERVICES_PATH
     original_leads_path = app.LEADS_PATH
     original_proposals_path = app.PROPOSALS_PATH
     original_terms_path = app.TERMS_PATH
@@ -115,6 +116,7 @@ def isolated_subscription_file(tmp_path):
     app.LEADS_PATH = tmp_path / "leads.json"
     app.PROPOSALS_PATH = tmp_path / "proposals.json"
     app.TERMS_PATH = tmp_path / "terms.json"
+    app.SERVICES_PATH = tmp_path / "services.json"
     app.load_finance_data.cache_clear()
     yield
     app.SUBSCRIPTIONS_PATH = original_path
@@ -147,6 +149,7 @@ def isolated_subscription_file(tmp_path):
     app.LEADS_PATH = original_leads_path
     app.PROPOSALS_PATH = original_proposals_path
     app.TERMS_PATH = original_terms_path
+    app.SERVICES_PATH = original_services_path
     app.load_finance_data.cache_clear()
 
 
@@ -4610,3 +4613,234 @@ def test_cross_module_migration_backfills_client_id_on_legacy_records(workbook_c
     app.load_finance_data()
     projects_again = json.loads(app.PROJECTS_PATH.read_text(encoding="utf-8"))
     assert projects_again == projects
+
+
+# --- Stable IDs: remaining entities (Documents, SOPs, Delivery, Compliance, VAT, Services) ---
+
+def test_document_gets_stable_doc_id_on_upload(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+
+    # The seeded CRO certificate is migrated to DOC-001 on first load.
+    client.get('/company/documents')
+    seeded = json.loads(app.COMPANY_DOCUMENTS_PATH.read_text(encoding="utf-8"))[0]
+    assert seeded["id"] == "DOC-001"
+
+    client.post(
+        '/company/documents/upload',
+        data={"name": "Insurance Policy", "category": "Insurance"},
+        follow_redirects=True,
+    )
+    documents = json.loads(app.COMPANY_DOCUMENTS_PATH.read_text(encoding="utf-8"))
+    uploaded = next(doc for doc in documents if doc["name"] == "Insurance Policy")
+    assert uploaded["id"] == "DOC-002"
+
+
+def test_legacy_document_id_migrated_and_compliance_link_repointed(workbook_copy):
+    """A document created before this migration only had a uuid4 id — the migration
+    must renumber it to DOC-NNN AND repoint any compliance entry's linked_document_id
+    to match, so the link doesn't silently break."""
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+
+    legacy_doc_id = "11111111-2222-3333-4444-555555555555"
+    app.COMPANY_DOCUMENTS_PATH.write_text(json.dumps([
+        {"id": legacy_doc_id, "name": "Legacy Doc", "category": "Legal", "status": "active"}
+    ]), encoding="utf-8")
+    app.COMPLIANCE_CALENDAR_PATH.write_text(json.dumps([
+        {"id": "legacy-cmp-1", "name": "Renew legacy doc", "due_date": "2026-09-01", "status": "pending", "linked_document_id": legacy_doc_id}
+    ]), encoding="utf-8")
+
+    app.load_finance_data.cache_clear()
+    app.load_finance_data()
+
+    documents = json.loads(app.COMPANY_DOCUMENTS_PATH.read_text(encoding="utf-8"))
+    new_doc_id = documents[0]["id"]
+    assert new_doc_id.startswith("DOC-")
+    assert new_doc_id != legacy_doc_id
+
+    entries = json.loads(app.COMPLIANCE_CALENDAR_PATH.read_text(encoding="utf-8"))
+    assert entries[0]["linked_document_id"] == new_doc_id
+
+
+def test_compliance_entry_gets_stable_cmp_id(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+
+    client.post('/company/compliance/add', data={"name": "First deadline", "due_date": "2026-09-01"}, follow_redirects=True)
+    client.post('/company/compliance/add', data={"name": "Second deadline", "due_date": "2026-10-01"}, follow_redirects=True)
+
+    entries = json.loads(app.COMPLIANCE_CALENDAR_PATH.read_text(encoding="utf-8"))
+    ids = sorted(entry["id"] for entry in entries)
+    assert ids == ["CMP-001", "CMP-002"]
+
+
+def test_sop_gets_stable_sop_id(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+    client_a_id = _client_id_by_name("Client A")
+
+    client.post('/operations/sops/add', data={"title": "First SOP", "client_id": client_a_id}, follow_redirects=True)
+    client.post('/operations/sops/add', data={"title": "Second SOP", "client_id": client_a_id}, follow_redirects=True)
+
+    sops = json.loads(app.SOPS_PATH.read_text(encoding="utf-8"))
+    ids = sorted(sop["id"] for sop in sops)
+    assert ids == ["SOP-001", "SOP-002"]
+
+
+def test_delivery_log_entry_gets_stable_dlv_id(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+    client_a_id = _client_id_by_name("Client A")
+
+    client.post(
+        '/operations/delivery/add',
+        data={"date": "2026-08-05", "client_id": client_a_id, "service_type": "Advisory Call", "description": "First delivery"},
+        follow_redirects=True,
+    )
+    client.post(
+        '/operations/delivery/add',
+        data={"date": "2026-08-06", "client_id": client_a_id, "service_type": "Advisory Call", "description": "Second delivery"},
+        follow_redirects=True,
+    )
+
+    entries = json.loads(app.DELIVERY_LOG_PATH.read_text(encoding="utf-8"))
+    ids = sorted(entry["id"] for entry in entries)
+    assert ids == ["DLV-001", "DLV-002"]
+
+
+def test_legacy_sop_and_delivery_ids_migrated_idempotently(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+
+    app.SOPS_PATH.write_text(json.dumps([{"id": "old-uuid-sop", "title": "Legacy SOP", "client_name": "Client A"}]), encoding="utf-8")
+    app.DELIVERY_LOG_PATH.write_text(json.dumps([{"id": "old-uuid-delivery", "description": "Legacy entry", "client_name": "Client A"}]), encoding="utf-8")
+
+    app.load_finance_data.cache_clear()
+    app.load_finance_data()
+
+    sops = json.loads(app.SOPS_PATH.read_text(encoding="utf-8"))
+    entries = json.loads(app.DELIVERY_LOG_PATH.read_text(encoding="utf-8"))
+    assert sops[0]["id"] == "SOP-001"
+    assert entries[0]["id"] == "DLV-001"
+
+    # Idempotent — running again doesn't renumber already-correct ids.
+    app.load_finance_data.cache_clear()
+    app.load_finance_data()
+    sops_again = json.loads(app.SOPS_PATH.read_text(encoding="utf-8"))
+    entries_again = json.loads(app.DELIVERY_LOG_PATH.read_text(encoding="utf-8"))
+    assert sops_again[0]["id"] == "SOP-001"
+    assert entries_again[0]["id"] == "DLV-001"
+
+
+def test_vat_period_ids_are_deterministic_and_follow_bimonthly_format():
+    assert app._vat_period_id(date(2026, 1, 15)) == "VAT-2026-01"
+    assert app._vat_period_id(date(2026, 3, 1)) == "VAT-2026-02"
+    assert app._vat_period_id(date(2026, 5, 1)) == "VAT-2026-03"
+    assert app._vat_period_id(date(2026, 7, 1)) == "VAT-2026-04"
+    assert app._vat_period_id(date(2026, 9, 1)) == "VAT-2026-05"
+    assert app._vat_period_id(date(2026, 11, 1)) == "VAT-2026-06"
+    assert app._vat_period_id(date(2027, 1, 1)) == "VAT-2027-01"
+
+
+def test_compliance_deadlines_use_stable_vat_period_ids(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+
+    profile = {"structure": "sole_trader", "vat_registered": True, "registration_date": "2026-08-04"}
+    deadlines = app._build_compliance_deadlines(profile, {"summary": {}}, [], today=date(2026, 8, 10))
+    vat_deadlines = [d for d in deadlines if d["id"].startswith("VAT-")]
+    assert vat_deadlines
+    for deadline in vat_deadlines:
+        assert deadline["id"].split("-")[1].isdigit()
+        period_number = int(deadline["id"].split("-")[2])
+        assert 1 <= period_number <= 6
+
+
+def test_service_id_uses_svc_prefix(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+
+    client.post(
+        '/services/add',
+        data={"name": "First Service", "tier": "core", "price": "500"},
+        follow_redirects=True,
+    )
+    client.post(
+        '/services/add',
+        data={"name": "Second Service", "tier": "core", "price": "750"},
+        follow_redirects=True,
+    )
+
+    services = json.loads(app.SERVICES_PATH.read_text(encoding="utf-8"))
+    ids = sorted(service["id"] for service in services)
+    assert ids == ["SVC-001", "SVC-002"]
+
+
+def test_legacy_service_id_migrated_and_invoice_line_item_repointed(workbook_copy):
+    """A service created before this migration only had a uuid4 id — invoice line
+    items that reference it by service_id must be repointed to the new SVC-NNN id
+    so the catalogue link isn't silently lost."""
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+
+    legacy_service_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    app.SERVICES_PATH.write_text(json.dumps([
+        {"id": legacy_service_id, "name": "Legacy Service", "tier": "core", "price": 500.0, "status": "active"}
+    ]), encoding="utf-8")
+
+    invoices = json.loads(app.INVOICES_PATH.read_text(encoding="utf-8"))
+    invoices.append({
+        "Invoice #": "HQ-2026-999",
+        "Issue Date": "2026-08-01",
+        "Client Name": "Client A",
+        "Status": "Draft",
+        "Total (€)": 500.0,
+        "line_items": [{"service_id": legacy_service_id, "name": "Legacy Service", "quantity": 1, "unit_price": 500.0, "total": 500.0}],
+    })
+    app.INVOICES_PATH.write_text(json.dumps(invoices), encoding="utf-8")
+
+    app.load_finance_data.cache_clear()
+    app.load_finance_data()
+
+    services = json.loads(app.SERVICES_PATH.read_text(encoding="utf-8"))
+    new_service_id = services[0]["id"]
+    assert new_service_id.startswith("SVC-")
+    assert new_service_id != legacy_service_id
+
+    invoices_after = json.loads(app.INVOICES_PATH.read_text(encoding="utf-8"))
+    matching_invoice = next(row for row in invoices_after if row.get("Invoice #") == "HQ-2026-999")
+    assert matching_invoice["line_items"][0]["service_id"] == new_service_id
+
+
+def test_invoice_line_item_service_id_join_key_works_end_to_end(workbook_copy):
+    """Confirms service_id is used correctly as the join key: adding an invoice with
+    a line item that references a real service by id round-trips correctly."""
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+
+    client.post('/services/add', data={"name": "Consulting Package", "tier": "core", "price": "1000"}, follow_redirects=True)
+    service_id = json.loads(app.SERVICES_PATH.read_text(encoding="utf-8"))[0]["id"]
+    assert service_id.startswith("SVC-")
+
+    client.post(
+        '/invoices/add',
+        data={
+            "issue_date": "2026-08-01",
+            "due_date": "2026-08-15",
+            "client_name": "Client A",
+            "line_items_json": json.dumps([{"service_id": service_id, "name": "Consulting Package", "quantity": 1, "unit_price": 1000, "discount_type": "€", "discount_value": 0, "vat_rate": "0%"}]),
+        },
+        follow_redirects=True,
+    )
+
+    app.load_finance_data.cache_clear()
+    invoices = app.load_finance_data()["sheets"]["Invoices"]
+    invoice = next(row for row in invoices if row.get("line_items") and row["line_items"][0].get("service_id") == service_id)
+    assert invoice["line_items"][0]["service_id"] == service_id

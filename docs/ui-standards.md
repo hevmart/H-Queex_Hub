@@ -159,3 +159,44 @@ sight.
 - Maximum 5 results visible before scrolling.
 - This is a standard browser autocomplete pattern — follow it exactly, do not invent a
   new layout.
+
+## Data Standards
+
+- **Every record in every JSON file must have a stable `id` field**, generated once at
+  creation and never modified afterward — not even when the record's name/title changes.
+- Format is `PREFIX-NNN`: three digits minimum, zero-padded, sequential per prefix
+  (`CLT-001`, `CLT-002`, …, `CLT-010`, `CLT-100`, …). Current prefixes:
+
+  | Prefix | Entity |
+  |---|---|
+  | `CLT` | Clients |
+  | `SUP` | Suppliers |
+  | `SVC` | Services |
+  | `PRJ` | Projects (internal id — see note below) |
+  | `HQ-PRJ` | Projects (human-readable project number) |
+  | `DLV` | Delivery log entries |
+  | `SOP` | SOPs |
+  | `DOC` | Company documents |
+  | `CMP` | Compliance calendar manual entries |
+  | `VAT` | VAT return periods (`VAT-2026-01` … `VAT-2026-06`, deterministic from the
+    bi-monthly period — not persisted, since it's derived from a date rather than
+    created by a user action) |
+  | `HQ-LEAD` | CRM leads |
+  | `HQ-PROP` | CRM proposals |
+
+  Projects carry two ids by design: the internal `id` (plain UUID) is the actual join
+  key used by Delivery Log and SOPs; `project_number` (`HQ-PRJ-2026-001`) is the
+  human-readable label shown to users. Never conflate the two — cross-module references
+  always use the internal `id`.
+- **Join keys always use the stable id, never a name.** A record referencing a client,
+  supplier, service, project, or document stores `client_id` / `supplier_id` /
+  `service_id` / `project_id` / `linked_document_id` — the corresponding `*_name` /
+  `*_title` field is a display convenience only, refreshed from the source record, and
+  must never be used to look up or match the related record.
+- **Display names are always resolved live from the source record via its id**, not read
+  from a stored snapshot — so renaming a client, supplier, or service updates every page
+  that references it immediately, with no migration needed for that rename itself.
+- Migrations that assign missing or legacy-format ids must be **idempotent**: safe to run
+  on every load, a no-op once every record already has a correctly-formatted id, and
+  responsible for repointing any known cross-references if an id changes shape (e.g. an
+  old UUID being replaced by its `PREFIX-NNN` equivalent).
