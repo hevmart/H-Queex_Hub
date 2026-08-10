@@ -7,7 +7,8 @@
     "Country": "Ireland",
     "Service Tier": "Clarity Base",
     "Retainer Frequency": "",
-    "Retainer Amount (\u20ac)": ""
+    "Retainer Amount (\u20ac)": "",
+    "id": "CLT-001"
   },
   {
     "Client Name": "HQ Client Form",
@@ -17,7 +18,8 @@
     "Country": "Ireland",
     "Service Tier": "None",
     "Retainer Frequency": "",
-    "Retainer Amount (\u20ac)": ""
+    "Retainer Amount (\u20ac)": "",
+    "id": "CLT-002"
   },
   {
     "Client Name": "Test Combo Client XYZ",
@@ -27,16 +29,7 @@
     "Country": "",
     "Service Tier": "None",
     "Retainer Frequency": "",
-    "Retainer Amount (\u20ac)": ""
-  },
-  {
-    "Client Name": "Acme Ltd",
-    "Contact Person": "Jane Enquirer",
-    "Email": "jane@acme.com",
-    "Phone": "0851234567",
-    "Country": "",
-    "Service Tier": "None",
-    "Retainer Frequency": "",
-    "Retainer Amount (\u20ac)": ""
+    "Retainer Amount (\u20ac)": "",
+    "id": "CLT-003"
   }
 ]

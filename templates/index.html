@@ -21,11 +21,12 @@
 {% endif %}
 {%- endmacro %}
 
-{% macro supplier_search_field(id_prefix, value, one_off_checked, name_field='supplier', one_off_name='one_off_payee', entity_key='supplier', entity_label='Supplier / payee', placeholder='Search suppliers...', one_off_label='One-off payee', one_off_hint="Won't be added to your supplier list.") -%}
+{% macro supplier_search_field(id_prefix, value, one_off_checked, name_field='supplier', one_off_name='one_off_payee', entity_key='supplier', entity_label='Supplier / payee', placeholder='Search suppliers...', one_off_label='One-off payee', one_off_hint="Won't be added to your supplier list.", id_field_name=none, record_id='') -%}
 <div class="field optional supplier-combo" style="grid-column: 1 / -1;">
   <label for="{{ id_prefix }}_{{ entity_key }}">{{ entity_label }}</label>
   <div class="supplier-combo-input-wrap">
     <input id="{{ id_prefix }}_{{ entity_key }}" type="text" name="{{ name_field }}" autocomplete="off" placeholder="{{ placeholder }}" value="{{ value }}">
+    <input type="hidden" id="{{ id_prefix }}_{{ entity_key }}_record_id" name="{{ id_field_name or (name_field ~ '_id') }}" value="{{ record_id }}">
     <div class="supplier-combo-dropdown" id="{{ id_prefix }}_{{ entity_key }}_dropdown"></div>
   </div>
   <div class="supplier-one-off-toggle">
@@ -1319,10 +1320,10 @@
                 </div>
                 <div class="field required {% if validation_errors.get('client_name') %}has-error{% endif %}">
                   <label for="project_client_name">Client</label>
-                  <select id="project_client_name" name="client_name">
+                  <select id="project_client_name" name="client_id">
                     <option value="">Select client</option>
-                    {% for client_name in client_names %}
-                    <option value="{{ client_name }}" {% if project_form.get('client_name') == client_name %}selected{% endif %}>{{ client_name }}</option>
+                    {% for client in clients_catalog %}
+                    <option value="{{ client.id }}" {% if project_form.get('client_id') == client.id %}selected{% endif %}>{{ client.name }}</option>
                     {% endfor %}
                   </select>
                   {% if validation_errors.get('client_name') %}<span class="field-error">{{ validation_errors.get('client_name') }}</span>{% endif %}
@@ -1377,9 +1378,9 @@
                 </div>
                 <div class="field required {% if validation_errors.get('client_name') %}has-error{% endif %}">
                   <label for="project_edit_client_name">Client</label>
-                  <select id="project_edit_client_name" name="client_name">
-                    {% for client_name in client_names %}
-                    <option value="{{ client_name }}" {% if (project_form.get('client_name') if project_form else editing_project.client_name) == client_name %}selected{% endif %}>{{ client_name }}</option>
+                  <select id="project_edit_client_name" name="client_id">
+                    {% for client in clients_catalog %}
+                    <option value="{{ client.id }}" {% if (project_form.get('client_id') if project_form else editing_project.client_id) == client.id %}selected{% endif %}>{{ client.name }}</option>
                     {% endfor %}
                   </select>
                 </div>
@@ -1610,7 +1611,7 @@
         </form>
 
         {% set partner_pending_entries = delivery_entries_filtered|selectattr('invoiced', 'equalto', false)|rejectattr('billing_period', 'equalto', '')|list %}
-        {% set partner_pending_entries = partner_pending_entries|selectattr('client_name', 'in', clarity_partner_client_names)|list %}
+        {% set partner_pending_entries = partner_pending_entries|selectattr('client_id', 'in', clarity_partner_client_ids)|list %}
         {% if partner_pending_entries %}
         <h3 style="color:var(--brand-navy);font-size:16px;font-weight:700;margin:8px 0;">Clarity Partner — pending billing</h3>
         {% for client_name, client_entries in partner_pending_entries|groupby('client_name') %}
@@ -1621,7 +1622,7 @@
               <strong>{{ client_name }}</strong> — {{ billing_period }}
               <div class="mini" style="margin:2px 0 0;">{{ period_entries|length }} unbilled deliver{{ 'y' if period_entries|length == 1 else 'ies' }}</div>
             </div>
-            <form method="post" action="/operations/delivery/generate-invoice/{{ client_name|urlencode }}/{{ billing_period|urlencode }}">
+            <form method="post" action="/operations/delivery/generate-invoice/{{ period_entries[0].client_id|urlencode }}/{{ billing_period|urlencode }}">
               <button type="submit" class="btn-confirm-save">Generate Invoice</button>
             </form>
           </div>
@@ -1678,10 +1679,10 @@
                 </div>
                 <div class="field required {% if validation_errors.get('client_name') %}has-error{% endif %}">
                   <label for="delivery_client_name">Client</label>
-                  <select id="delivery_client_name" name="client_name">
+                  <select id="delivery_client_name" name="client_id">
                     <option value="">Select client (or choose a project above)</option>
-                    {% for client_name in client_names %}
-                    <option value="{{ client_name }}" {% if delivery_form.get('client_name') == client_name %}selected{% endif %}>{{ client_name }}</option>
+                    {% for client in clients_catalog %}
+                    <option value="{{ client.id }}" {% if delivery_form.get('client_id') == client.id %}selected{% endif %}>{{ client.name }}</option>
                     {% endfor %}
                   </select>
                   {% if validation_errors.get('client_name') %}<span class="field-error">{{ validation_errors.get('client_name') }}</span>{% endif %}
@@ -1798,10 +1799,10 @@
                 </div>
                 <div class="field required {% if validation_errors.get('client_name') %}has-error{% endif %}">
                   <label for="sop_client_name">Client</label>
-                  <select id="sop_client_name" name="client_name">
+                  <select id="sop_client_name" name="client_id">
                     <option value="">Select client</option>
-                    {% for client_name in client_names %}
-                    <option value="{{ client_name }}">{{ client_name }}</option>
+                    {% for client in clients_catalog %}
+                    <option value="{{ client.id }}">{{ client.name }}</option>
                     {% endfor %}
                   </select>
                   {% if validation_errors.get('client_name') %}<span class="field-error">{{ validation_errors.get('client_name') }}</span>{% endif %}
@@ -2992,7 +2993,7 @@
             <div class="field required {% if validation_errors.get('date') %}has-error{% endif %}"><label for="expense_date">Date</label><input id="expense_date" type="date" name="date" value="{{ expense_form.get('date') if expense_form else (editing_expense.get('Date (Registered)') if editing_expense else '') }}">{% if validation_errors.get('date') %}<span class="field-error">{{ validation_errors.get('date') }}</span>{% endif %}</div>
             <div class="field required {% if validation_errors.get('title') %}has-error{% endif %}"><label for="expense_title">Title</label><input id="expense_title" type="text" name="title" value="{{ expense_form.get('title') if expense_form else (editing_expense.get('Title') if editing_expense else '') }}" placeholder="Title">{% if validation_errors.get('title') %}<span class="field-error">{{ validation_errors.get('title') }}</span>{% endif %}</div>
             <div class="field optional {% if validation_errors.get('description') %}has-error{% endif %}" style="grid-column: 1 / -1;"><label for="expense_description">Description</label><textarea id="expense_description" name="description" rows="4" placeholder="Description">{{ expense_form.get('description') if expense_form else (editing_expense.get('Description') if editing_expense else '') }}</textarea>{% if validation_errors.get('description') %}<span class="field-error">{{ validation_errors.get('description') }}</span>{% endif %}</div>
-            {{ supplier_search_field('expense', expense_form.get('supplier') if expense_form else (editing_expense.get('Supplier / Payee') if editing_expense else ''), (expense_form and expense_form.get('one_off_payee') == 'Yes')) }}
+            {{ supplier_search_field('expense', expense_form.get('supplier') if expense_form else (editing_expense.get('Supplier / Payee') if editing_expense else ''), (expense_form and expense_form.get('one_off_payee') == 'Yes'), record_id=(expense_form.get('supplier_id') if expense_form else (editing_expense.get('Supplier ID') if editing_expense else ''))) }}
             <div class="field optional" style="grid-column: 1 / -1;">
               <label for="expense_receipt_file">Receipt</label>
               <div class="receipt-dropzone" id="expense_receipt_dropzone">
@@ -3151,7 +3152,7 @@
           {% if editing_subscription %}<input type="hidden" name="subscription_id" value="{{ editing_subscription.get('id') }}">{% endif %}
           <div class="form-grid">
             <div class="field {% if validation_errors.get('title') %}has-error{% endif %}"><label for="subscription_title">Subscription name</label><input id="subscription_title" type="text" name="title" value="{{ subscription_form.get('title') if subscription_form else (editing_subscription.get('title') if editing_subscription else '') }}" placeholder="Adobe Creative Cloud" required>{% if validation_errors.get('title') %}<span class="field-error">{{ validation_errors.get('title') }}</span>{% endif %}</div>
-            {{ supplier_search_field('subscription', subscription_form.get('supplier') if subscription_form else (editing_subscription.get('supplier') if editing_subscription else ''), (subscription_form and subscription_form.get('one_off_payee') == 'Yes')) }}
+            {{ supplier_search_field('subscription', subscription_form.get('supplier') if subscription_form else (editing_subscription.get('supplier') if editing_subscription else ''), (subscription_form and subscription_form.get('one_off_payee') == 'Yes'), record_id=(subscription_form.get('supplier_id') if subscription_form else (editing_subscription.get('supplier_id') if editing_subscription else ''))) }}
             <div class="field"><label for="subscription_category">Category</label><select id="subscription_category" name="category"><option value="">Select category</option>{% for option in expense_categories %}<option value="{{ option }}" {% if (subscription_form and subscription_form.get('category') == option) or (not subscription_form and editing_subscription and editing_subscription.get('category') == option) %}selected{% endif %}>{{ option }}</option>{% endfor %}</select></div>
             <div class="field {% if validation_errors.get('frequency') %}has-error{% endif %}"><label for="subscription_frequency">Frequency</label><select id="subscription_frequency" name="frequency">{% for option in subscription_frequencies %}<option value="{{ option }}" {% if (subscription_form and subscription_form.get('frequency') == option) or (not subscription_form and editing_subscription and editing_subscription.get('frequency') == option) %}selected{% endif %}>{{ option|title }}</option>{% endfor %}</select>{% if validation_errors.get('frequency') %}<span class="field-error">{{ validation_errors.get('frequency') }}</span>{% endif %}</div>
             <div class="field {% if validation_errors.get('start_date') %}has-error{% endif %}"><label for="subscription_start_date">First charge date</label><input id="subscription_start_date" type="date" name="start_date" value="{{ subscription_form.get('start_date') if subscription_form else (editing_subscription.get('start_date') if editing_subscription else today_iso) }}" required>{% if validation_errors.get('start_date') %}<span class="field-error">{{ validation_errors.get('start_date') }}</span>{% endif %}</div>
@@ -3305,7 +3306,7 @@
             <div class="field optional {% if validation_errors.get('invoice_number') %}has-error{% endif %}"><label for="invoice_number">Invoice #</label><input id="invoice_number" type="text" name="invoice_number" value="{{ invoice_form.get('invoice_number') if invoice_form else (editing_invoice.get('Invoice #') if editing_invoice else 'Auto-generated on save') }}" {% if not editing_invoice %}readonly{% endif %}>{% if validation_errors.get('invoice_number') %}<span class="field-error">{{ validation_errors.get('invoice_number') }}</span>{% endif %}</div>
             <div class="field required"><label for="invoice_issue_date">Issue date</label><input id="invoice_issue_date" type="date" name="issue_date" value="{{ invoice_form.get('issue_date') if invoice_form else (editing_invoice.get('Issue Date') if editing_invoice else '') }}"></div>
             <div class="field required {% if validation_errors.get('due_date') %}has-error{% endif %}"><label for="invoice_due_date">Due date</label><input id="invoice_due_date" type="date" name="due_date" value="{{ invoice_form.get('due_date') if invoice_form else (editing_invoice.get('Due Date') if editing_invoice else '') }}">{% if validation_errors.get('due_date') %}<span class="field-error">{{ validation_errors.get('due_date') }}</span>{% endif %}</div>
-            {{ supplier_search_field('invoice', invoice_form.get('client_name') if invoice_form else (editing_invoice.get('Client Name') if editing_invoice else ''), (invoice_form and invoice_form.get('one_off_client') == 'Yes'), name_field='client_name', one_off_name='one_off_client', entity_key='client_name', entity_label='Client', placeholder='Search clients...', one_off_label='One-off client', one_off_hint="Won't be added to your client list.") }}
+            {{ supplier_search_field('invoice', invoice_form.get('client_name') if invoice_form else (editing_invoice.get('Client Name') if editing_invoice else ''), (invoice_form and invoice_form.get('one_off_client') == 'Yes'), name_field='client_name', one_off_name='one_off_client', entity_key='client_name', entity_label='Client', placeholder='Search clients...', one_off_label='One-off client', one_off_hint="Won't be added to your client list.", id_field_name='client_id', record_id=(invoice_form.get('client_id') if invoice_form else (editing_invoice.get('Client ID') if editing_invoice else ''))) }}
             {% if validation_errors.get('client_name') %}<span class="field-error">{{ validation_errors.get('client_name') }}</span>{% endif %}
             <div class="field optional {% if validation_errors.get('client_vat_number') %}has-error{% endif %}"><label for="invoice_client_vat_number">Client VAT number</label><input id="invoice_client_vat_number" type="text" name="client_vat_number" value="{{ invoice_form.get('client_vat_number') if invoice_form else (editing_invoice.get('Client VAT Number') if editing_invoice else '') }}" placeholder="IE1234567A">{% if validation_errors.get('client_vat_number') %}<span class="field-error">{{ validation_errors.get('client_vat_number') }}</span>{% endif %}</div>
             <div class="field optional {% if validation_errors.get('client_address') %}has-error{% endif %}"><label for="invoice_client_address">Client address</label><input id="invoice_client_address" type="text" name="client_address" value="{{ invoice_form.get('client_address') if invoice_form else (editing_invoice.get('Client Address') if editing_invoice else '') }}" placeholder="Client legal address">{% if validation_errors.get('client_address') %}<span class="field-error">{{ validation_errors.get('client_address') }}</span>{% endif %}</div>
@@ -5053,6 +5054,7 @@
         var dropdown = document.getElementById(idPrefix + "_" + entityKey + "_dropdown");
         var wrapper = input ? input.closest(".supplier-combo") : null;
         var oneOffCheckbox = document.getElementById(idPrefix + "_" + entityKey + "_one_off");
+        var recordIdField = document.getElementById(idPrefix + "_" + entityKey + "_record_id");
         if (!input || !dropdown) { return; }
 
         var searchTimer = null;
@@ -5084,6 +5086,7 @@
             }
             option.addEventListener("click", function () {
               input.value = match.name;
+              if (recordIdField) { recordIdField.value = match.id || ""; }
               input.dispatchEvent(new Event("change"));
               closeDropdown();
             });
@@ -5113,6 +5116,7 @@
                 .then(function (result) {
                   if (result && result.name) {
                     input.value = result.name;
+                    if (recordIdField) { recordIdField.value = result.id || ""; }
                     input.dispatchEvent(new Event("change"));
                   }
                   closeDropdown();
@@ -5143,6 +5147,7 @@
 
         input.addEventListener("input", function () {
           var query = input.value.trim();
+          if (recordIdField) { recordIdField.value = ""; }
           if (searchTimer) { clearTimeout(searchTimer); }
           searchTimer = setTimeout(function () { search(query); }, 200);
         });
@@ -5159,6 +5164,7 @@
         if (oneOffCheckbox) {
           oneOffCheckbox.addEventListener("change", function () {
             closeDropdown();
+            if (recordIdField) { recordIdField.value = ""; }
             if (oneOffCheckbox.checked) {
               input.value = "";
               input.setAttribute("placeholder", "Enter " + entityNoun + " name.");

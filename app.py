@@ -2078,6 +2078,192 @@ def _find_record_by_id(records: list[dict[str, Any]], record_id: Any) -> dict[st
     return None
 
 
+# --- Stable IDs: Clients & Suppliers, and cross-module migration -----------
+#
+# Clients and Suppliers are stored as plain sheet rows (no natural primary key).
+# Historically every other module joined to them by name, which breaks the moment
+# a client/supplier is renamed. Every row now carries a persistent "id" field
+# (CLT-001 / SUP-001 style) assigned once at creation and never reassigned.
+# client_name / supplier_name remain on every linked record purely for display;
+# client_id / supplier_id (or "Client ID" / "Supplier ID" on sheet-style records)
+# are the actual join keys. Migration below is idempotent: it only ever fills in
+# missing ids, so it is safe to run on every load_finance_data() call.
+
+def _generate_client_id(existing_client_rows: list[dict[str, Any]]) -> str:
+    highest = 0
+    for row in existing_client_rows:
+        client_id = str(row.get("id") or "")
+        if client_id.startswith("CLT-"):
+            try:
+                highest = max(highest, int(client_id[4:]))
+            except ValueError:
+                continue
+    return f"CLT-{highest + 1:03d}"
+
+
+def _generate_supplier_id(existing_supplier_rows: list[dict[str, Any]]) -> str:
+    highest = 0
+    for row in existing_supplier_rows:
+        supplier_id = str(row.get("id") or "")
+        if supplier_id.startswith("SUP-"):
+            try:
+                highest = max(highest, int(supplier_id[4:]))
+            except ValueError:
+                continue
+    return f"SUP-{highest + 1:03d}"
+
+
+def _migrate_client_ids(client_rows: list[dict[str, Any]]) -> bool:
+    changed = False
+    for row in client_rows:
+        if not str(row.get("id") or "").strip():
+            row["id"] = _generate_client_id(client_rows)
+            changed = True
+    return changed
+
+
+def _migrate_supplier_ids(supplier_rows: list[dict[str, Any]]) -> bool:
+    changed = False
+    for row in supplier_rows:
+        if not str(row.get("id") or "").strip():
+            row["id"] = _generate_supplier_id(supplier_rows)
+            changed = True
+    return changed
+
+
+def _client_id_for_name(client_rows: list[dict[str, Any]], name: Any) -> str:
+    name = str(name or "").strip()
+    if not name:
+        return ""
+    for row in client_rows:
+        if str(row.get("Client Name") or "").strip() == name:
+            return str(row.get("id") or "")
+    return ""
+
+
+def _client_name_for_id(client_rows: list[dict[str, Any]], client_id: Any) -> str:
+    client_id = str(client_id or "").strip()
+    if not client_id:
+        return ""
+    for row in client_rows:
+        if str(row.get("id") or "") == client_id:
+            return str(row.get("Client Name") or "")
+    return ""
+
+
+def _supplier_id_for_name(supplier_rows: list[dict[str, Any]], name: Any) -> str:
+    name = str(name or "").strip()
+    if not name:
+        return ""
+    for row in supplier_rows:
+        if str(row.get("Supplier Name") or "").strip() == name:
+            return str(row.get("id") or "")
+    return ""
+
+
+def _supplier_name_for_id(supplier_rows: list[dict[str, Any]], supplier_id: Any) -> str:
+    supplier_id = str(supplier_id or "").strip()
+    if not supplier_id:
+        return ""
+    for row in supplier_rows:
+        if str(row.get("id") or "") == supplier_id:
+            return str(row.get("Supplier Name") or "")
+    return ""
+
+
+def _resolve_supplier_id_from_form(*, name: str, is_one_off: bool, form_field: str = "supplier_id") -> str:
+    """The smart-search field posts the id it resolved client-side; fall back to a
+    name lookup for older cached pages/tests that only submit the name."""
+    if is_one_off:
+        return ""
+    submitted_id = str(request.form.get(form_field) or "").strip()
+    if submitted_id:
+        return submitted_id
+    return _supplier_id_for_name(load_finance_data()["sheets"]["Suppliers"], name)
+
+
+def _resolve_client_id_from_form(*, name: str, is_one_off: bool = False, form_field: str = "client_id") -> str:
+    if is_one_off:
+        return ""
+    submitted_id = str(request.form.get(form_field) or "").strip()
+    if submitted_id:
+        return submitted_id
+    return _client_id_for_name(load_finance_data()["sheets"]["Clients"], name)
+
+
+def _build_client_name_to_id_map(client_rows: list[dict[str, Any]]) -> dict[str, str]:
+    mapping: dict[str, str] = {}
+    for row in client_rows:
+        name = str(row.get("Client Name") or "").strip()
+        client_id = str(row.get("id") or "").strip()
+        if name and client_id:
+            mapping[name] = client_id
+    return mapping
+
+
+def _build_supplier_name_to_id_map(supplier_rows: list[dict[str, Any]]) -> dict[str, str]:
+    mapping: dict[str, str] = {}
+    for row in supplier_rows:
+        name = str(row.get("Supplier Name") or "").strip()
+        supplier_id = str(row.get("id") or "").strip()
+        if name and supplier_id:
+            mapping[name] = supplier_id
+    return mapping
+
+
+def _backfill_id_field(rows: list[dict[str, Any]], name_field: str, id_field: str, name_to_id: dict[str, str]) -> bool:
+    """Fills id_field from name_to_id[name_field] wherever id_field is still blank. Idempotent."""
+    changed = False
+    for row in rows:
+        if str(row.get(id_field) or "").strip():
+            continue
+        mapped_id = name_to_id.get(str(row.get(name_field) or "").strip(), "")
+        if mapped_id:
+            row[id_field] = mapped_id
+            changed = True
+    return changed
+
+
+def _migrate_json_store_client_ids(path: Path, name_to_id: dict[str, str]) -> None:
+    """Backfills client_id on a uuid-keyed JSON store (projects/delivery-log/sops/proposals)
+    from its existing client_name field. Idempotent — skips records that already have a client_id."""
+    records = _load_json_records(path)
+    changed = False
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        if str(record.get("client_id") or "").strip():
+            continue
+        mapped_id = name_to_id.get(str(record.get("client_name") or record.get("company_name") or "").strip(), "")
+        if mapped_id:
+            record["client_id"] = mapped_id
+            changed = True
+    if changed:
+        _save_json_records(path, records)
+
+
+def _migrate_lead_converted_client_ids(name_to_id: dict[str, str]) -> None:
+    """Older converted leads stored the client's name in converted_client_id; repoint to the real id."""
+    records = _load_json_records(LEADS_PATH)
+    changed = False
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        converted = str(record.get("converted_client_id") or "").strip()
+        if converted and converted in name_to_id:
+            record["converted_client_id"] = name_to_id[converted]
+            changed = True
+    if changed:
+        _save_json_records(LEADS_PATH, records)
+
+
+def _migrate_subscription_supplier_ids(name_to_id: dict[str, str]) -> None:
+    records = _load_json_records(SUBSCRIPTIONS_PATH)
+    changed = _backfill_id_field(records, "supplier", "supplier_id", name_to_id)
+    if changed:
+        _save_json_records(SUBSCRIPTIONS_PATH, records)
+
+
 def _load_chart_of_accounts() -> list[dict[str, Any]]:
     accounts = _load_json_records(CHART_OF_ACCOUNTS_PATH)
     if accounts:
@@ -3086,6 +3272,7 @@ def _load_subscriptions() -> list[dict[str, Any]]:
                 "title": str(record.get("title") or "").strip(),
                 "description": str(record.get("description") or "").strip(),
                 "supplier": str(record.get("supplier") or "").strip(),
+                "supplier_id": str(record.get("supplier_id") or "").strip(),
                 "category": str(record.get("category") or "").strip(),
                 "net_amount": round(_coerce_number(record.get("net_amount")), 2),
                 "total_amount": round(_coerce_number(record.get("total_amount")), 2),
@@ -3113,6 +3300,7 @@ def _save_subscriptions(subscriptions: list[dict[str, Any]]) -> None:
                 "title": str(subscription.get("title") or "").strip(),
                 "description": str(subscription.get("description") or "").strip(),
                 "supplier": str(subscription.get("supplier") or "").strip(),
+                "supplier_id": str(subscription.get("supplier_id") or "").strip(),
                 "category": str(subscription.get("category") or "").strip(),
                 "net_amount": round(_coerce_number(subscription.get("net_amount")), 2),
                 "total_amount": round(_coerce_number(subscription.get("total_amount")), 2),
@@ -3638,14 +3826,15 @@ def _clarity_partner_pending_billing(delivery_entries: list[dict[str, Any]]) -> 
     for entry in delivery_entries:
         if entry.get("invoiced") or not entry.get("billing_period"):
             continue
-        key = (entry.get("client_name") or "", entry.get("billing_period") or "")
+        key = (entry.get("client_id") or "", entry.get("billing_period") or "")
         groups.setdefault(key, []).append(entry)
     pending = []
-    for (client_name, billing_period), entries in groups.items():
-        if not client_name:
+    for (client_id, billing_period), entries in groups.items():
+        if not client_id:
             continue
         pending.append({
-            "client_name": client_name,
+            "client_id": client_id,
+            "client_name": entries[0].get("client_name") or "",
             "billing_period": billing_period,
             "entry_count": len(entries),
             "total_hours": round(sum(_coerce_number(entry.get("hours_spent")) for entry in entries), 2),
@@ -4583,6 +4772,7 @@ def _build_page_context(
     active_services = [service for service in all_services if service.get("status") == "active"]
     clients_catalog = [
         {
+            "id": row.get("id") or "",
             "name": row.get("Client Name") or "",
             "tier": row.get("Service Tier") or "None",
             "retainer_frequency": row.get("Retainer Frequency") or "",
@@ -4613,7 +4803,18 @@ def _build_page_context(
             "detail": documents_expiring_soon[0]["name"],
             "link": "/company/documents",
         })
+    client_id_to_name = {client["id"]: client["name"] for client in clients_catalog if client["id"]}
+
+    def _refresh_client_display_name(record: dict[str, Any]) -> None:
+        """client_id is the join key; client_name is always refreshed from the live
+        Clients record for display so a client rename shows up everywhere immediately."""
+        current_name = client_id_to_name.get(record.get("client_id"))
+        if current_name:
+            record["client_name"] = current_name
+
     projects = _load_projects()
+    for project in projects:
+        _refresh_client_display_name(project)
     active_projects_count = sum(1 for project in projects if project.get("status") == "Active")
     projects_due_soon = _projects_with_deadline_within(projects, PROJECT_DEADLINE_WARNING_DAYS)
     for project in projects_due_soon[:3]:
@@ -4624,6 +4825,8 @@ def _build_page_context(
             "link": f"/operations/projects/{project['id']}",
         })
     delivery_log = _load_delivery_log()
+    for entry in delivery_log:
+        _refresh_client_display_name(entry)
     pending_billing = _clarity_partner_pending_billing(delivery_log)
     for pending in pending_billing[:3]:
         upcoming_actions.append({
@@ -4633,6 +4836,8 @@ def _build_page_context(
             "link": "/operations/delivery",
         })
     sops = _load_sops()
+    for sop in sops:
+        _refresh_client_display_name(sop)
     dmaic_completion_percentage = _dmaic_completion_percentage(dmaic_project["dmaic"]) if dmaic_project else 0
 
     leads = _load_leads()
@@ -4642,6 +4847,9 @@ def _build_page_context(
     proposals = _load_proposals()
     for proposal in proposals:
         proposal["expiry_severity"] = _proposal_expiry_severity(proposal)
+        current_name = client_id_to_name.get(proposal.get("client_id"))
+        if current_name:
+            proposal["company_name"] = current_name
     pipeline_value = _leads_pipeline_value(leads)
     proposals_outstanding_list = _proposals_outstanding(proposals)
     conversion_rate = _leads_conversion_rate(leads)
@@ -4764,6 +4972,7 @@ def _build_page_context(
         "service_billing_frequencies": list(SERVICE_BILLING_FREQUENCIES),
         "services_catalog_json": json.dumps(active_services).replace("</", "<\\/"),
         "tax_rules_json": json.dumps(_load_tax_rules()).replace("</", "<\\/"),
+        "clients_catalog": clients_catalog,
         "clients_catalog_json": json.dumps(clients_catalog).replace("</", "<\\/"),
         "active_clients_count": active_clients_count,
         "upcoming_actions": upcoming_actions,
@@ -4844,6 +5053,26 @@ def load_finance_data() -> dict[str, Any]:
 
     if _auto_flag_overdue_invoices(sheets["Invoices"]):
         _save_sheet_records_raw("Invoices", [{k: v for k, v in row.items() if not k.startswith("__")} for row in sheets["Invoices"]])
+
+    if _migrate_client_ids(sheets["Clients"]):
+        _save_sheet_records_raw("Clients", [{k: v for k, v in row.items() if not k.startswith("__")} for row in sheets["Clients"]])
+    if _migrate_supplier_ids(sheets["Suppliers"]):
+        _save_sheet_records_raw("Suppliers", [{k: v for k, v in row.items() if not k.startswith("__")} for row in sheets["Suppliers"]])
+
+    client_name_to_id = _build_client_name_to_id_map(sheets["Clients"])
+    supplier_name_to_id = _build_supplier_name_to_id_map(sheets["Suppliers"])
+
+    if _backfill_id_field(sheets["Invoices"], "Client Name", "Client ID", client_name_to_id):
+        _save_sheet_records_raw("Invoices", [{k: v for k, v in row.items() if not k.startswith("__")} for row in sheets["Invoices"]])
+    if _backfill_id_field(sheets["Income"], "Client / Source", "Client ID", client_name_to_id):
+        _save_sheet_records_raw("Income", [{k: v for k, v in row.items() if not k.startswith("__")} for row in sheets["Income"]])
+    if _backfill_id_field(sheets["Expenses"], "Supplier / Payee", "Supplier ID", supplier_name_to_id):
+        _save_sheet_records_raw("Expenses", [{k: v for k, v in row.items() if not k.startswith("__")} for row in sheets["Expenses"]])
+
+    _migrate_subscription_supplier_ids(supplier_name_to_id)
+    for path in (PROJECTS_PATH, DELIVERY_LOG_PATH, SOPS_PATH, PROPOSALS_PATH):
+        _migrate_json_store_client_ids(path, client_name_to_id)
+    _migrate_lead_converted_client_ids(client_name_to_id)
 
     income_total = sum(
         _coerce_number(row.get("Amount (€)", row.get("Total incl. VAT (€)", 0)))
@@ -5334,17 +5563,24 @@ def settings_view():
 
 def _clients_catalog_for_operations(data: dict[str, Any]) -> list[dict[str, Any]]:
     return [
-        {"name": row.get("Client Name") or "", "tier": row.get("Service Tier") or "None"}
+        {"id": row.get("id") or "", "name": row.get("Client Name") or "", "tier": row.get("Service Tier") or "None"}
         for row in data.get("sheets", {}).get("Clients", [])
         if row.get("Client Name")
     ]
 
 
-def _client_tier_for_name(data: dict[str, Any], client_name: str) -> str:
+def _client_tier_for_id(data: dict[str, Any], client_id: str) -> str:
     for client in _clients_catalog_for_operations(data):
-        if client["name"] == client_name:
+        if client["id"] == client_id:
             return client["tier"]
     return "None"
+
+
+def _client_name_for_id_operations(data: dict[str, Any], client_id: str) -> str:
+    for client in _clients_catalog_for_operations(data):
+        if client["id"] == client_id:
+            return client["name"]
+    return ""
 
 
 @app.route("/operations")
@@ -5385,10 +5621,12 @@ def operations_projects_view():
 @app.route("/operations/projects/<project_id>")
 def operations_project_detail_view(project_id):
     data = load_finance_data()
+    client_rows = data.get("sheets", {}).get("Clients", [])
     projects = _load_projects()
     project = _find_record_by_id(projects, project_id)
     if project is None:
         return redirect(url_for("operations_projects_view", message="Project not found"))
+    project["client_name"] = _client_name_for_id(client_rows, project.get("client_id")) or project.get("client_name")
     invoices = data.get("sheets", {}).get("Invoices", [])
     linked_invoices = [row for row in invoices if str(row.get("Invoice #")) in project.get("linked_invoice_ids", [])]
     delivery_entries = [entry for entry in _load_delivery_log() if entry.get("project_id") == project_id]
@@ -5406,7 +5644,8 @@ def operations_project_detail_view(project_id):
 
 
 def _project_payload_from_form(data: dict[str, Any]) -> dict[str, Any]:
-    client_name = str(request.form.get("client_name") or "").strip()
+    client_id = str(request.form.get("client_id") or "").strip()
+    client_name = _client_name_for_id_operations(data, client_id)
     try:
         raw_line_items = json.loads(request.form.get("line_items_json") or "[]")
         if not isinstance(raw_line_items, list):
@@ -5414,9 +5653,9 @@ def _project_payload_from_form(data: dict[str, Any]) -> dict[str, Any]:
     except (TypeError, ValueError):
         raw_line_items = []
     return {
-        "client_id": client_name,
+        "client_id": client_id,
         "client_name": client_name,
-        "service_tier": _client_tier_for_name(data, client_name),
+        "service_tier": _client_tier_for_id(data, client_id),
         "title": str(request.form.get("title") or "").strip(),
         "description": str(request.form.get("description") or "").strip(),
         "status": str(request.form.get("status") or "Enquiry").strip(),
@@ -5612,7 +5851,7 @@ def operations_delivery_view():
         entries = [entry for entry in entries if entry.get("project_id") == project_filter]
     if billing_period_filter:
         entries = [entry for entry in entries if entry.get("billing_period") == billing_period_filter]
-    clarity_partner_client_names = [client["name"] for client in _clients_catalog_for_operations(data) if client["tier"] == "Clarity Partner"]
+    clarity_partner_client_ids = [client["id"] for client in _clients_catalog_for_operations(data) if client["tier"] == "Clarity Partner"]
     return render_template(
         "index.html",
         **_build_page_context(
@@ -5623,7 +5862,7 @@ def operations_delivery_view():
             message=request.args.get("message"),
         ),
         delivery_entries_filtered=entries,
-        clarity_partner_client_names=clarity_partner_client_names,
+        clarity_partner_client_ids=clarity_partner_client_ids,
     )
 
 
@@ -5633,12 +5872,17 @@ def add_delivery_entry():
     project_id = str(request.form.get("project_id") or "").strip()
     projects = _load_projects()
     project = _find_record_by_id(projects, project_id)
-    client_name = project.get("client_name") if project else str(request.form.get("client_name") or "").strip()
+    if project:
+        client_id = project.get("client_id", "")
+        client_name = project.get("client_name", "")
+    else:
+        client_id = str(request.form.get("client_id") or "").strip()
+        client_name = _client_name_for_id_operations(data, client_id)
 
     payload = {
         "date": str(request.form.get("date") or date.today().isoformat()).strip(),
         "project_id": project_id,
-        "client_id": client_name,
+        "client_id": client_id,
         "client_name": client_name,
         "service_type": str(request.form.get("service_type") or "Other").strip(),
         "description": str(request.form.get("description") or "").strip(),
@@ -5678,10 +5922,11 @@ def add_delivery_entry():
 
 @app.route("/operations/delivery/generate-invoice/<client_id>/<period>", methods=["POST"])
 def generate_delivery_invoice(client_id, period):
-    client_name = client_id
     billing_period = period
+    data = load_finance_data()
+    client_name = _client_name_for_id_operations(data, client_id)
     entries = _load_delivery_log()
-    unbilled = [entry for entry in entries if entry.get("client_name") == client_name and entry.get("billing_period") == billing_period and not entry.get("invoiced")]
+    unbilled = [entry for entry in entries if entry.get("client_id") == client_id and entry.get("billing_period") == billing_period and not entry.get("invoiced")]
     if not unbilled:
         return redirect(url_for("operations_delivery_view", message="No unbilled delivery entries found for that client and period"))
 
@@ -5705,8 +5950,8 @@ def generate_delivery_invoice(client_id, period):
             "vat_rate": "0%",
         })
 
-    client_rows = load_finance_data().get("sheets", {}).get("Clients", [])
-    client_row = next((row for row in client_rows if row.get("Client Name") == client_name), {})
+    client_rows = data.get("sheets", {}).get("Clients", [])
+    client_row = next((row for row in client_rows if str(row.get("id") or "") == client_id), {})
     retainer_amount = _coerce_number(client_row.get("Retainer Amount (€)"))
     if not retainer_amount:
         return redirect(url_for("operations_delivery_view", message=f"{client_name} has no retainer amount set — add one on the Client record before generating this invoice"))
@@ -5719,6 +5964,7 @@ def generate_delivery_invoice(client_id, period):
         "Issue Date": issue_date,
         "Due Date": (date.today() + timedelta(days=14)).isoformat(),
         "Client Name": client_name,
+        "Client ID": client_id,
         "Client VAT Number": "",
         "Client Address": "",
         "Service / Product": "",
@@ -5744,7 +5990,7 @@ def generate_delivery_invoice(client_id, period):
     _record_audit("create", "invoice", {"record": payload, "source": "delivery_log"})
 
     for entry in entries:
-        if entry.get("client_name") == client_name and entry.get("billing_period") == billing_period and not entry.get("invoiced"):
+        if entry.get("client_id") == client_id and entry.get("billing_period") == billing_period and not entry.get("invoiced"):
             entry["invoiced"] = True
             entry["invoice_id"] = generated_invoice_number
             entry["last_updated_at"] = datetime.now().isoformat(timespec="seconds")
@@ -5787,7 +6033,9 @@ def operations_sops_view():
 
 @app.route("/operations/sops/add", methods=["POST"])
 def add_sop():
-    client_name = str(request.form.get("client_name") or "").strip()
+    data = load_finance_data()
+    client_id = str(request.form.get("client_id") or "").strip()
+    client_name = _client_name_for_id_operations(data, client_id)
     title = str(request.form.get("title") or "").strip()
     supersedes_id = str(request.form.get("supersedes_id") or "").strip()
 
@@ -5814,7 +6062,7 @@ def add_sop():
     sop = _normalize_sop({
         "id": str(uuid4()),
         "title": title,
-        "client_id": client_name,
+        "client_id": client_id,
         "client_name": client_name,
         "project_id": str(request.form.get("project_id") or "").strip(),
         "version": version,
@@ -6085,7 +6333,9 @@ def convert_lead_to_client():
         return redirect(url_for("crm_leads_view", message="Lead not found"))
 
     client_name = lead.get("company_name") or lead.get("contact_name")
+    new_client_id = _generate_client_id(load_finance_data()["sheets"]["Clients"])
     payload = {
+        "id": new_client_id,
         "Client Name": client_name,
         "Contact Person": lead.get("contact_name", ""),
         "Email": lead.get("email", ""),
@@ -6102,7 +6352,7 @@ def convert_lead_to_client():
     row_number = _append_row_to_sheet("Clients", payload)
     load_finance_data.cache_clear()
     lead["status"] = "Won"
-    lead["converted_client_id"] = client_name
+    lead["converted_client_id"] = new_client_id
     lead["updated_at"] = datetime.now().isoformat(timespec="seconds")
     _add_lead_activity(lead, "converted", f"Converted to client: {client_name}")
     _save_leads(leads)
@@ -6177,6 +6427,9 @@ def crm_proposal_detail_view(proposal_id):
     if proposal is None:
         return redirect(url_for("crm_proposals_view", message="Proposal not found"))
     proposal["expiry_severity"] = _proposal_expiry_severity(proposal)
+    current_client_name = _client_name_for_id(data.get("sheets", {}).get("Clients", []), proposal.get("client_id"))
+    if current_client_name:
+        proposal["company_name"] = current_client_name
     return render_template(
         "index.html",
         **_build_page_context(
@@ -7395,12 +7648,15 @@ def delete_income():
 
 @app.route("/expenses/add", methods=["POST"])
 def add_expense():
+    supplier_name = request.form.get("supplier", "")
+    is_one_off_payee = request.form.get("one_off_payee") == "Yes"
     payload = {
         "Date (Registered)": request.form.get("date", ""),
         "Title": request.form.get("title", ""),
         "Description": request.form.get("description", ""),
-        "Supplier / Payee": request.form.get("supplier", ""),
-        "One-Off Payee": "Yes" if request.form.get("one_off_payee") == "Yes" else "No",
+        "Supplier / Payee": supplier_name,
+        "Supplier ID": _resolve_supplier_id_from_form(name=supplier_name, is_one_off=is_one_off_payee),
+        "One-Off Payee": "Yes" if is_one_off_payee else "No",
         "Supplier VAT Number": request.form.get("supplier_vat_number", ""),
         "Receipt / Invoice Ref": request.form.get("receipt_reference", ""),
         "Receipt Filename": "",
@@ -7500,12 +7756,15 @@ def update_expense():
         return redirect(url_for("expenses_view", message="Expense could not be updated"))
 
     existing_expense_row = _find_row_by_number(_load_sheet_rows_with_row_numbers("Expenses"), row_number) or {}
+    supplier_name = request.form.get("supplier", "")
+    is_one_off_payee = request.form.get("one_off_payee") == "Yes"
     payload = {
         "Date (Registered)": request.form.get("date", ""),
         "Title": request.form.get("title", ""),
         "Description": request.form.get("description", ""),
-        "Supplier / Payee": request.form.get("supplier", ""),
-        "One-Off Payee": "Yes" if request.form.get("one_off_payee") == "Yes" else "No",
+        "Supplier / Payee": supplier_name,
+        "Supplier ID": _resolve_supplier_id_from_form(name=supplier_name, is_one_off=is_one_off_payee),
+        "One-Off Payee": "Yes" if is_one_off_payee else "No",
         "Supplier VAT Number": request.form.get("supplier_vat_number", ""),
         "Receipt / Invoice Ref": request.form.get("receipt_reference", ""),
         "Receipt Filename": existing_expense_row.get("Receipt Filename", ""),
@@ -7644,11 +7903,13 @@ def delete_expense():
 def add_invoice():
     existing_invoices = load_finance_data().get("sheets", {}).get("Invoices", [])
     generated_invoice_number = _next_invoice_number(request.form.get("issue_date", ""), existing_invoices)
+    invoice_client_name = request.form.get("client_name", "")
     payload = {
         "Invoice #": generated_invoice_number,
         "Issue Date": request.form.get("issue_date", ""),
         "Due Date": request.form.get("due_date", ""),
-        "Client Name": request.form.get("client_name", ""),
+        "Client Name": invoice_client_name,
+        "Client ID": _resolve_client_id_from_form(name=invoice_client_name, is_one_off=request.form.get("one_off_client") == "Yes"),
         "Client VAT Number": request.form.get("client_vat_number", ""),
         "Client Address": request.form.get("client_address", ""),
         "Service / Product": request.form.get("service_product", ""),
@@ -7717,11 +7978,13 @@ def update_invoice():
         return redirect(url_for("invoices_view", message="Invoice could not be updated"))
 
     current_row = _find_sheet_row_or_raise("Invoices", row_number)
+    invoice_client_name = request.form.get("client_name", "")
     payload = {
         "Invoice #": str(current_row.get("Invoice #") or request.form.get("invoice_number", "")),
         "Issue Date": request.form.get("issue_date", ""),
         "Due Date": request.form.get("due_date", ""),
-        "Client Name": request.form.get("client_name", ""),
+        "Client Name": invoice_client_name,
+        "Client ID": _resolve_client_id_from_form(name=invoice_client_name, is_one_off=request.form.get("one_off_client") == "Yes"),
         "Client VAT Number": request.form.get("client_vat_number", ""),
         "Client Address": request.form.get("client_address", ""),
         "Service / Product": request.form.get("service_product", ""),
@@ -7832,11 +8095,13 @@ def record_invoice_payment():
 def add_subscription():
     start_date_value = request.form.get("start_date", "")
     start_date = _parse_iso_date(start_date_value) or date.today()
+    subscription_supplier_name = request.form.get("supplier", "").strip()
     subscription = {
         "id": str(uuid4()),
         "title": request.form.get("title", "").strip(),
         "description": request.form.get("description", "").strip(),
-        "supplier": request.form.get("supplier", "").strip(),
+        "supplier": subscription_supplier_name,
+        "supplier_id": _resolve_supplier_id_from_form(name=subscription_supplier_name, is_one_off=request.form.get("one_off_payee") == "Yes"),
         "category": request.form.get("category", "").strip(),
         "net_amount": request.form.get("net_amount", ""),
         "total_amount": request.form.get("total_amount", ""),
@@ -7891,10 +8156,12 @@ def update_subscription():
     next_charge_date = _parse_iso_date(request.form.get("next_charge_date", "")) or _parse_iso_date(existing.get("next_charge_date")) or start_date
     end_date = _parse_iso_date(request.form.get("end_date", ""))
 
+    subscription_supplier_name = request.form.get("supplier", "").strip()
     payload = {
         "title": request.form.get("title", "").strip(),
         "description": request.form.get("description", "").strip(),
-        "supplier": request.form.get("supplier", "").strip(),
+        "supplier": subscription_supplier_name,
+        "supplier_id": _resolve_supplier_id_from_form(name=subscription_supplier_name, is_one_off=request.form.get("one_off_payee") == "Yes"),
         "category": request.form.get("category", "").strip(),
         "net_amount": request.form.get("net_amount", ""),
         "total_amount": request.form.get("total_amount", ""),
@@ -7956,6 +8223,7 @@ def delete_subscription():
 @app.route("/clients/add", methods=["POST"])
 def add_client():
     payload = {
+        "id": _generate_client_id(load_finance_data()["sheets"]["Clients"]),
         "Client Name": request.form.get("client_name", ""),
         "Contact Person": request.form.get("contact_person", ""),
         "Email": request.form.get("email", ""),
@@ -7994,7 +8262,9 @@ def update_client():
     if row_number is None:
         return redirect(url_for("clients_view", message="Client could not be updated"))
 
+    existing_row = _find_sheet_row_or_raise("Clients", row_number)
     payload = {
+        "id": existing_row.get("id") or _generate_client_id(load_finance_data()["sheets"]["Clients"]),
         "Client Name": request.form.get("client_name", ""),
         "Contact Person": request.form.get("contact_person", ""),
         "Email": request.form.get("email", ""),
@@ -8190,7 +8460,7 @@ def api_suppliers_search():
     query = str(request.args.get("q") or "").strip().lower()
     if len(query) < 2:
         return jsonify([])
-    suppliers = _load_sheet_records_raw("Suppliers")
+    suppliers = load_finance_data()["sheets"]["Suppliers"]
     matches = []
     seen = set()
     for supplier in suppliers:
@@ -8198,7 +8468,7 @@ def api_suppliers_search():
         if not name or name.lower() in seen:
             continue
         if query in name.lower():
-            matches.append({"name": name, "needs_completion": str(supplier.get("Needs Completion") or "No") == "Yes"})
+            matches.append({"id": supplier.get("id") or "", "name": name, "needs_completion": str(supplier.get("Needs Completion") or "No") == "Yes"})
             seen.add(name.lower())
     return jsonify(matches[:20])
 
@@ -8210,12 +8480,13 @@ def api_suppliers_quick_add():
     if not name:
         return jsonify({"error": "Supplier name is required"}), 400
 
-    suppliers = _load_sheet_records_raw("Suppliers")
+    suppliers = load_finance_data()["sheets"]["Suppliers"]
     for supplier in suppliers:
         if str(supplier.get("Supplier Name") or "").strip().lower() == name.lower():
-            return jsonify({"name": supplier.get("Supplier Name"), "created": False})
+            return jsonify({"id": supplier.get("id") or "", "name": supplier.get("Supplier Name"), "created": False})
 
     payload = {
+        "id": _generate_supplier_id(suppliers),
         "Supplier Name": name,
         "Contact Person": "",
         "Email": "",
@@ -8227,7 +8498,7 @@ def api_suppliers_quick_add():
     row_number = _append_row_to_sheet("Suppliers", payload)
     load_finance_data.cache_clear()
     _record_audit("create", "supplier", {"row_number": row_number, "record": payload, "source": "quick_add"})
-    return jsonify({"name": name, "created": True})
+    return jsonify({"id": payload["id"], "name": name, "created": True})
 
 
 @app.route("/api/clients/search")
@@ -8235,7 +8506,7 @@ def api_clients_search():
     query = str(request.args.get("q") or "").strip().lower()
     if len(query) < 2:
         return jsonify([])
-    clients = _load_sheet_records_raw("Clients")
+    clients = load_finance_data()["sheets"]["Clients"]
     matches = []
     seen = set()
     for client in clients:
@@ -8243,7 +8514,7 @@ def api_clients_search():
         if not name or name.lower() in seen:
             continue
         if query in name.lower():
-            matches.append({"name": name, "needs_completion": False})
+            matches.append({"id": client.get("id") or "", "name": name, "needs_completion": False})
             seen.add(name.lower())
     return jsonify(matches[:20])
 
@@ -8255,12 +8526,13 @@ def api_clients_quick_add():
     if not name:
         return jsonify({"error": "Client name is required"}), 400
 
-    clients = _load_sheet_records_raw("Clients")
+    clients = load_finance_data()["sheets"]["Clients"]
     for client in clients:
         if str(client.get("Client Name") or "").strip().lower() == name.lower():
-            return jsonify({"name": client.get("Client Name"), "created": False})
+            return jsonify({"id": client.get("id") or "", "name": client.get("Client Name"), "created": False})
 
     payload = {
+        "id": _generate_client_id(clients),
         "Client Name": name,
         "Contact Person": "",
         "Email": "",
@@ -8273,12 +8545,13 @@ def api_clients_quick_add():
     row_number = _append_row_to_sheet("Clients", payload)
     load_finance_data.cache_clear()
     _record_audit("create", "client", {"row_number": row_number, "record": payload, "source": "quick_add"})
-    return jsonify({"name": name, "created": True})
+    return jsonify({"id": payload["id"], "name": name, "created": True})
 
 
 @app.route("/suppliers/add", methods=["POST"])
 def add_supplier():
     payload = {
+        "id": _generate_supplier_id(load_finance_data()["sheets"]["Suppliers"]),
         "Supplier Name": request.form.get("supplier_name", ""),
         "Contact Person": request.form.get("contact_person", ""),
         "Email": request.form.get("email", ""),
@@ -8314,7 +8587,9 @@ def update_supplier():
     if row_number is None:
         return redirect(url_for("suppliers_view", message="Supplier could not be updated"))
 
+    existing_row = _find_sheet_row_or_raise("Suppliers", row_number)
     payload = {
+        "id": existing_row.get("id") or _generate_supplier_id(load_finance_data()["sheets"]["Suppliers"]),
         "Supplier Name": request.form.get("supplier_name", ""),
         "Contact Person": request.form.get("contact_person", ""),
         "Email": request.form.get("email", ""),

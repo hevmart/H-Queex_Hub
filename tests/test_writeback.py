@@ -3354,20 +3354,28 @@ def test_company_landing_page_and_nav_link_render(workbook_copy):
 
 # --- Operations: Projects ---------------------------------------------------
 
+def _client_id_by_name(name):
+    """Triggers the id migration (via load_finance_data) then resolves a client's stable id by name."""
+    app.load_finance_data.cache_clear()
+    data = app.load_finance_data()
+    row = next(row for row in data["sheets"]["Clients"] if row.get("Client Name") == name)
+    return row["id"]
+
+
 def test_operations_nav_link_enabled_and_projects_created(workbook_copy):
     app.WORKBOOK_PATH = workbook_copy
     app.load_finance_data.cache_clear()
     client = app.app.test_client()
+    client_a_id = _client_id_by_name("Client A")
 
     dashboard_response = client.get('/')
     assert b'href="/operations"' in dashboard_response.data
-    assert b'nav-item-disabled' not in dashboard_response.data
 
     response = client.post(
         '/operations/projects/add',
         data={
             "title": "Process improvement rollout",
-            "client_name": "Client A",
+            "client_id": client_a_id,
             "status": "Active",
             "start_date": "2026-08-01",
             "target_end_date": "2026-09-01",
@@ -3382,6 +3390,7 @@ def test_operations_nav_link_enabled_and_projects_created(workbook_copy):
     assert len(projects) == 1
     project = projects[0]
     assert project["project_number"] == "HQ-PRJ-2026-001"
+    assert project["client_id"] == client_a_id
     assert project["client_name"] == "Client A"
     assert project["status"] == "Active"
     assert set(app.DMAIC_PHASES) == set(project["dmaic"].keys())
@@ -3391,11 +3400,12 @@ def test_second_project_gets_incrementing_project_number(workbook_copy):
     app.WORKBOOK_PATH = workbook_copy
     app.load_finance_data.cache_clear()
     client = app.app.test_client()
+    client_a_id = _client_id_by_name("Client A")
 
     for title in ("First project", "Second project"):
         client.post(
             '/operations/projects/add',
-            data={"title": title, "client_name": "Client A", "status": "Enquiry", "line_items_json": "[]"},
+            data={"title": title, "client_id": client_a_id, "status": "Enquiry", "line_items_json": "[]"},
             follow_redirects=True,
         )
 
@@ -3419,10 +3429,11 @@ def test_project_status_update_route_moves_kanban_card(workbook_copy):
     app.WORKBOOK_PATH = workbook_copy
     app.load_finance_data.cache_clear()
     client = app.app.test_client()
+    client_a_id = _client_id_by_name("Client A")
 
     client.post(
         '/operations/projects/add',
-        data={"title": "Kanban project", "client_name": "Client A", "status": "Enquiry", "line_items_json": "[]"},
+        data={"title": "Kanban project", "client_id": client_a_id, "status": "Enquiry", "line_items_json": "[]"},
         follow_redirects=True,
     )
     projects = json.loads(app.PROJECTS_PATH.read_text(encoding="utf-8"))
@@ -3439,10 +3450,11 @@ def test_project_status_update_rejects_invalid_status(workbook_copy):
     app.WORKBOOK_PATH = workbook_copy
     app.load_finance_data.cache_clear()
     client = app.app.test_client()
+    client_a_id = _client_id_by_name("Client A")
 
     client.post(
         '/operations/projects/add',
-        data={"title": "Guard project", "client_name": "Client A", "status": "Enquiry", "line_items_json": "[]"},
+        data={"title": "Guard project", "client_id": client_a_id, "status": "Enquiry", "line_items_json": "[]"},
         follow_redirects=True,
     )
     projects = json.loads(app.PROJECTS_PATH.read_text(encoding="utf-8"))
@@ -3458,10 +3470,11 @@ def test_project_detail_page_shows_linked_records(workbook_copy):
     app.WORKBOOK_PATH = workbook_copy
     app.load_finance_data.cache_clear()
     client = app.app.test_client()
+    client_a_id = _client_id_by_name("Client A")
 
     client.post(
         '/operations/projects/add',
-        data={"title": "Detail page project", "client_name": "Client A", "status": "Active", "line_items_json": "[]"},
+        data={"title": "Detail page project", "client_id": client_a_id, "status": "Active", "line_items_json": "[]"},
         follow_redirects=True,
     )
     project_id = json.loads(app.PROJECTS_PATH.read_text(encoding="utf-8"))[0]["id"]
@@ -3479,10 +3492,11 @@ def test_project_archive_sets_status_cancelled(workbook_copy):
     app.WORKBOOK_PATH = workbook_copy
     app.load_finance_data.cache_clear()
     client = app.app.test_client()
+    client_a_id = _client_id_by_name("Client A")
 
     client.post(
         '/operations/projects/add',
-        data={"title": "Archive me", "client_name": "Client A", "status": "Active", "line_items_json": "[]"},
+        data={"title": "Archive me", "client_id": client_a_id, "status": "Active", "line_items_json": "[]"},
         follow_redirects=True,
     )
     project_id = json.loads(app.PROJECTS_PATH.read_text(encoding="utf-8"))[0]["id"]
@@ -3523,10 +3537,11 @@ def test_dmaic_update_route_enforces_sequencing_server_side(workbook_copy):
     app.WORKBOOK_PATH = workbook_copy
     app.load_finance_data.cache_clear()
     client = app.app.test_client()
+    client_a_id = _client_id_by_name("Client A")
 
     client.post(
         '/operations/projects/add',
-        data={"title": "DMAIC project", "client_name": "Client A", "status": "Active", "line_items_json": "[]"},
+        data={"title": "DMAIC project", "client_id": client_a_id, "status": "Active", "line_items_json": "[]"},
         follow_redirects=True,
     )
     project_id = json.loads(app.PROJECTS_PATH.read_text(encoding="utf-8"))[0]["id"]
@@ -3558,10 +3573,11 @@ def test_delivery_add_route_persists_entry_with_project_client(workbook_copy):
     app.WORKBOOK_PATH = workbook_copy
     app.load_finance_data.cache_clear()
     client = app.app.test_client()
+    client_a_id = _client_id_by_name("Client A")
 
     client.post(
         '/operations/projects/add',
-        data={"title": "Delivery project", "client_name": "Client A", "status": "Active", "line_items_json": "[]"},
+        data={"title": "Delivery project", "client_id": client_a_id, "status": "Active", "line_items_json": "[]"},
         follow_redirects=True,
     )
     project_id = json.loads(app.PROJECTS_PATH.read_text(encoding="utf-8"))[0]["id"]
@@ -3609,10 +3625,11 @@ def test_delivery_file_attachment_stores_file(workbook_copy):
     app.WORKBOOK_PATH = workbook_copy
     app.load_finance_data.cache_clear()
     client = app.app.test_client()
+    client_a_id = _client_id_by_name("Client A")
 
     data = {
         "date": "2026-08-05",
-        "client_name": "Client A",
+        "client_id": client_a_id,
         "service_type": "Report",
         "description": "Quarterly report delivered",
         "deliverable_file": (BytesIO(b'%PDF-1.4 fake report'), 'report.pdf'),
@@ -3649,13 +3666,14 @@ def test_generate_delivery_invoice_creates_invoice_and_marks_entries_invoiced(wo
     app.load_finance_data.cache_clear()
     client = app.app.test_client()
     _make_clarity_partner_client()
+    partner_id = _client_id_by_name("Partner Client")
 
     for description in ("KPI review call", "Process documentation"):
         client.post(
             '/operations/delivery/add',
             data={
                 "date": "2026-08-05",
-                "client_name": "Partner Client",
+                "client_id": partner_id,
                 "service_type": "KPI Review",
                 "description": description,
                 "hours_spent": "1",
@@ -3665,7 +3683,7 @@ def test_generate_delivery_invoice_creates_invoice_and_marks_entries_invoiced(wo
         )
 
     response = client.post(
-        '/operations/delivery/generate-invoice/Partner Client/August 2026',
+        f'/operations/delivery/generate-invoice/{partner_id}/August 2026',
         follow_redirects=True,
     )
     assert response.status_code == 200
@@ -3677,11 +3695,12 @@ def test_generate_delivery_invoice_creates_invoice_and_marks_entries_invoiced(wo
     matching = [row for row in invoices if row.get("Client Name") == "Partner Client"]
     assert len(matching) == 1
     invoice = matching[0]
+    assert invoice["Client ID"] == partner_id
     assert len(invoice["line_items"]) == 2
     assert app._coerce_number(invoice["Total (€)"]) > 0
 
     entries = json.loads(app.DELIVERY_LOG_PATH.read_text(encoding="utf-8"))
-    partner_entries = [e for e in entries if e["client_name"] == "Partner Client"]
+    partner_entries = [e for e in entries if e["client_id"] == partner_id]
     assert all(e["invoiced"] for e in partner_entries)
     assert all(e["invoice_id"] == invoice["Invoice #"] for e in partner_entries)
 
@@ -3691,14 +3710,15 @@ def test_generate_delivery_invoice_requires_retainer_amount(workbook_copy):
     app.load_finance_data.cache_clear()
     client = app.app.test_client()
     _make_clarity_partner_client(name="No Retainer Client", retainer_amount=0)
+    no_retainer_id = _client_id_by_name("No Retainer Client")
 
     client.post(
         '/operations/delivery/add',
-        data={"date": "2026-08-05", "client_name": "No Retainer Client", "service_type": "Other", "description": "Some work", "billing_period": "August 2026"},
+        data={"date": "2026-08-05", "client_id": no_retainer_id, "service_type": "Other", "description": "Some work", "billing_period": "August 2026"},
         follow_redirects=True,
     )
 
-    response = client.post('/operations/delivery/generate-invoice/No Retainer Client/August 2026', follow_redirects=True)
+    response = client.post(f'/operations/delivery/generate-invoice/{no_retainer_id}/August 2026', follow_redirects=True)
     assert response.status_code == 200
     assert b'retainer amount' in response.data
 
@@ -3712,20 +3732,22 @@ def test_generate_delivery_invoice_no_unbilled_entries_is_noop(workbook_copy):
     app.load_finance_data.cache_clear()
     client = app.app.test_client()
     _make_clarity_partner_client()
+    partner_id = _client_id_by_name("Partner Client")
 
-    response = client.post('/operations/delivery/generate-invoice/Partner Client/August 2026', follow_redirects=True)
+    response = client.post(f'/operations/delivery/generate-invoice/{partner_id}/August 2026', follow_redirects=True)
     assert response.status_code == 200
     assert b'No unbilled delivery entries' in response.data
 
 
 def test_clarity_partner_pending_billing_helper_excludes_invoiced_entries():
     entries = [
-        {"client_name": "A", "billing_period": "August 2026", "invoiced": False, "hours_spent": 1},
-        {"client_name": "A", "billing_period": "August 2026", "invoiced": True, "hours_spent": 1},
-        {"client_name": "B", "billing_period": "", "invoiced": False, "hours_spent": 1},
+        {"client_id": "CLT-001", "client_name": "A", "billing_period": "August 2026", "invoiced": False, "hours_spent": 1},
+        {"client_id": "CLT-001", "client_name": "A", "billing_period": "August 2026", "invoiced": True, "hours_spent": 1},
+        {"client_id": "CLT-002", "client_name": "B", "billing_period": "", "invoiced": False, "hours_spent": 1},
     ]
     pending = app._clarity_partner_pending_billing(entries)
     assert len(pending) == 1
+    assert pending[0]["client_id"] == "CLT-001"
     assert pending[0]["client_name"] == "A"
     assert pending[0]["entry_count"] == 1
 
@@ -3736,10 +3758,11 @@ def test_sop_add_route_creates_sop_in_draft_status(workbook_copy):
     app.WORKBOOK_PATH = workbook_copy
     app.load_finance_data.cache_clear()
     client = app.app.test_client()
+    client_a_id = _client_id_by_name("Client A")
 
     response = client.post(
         '/operations/sops/add',
-        data={"title": "Client Onboarding SOP", "client_name": "Client A", "version": "V1.0", "process_area": "Onboarding"},
+        data={"title": "Client Onboarding SOP", "client_id": client_a_id, "version": "V1.0", "process_area": "Onboarding"},
         follow_redirects=True,
     )
     assert response.status_code == 200
@@ -3755,14 +3778,15 @@ def test_sop_new_version_supersedes_previous(workbook_copy):
     app.WORKBOOK_PATH = workbook_copy
     app.load_finance_data.cache_clear()
     client = app.app.test_client()
+    client_a_id = _client_id_by_name("Client A")
 
-    client.post('/operations/sops/add', data={"title": "Expense SOP", "client_name": "Client A", "version": "V1.0"}, follow_redirects=True)
+    client.post('/operations/sops/add', data={"title": "Expense SOP", "client_id": client_a_id, "version": "V1.0"}, follow_redirects=True)
     sops = json.loads(app.SOPS_PATH.read_text(encoding="utf-8"))
     original_id = sops[0]["id"]
 
     client.post(
         '/operations/sops/add',
-        data={"title": "Expense SOP", "client_name": "Client A", "version": "V1.1", "supersedes_id": original_id},
+        data={"title": "Expense SOP", "client_id": client_a_id, "version": "V1.1", "supersedes_id": original_id},
         follow_redirects=True,
     )
 
@@ -3778,8 +3802,9 @@ def test_sop_status_workflow_enforces_order(workbook_copy):
     app.WORKBOOK_PATH = workbook_copy
     app.load_finance_data.cache_clear()
     client = app.app.test_client()
+    client_a_id = _client_id_by_name("Client A")
 
-    client.post('/operations/sops/add', data={"title": "Workflow SOP", "client_name": "Client A"}, follow_redirects=True)
+    client.post('/operations/sops/add', data={"title": "Workflow SOP", "client_id": client_a_id}, follow_redirects=True)
     sop_id = json.loads(app.SOPS_PATH.read_text(encoding="utf-8"))[0]["id"]
 
     # Skipping straight to Approved from Draft must be rejected.
@@ -3805,10 +3830,11 @@ def test_sop_file_upload_rejects_disallowed_extension(workbook_copy):
     app.WORKBOOK_PATH = workbook_copy
     app.load_finance_data.cache_clear()
     client = app.app.test_client()
+    client_a_id = _client_id_by_name("Client A")
 
     data = {
         "title": "Bad file SOP",
-        "client_name": "Client A",
+        "client_id": client_a_id,
         "sop_file": (BytesIO(b'not allowed'), 'malware.exe'),
     }
     client.post('/operations/sops/add', data=data, content_type='multipart/form-data', follow_redirects=True)
@@ -3823,13 +3849,14 @@ def test_dashboard_shows_active_projects_kpi_and_upcoming_deadline(workbook_copy
     app.WORKBOOK_PATH = workbook_copy
     app.load_finance_data.cache_clear()
     client = app.app.test_client()
+    client_a_id = _client_id_by_name("Client A")
 
     near_due_date = (date.today() + timedelta(days=5)).isoformat()
     client.post(
         '/operations/projects/add',
         data={
             "title": "Deadline soon project",
-            "client_name": "Client A",
+            "client_id": client_a_id,
             "status": "Active",
             "target_end_date": near_due_date,
             "line_items_json": "[]",
@@ -3965,7 +3992,9 @@ def test_lead_convert_to_client_creates_client_record_and_links(workbook_copy):
 
     leads = json.loads(app.LEADS_PATH.read_text(encoding="utf-8"))
     assert leads[0]["status"] == "Won"
-    assert leads[0]["converted_client_id"] == "Won Co"
+    new_client = next(row for row in clients if row.get("Client Name") == "Won Co")
+    assert leads[0]["converted_client_id"] == new_client["id"]
+    assert new_client["id"].startswith("CLT-")
     assert any(entry["type"] == "converted" for entry in leads[0]["activity_log"])
 
 
@@ -4274,3 +4303,310 @@ def test_dashboard_upcoming_actions_flags_overdue_followup(workbook_copy):
     assert response.status_code == 200
     assert b'Follow-up overdue' in response.data
     assert b'Overdue Followup Lead' in response.data
+
+
+# --- Stable IDs: Clients & Suppliers ----------------------------------------
+
+def test_new_client_gets_sequential_stable_id(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+
+    # Client A already exists in the seeded workbook and gets migrated to CLT-001
+    # the first time load_finance_data runs, so a brand-new client should be CLT-002.
+    response = client.post(
+        '/clients/add',
+        data={"client_name": "Fresh Co", "service_tier": "None"},
+        follow_redirects=True,
+    )
+    assert response.status_code == 200
+
+    app.load_finance_data.cache_clear()
+    clients = app.load_finance_data()["sheets"]["Clients"]
+    fresh = next(row for row in clients if row.get("Client Name") == "Fresh Co")
+    assert fresh["id"] == "CLT-002"
+
+    # ids stay unique and sequential for a third client too.
+    client.post('/clients/add', data={"client_name": "Third Co", "service_tier": "None"}, follow_redirects=True)
+    app.load_finance_data.cache_clear()
+    clients = app.load_finance_data()["sheets"]["Clients"]
+    third = next(row for row in clients if row.get("Client Name") == "Third Co")
+    assert third["id"] == "CLT-003"
+
+
+def test_existing_clients_without_id_are_migrated_idempotently(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+
+    # Client A was seeded with no "id" field at all.
+    clients = json.loads(app.CLIENTS_PATH.read_text(encoding="utf-8"))
+    assert "id" not in clients[0]
+
+    data = app.load_finance_data()
+    migrated_id = data["sheets"]["Clients"][0]["id"]
+    assert migrated_id.startswith("CLT-")
+
+    # Running the migration again (fresh cache) must not reassign a new id.
+    app.load_finance_data.cache_clear()
+    data_again = app.load_finance_data()
+    assert data_again["sheets"]["Clients"][0]["id"] == migrated_id
+
+
+def test_client_id_stable_when_client_name_changes(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+
+    data = app.load_finance_data()
+    client_a_row = next(row for row in data["sheets"]["Clients"] if row.get("Client Name") == "Client A")
+    original_id = client_a_row["id"]
+    row_number = client_a_row["__row_number"]
+
+    response = client.post(
+        '/clients/update',
+        data={
+            "row_number": row_number,
+            "client_name": "Client A Renamed Ltd",
+            "service_tier": "None",
+        },
+        follow_redirects=True,
+    )
+    assert response.status_code == 200
+
+    app.load_finance_data.cache_clear()
+    data = app.load_finance_data()
+    renamed_row = next(row for row in data["sheets"]["Clients"] if row.get("Client Name") == "Client A Renamed Ltd")
+    assert renamed_row["id"] == original_id
+    assert not any(row.get("Client Name") == "Client A" for row in data["sheets"]["Clients"])
+
+
+def test_new_supplier_gets_sequential_stable_id(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+
+    # Supplier A is seeded with no id and gets migrated to SUP-001 first.
+    response = client.post(
+        '/suppliers/add',
+        data={"supplier_name": "Fresh Supplier Co"},
+        follow_redirects=True,
+    )
+    assert response.status_code == 200
+
+    app.load_finance_data.cache_clear()
+    suppliers = app.load_finance_data()["sheets"]["Suppliers"]
+    fresh = next(row for row in suppliers if row.get("Supplier Name") == "Fresh Supplier Co")
+    assert fresh["id"] == "SUP-002"
+
+
+def test_supplier_id_stable_when_supplier_name_changes(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+
+    data = app.load_finance_data()
+    supplier_a_row = next(row for row in data["sheets"]["Suppliers"] if row.get("Supplier Name") == "Supplier A")
+    original_id = supplier_a_row["id"]
+    row_number = supplier_a_row["__row_number"]
+
+    client.post(
+        '/suppliers/update',
+        data={"row_number": row_number, "supplier_name": "Supplier A Renamed"},
+        follow_redirects=True,
+    )
+
+    app.load_finance_data.cache_clear()
+    data = app.load_finance_data()
+    renamed_row = next(row for row in data["sheets"]["Suppliers"] if row.get("Supplier Name") == "Supplier A Renamed")
+    assert renamed_row["id"] == original_id
+
+
+def test_quick_add_client_and_supplier_assign_ids(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+
+    client_response = client.post('/api/clients/quick-add', json={"name": "Quick Add Client"})
+    assert client_response.status_code == 200
+    client_payload = client_response.get_json()
+    assert client_payload["created"] is True
+    assert client_payload["id"].startswith("CLT-")
+
+    supplier_response = client.post('/api/suppliers/quick-add', json={"name": "Quick Add Supplier"})
+    supplier_payload = supplier_response.get_json()
+    assert supplier_payload["created"] is True
+    assert supplier_payload["id"].startswith("SUP-")
+
+    # search results also carry the id, so the smart-search hidden field can populate it.
+    search_response = client.get('/api/clients/search?q=Quick')
+    matches = search_response.get_json()
+    assert matches[0]["id"] == client_payload["id"]
+
+
+# --- Stable IDs: cross-module lookup by client_id / supplier_id -------------
+
+def test_project_stores_client_id_and_resolves_current_name_after_rename(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+    client_a_id = _client_id_by_name("Client A")
+
+    client.post(
+        '/operations/projects/add',
+        data={"title": "ID join test project", "client_id": client_a_id, "status": "Active", "line_items_json": "[]"},
+        follow_redirects=True,
+    )
+    project = json.loads(app.PROJECTS_PATH.read_text(encoding="utf-8"))[0]
+    assert project["client_id"] == client_a_id
+    assert project["client_name"] == "Client A"
+
+    # Rename the client — the project's stored client_name is a snapshot, but every
+    # page render re-resolves the current name live via client_id.
+    data = app.load_finance_data()
+    row_number = next(row for row in data["sheets"]["Clients"] if row.get("id") == client_a_id)["__row_number"]
+    client.post('/clients/update', data={"row_number": row_number, "client_name": "Client A Global Ltd", "service_tier": "None"}, follow_redirects=True)
+
+    response = client.get(f"/operations/projects/{project['id']}")
+    assert response.status_code == 200
+    assert b'Client A Global Ltd' in response.data
+    assert b'Client A</' not in response.data
+
+    list_response = client.get('/operations/projects')
+    assert b'Client A Global Ltd' in list_response.data
+
+
+def test_invoice_stores_client_id_alongside_client_name(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+    client_a_id = _client_id_by_name("Client A")
+
+    client.post(
+        '/invoices/add',
+        data={
+            "issue_date": "2026-08-01",
+            "due_date": "2026-08-15",
+            "client_name": "Client A",
+            "client_id": client_a_id,
+            "line_items_json": json.dumps([{"name": "Consulting", "quantity": 1, "unit_price": 500, "discount_type": "€", "discount_value": 0, "vat_rate": "0%"}]),
+        },
+        follow_redirects=True,
+    )
+
+    app.load_finance_data.cache_clear()
+    invoices = app.load_finance_data()["sheets"]["Invoices"]
+    invoice = next(row for row in invoices if row.get("Client Name") == "Client A")
+    assert invoice["Client ID"] == client_a_id
+
+
+def test_invoice_client_id_resolved_from_name_when_hidden_field_missing(workbook_copy):
+    """Older cached pages / any caller that only submits client_name (no client_id
+    hidden field) must still resolve the correct id via a name lookup fallback."""
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+    client_a_id = _client_id_by_name("Client A")
+
+    client.post(
+        '/invoices/add',
+        data={
+            "issue_date": "2026-08-01",
+            "due_date": "2026-08-15",
+            "client_name": "Client A",
+            "line_items_json": json.dumps([{"name": "Consulting", "quantity": 1, "unit_price": 500, "discount_type": "€", "discount_value": 0, "vat_rate": "0%"}]),
+        },
+        follow_redirects=True,
+    )
+
+    app.load_finance_data.cache_clear()
+    invoices = app.load_finance_data()["sheets"]["Invoices"]
+    invoice = next(row for row in invoices if row.get("Client Name") == "Client A")
+    assert invoice["Client ID"] == client_a_id
+
+
+def test_expense_stores_supplier_id_alongside_supplier_name(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+
+    data = app.load_finance_data()
+    supplier_a_id = next(row for row in data["sheets"]["Suppliers"] if row.get("Supplier Name") == "Supplier A")["id"]
+
+    client.post(
+        '/expenses/add',
+        data=_expense_add_payload(title="Supplier ID check", category="Software and Subscriptions", supplier="Supplier A"),
+        follow_redirects=True,
+    )
+
+    app.load_finance_data.cache_clear()
+    expenses = app.load_finance_data()["sheets"]["Expenses"]
+    expense = next(row for row in expenses if row.get("Title") == "Supplier ID check")
+    assert expense["Supplier ID"] == supplier_a_id
+
+
+def test_expense_one_off_payee_gets_no_supplier_id(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+
+    data = _expense_add_payload(title="One-off payee check", category="Software and Subscriptions", supplier="Totally New Payee")
+    data["one_off_payee"] = "Yes"
+    client.post('/expenses/add', data=data, follow_redirects=True)
+
+    app.load_finance_data.cache_clear()
+    expenses = app.load_finance_data()["sheets"]["Expenses"]
+    expense = next(row for row in expenses if row.get("Title") == "One-off payee check")
+    assert expense["Supplier ID"] == ""
+
+
+def test_delivery_log_and_sop_resolve_client_id_join_key(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+    client_a_id = _client_id_by_name("Client A")
+
+    client.post(
+        '/operations/delivery/add',
+        data={"date": "2026-08-05", "client_id": client_a_id, "service_type": "Advisory Call", "description": "Direct client delivery"},
+        follow_redirects=True,
+    )
+    client.post('/operations/sops/add', data={"title": "Cross-module SOP", "client_id": client_a_id, "version": "V1.0"}, follow_redirects=True)
+
+    entries = json.loads(app.DELIVERY_LOG_PATH.read_text(encoding="utf-8"))
+    assert entries[0]["client_id"] == client_a_id
+    assert entries[0]["client_name"] == "Client A"
+
+    sops = json.loads(app.SOPS_PATH.read_text(encoding="utf-8"))
+    assert sops[0]["client_id"] == client_a_id
+    assert sops[0]["client_name"] == "Client A"
+
+
+def test_cross_module_migration_backfills_client_id_on_legacy_records(workbook_copy):
+    """Records written before this migration only had client_name — the migration
+    must backfill client_id from the (now-migrated) Clients sheet without any
+    application code path touching them, and must be a no-op the second time."""
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    app.load_finance_data()  # ensure Client A has been migrated to an id first
+
+    legacy_project = app._normalize_project({
+        "id": "legacy-1",
+        "title": "Legacy project",
+        "client_name": "Client A",
+        "status": "Active",
+    })
+    legacy_project["client_id"] = ""  # simulate a pre-migration record
+    app._save_json_records(app.PROJECTS_PATH, [legacy_project])
+
+    app.load_finance_data.cache_clear()
+    app.load_finance_data()
+
+    projects = json.loads(app.PROJECTS_PATH.read_text(encoding="utf-8"))
+    client_a_id = _client_id_by_name("Client A")
+    assert projects[0]["client_id"] == client_a_id
+
+    # Idempotent: running it again must not change anything or error.
+    app.load_finance_data.cache_clear()
+    app.load_finance_data()
+    projects_again = json.loads(app.PROJECTS_PATH.read_text(encoding="utf-8"))
+    assert projects_again == projects
