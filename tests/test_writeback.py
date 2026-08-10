@@ -5187,3 +5187,144 @@ def test_match_subscription_by_supplier_ignores_inactive(workbook_copy):
     ]), encoding="utf-8")
 
     assert app._match_subscription_by_supplier("Cancelled Co") is None
+
+
+# --- Subscription <-> Expense linking ---
+
+def test_expense_save_links_subscription_period_and_advances_next_charge(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+
+    app.SUBSCRIPTIONS_PATH.write_text(json.dumps([{
+        "id": "sub-1", "title": "Adobe Creative Cloud", "supplier": "Adobe Inc",
+        "category": "Software and Subscriptions", "status": "active", "frequency": "monthly",
+        "net_amount": 50.0, "total_amount": 61.50,
+        "next_charge_date": "2026-08-15", "start_date": "2026-01-15",
+    }]), encoding="utf-8")
+
+    response = client.post('/expenses/add', data={
+        "date": "2026-08-15",
+        "description": "Adobe Creative Cloud subscription",
+        "supplier": "Adobe Inc",
+        "supplier_vat_number": "IE1234567A",
+        "category": "Software and Subscriptions",
+        "net_amount": "50.00",
+        "total_amount": "61.50",
+        "input_vat_reclaimable": "Yes",
+        "status": "Paid",
+        "payment_method": "Business Bank",
+    }, follow_redirects=True)
+    assert response.status_code == 200
+    assert b"This matches your Adobe Creative Cloud subscription" not in response.data  # first-ever save for this period, no auto-posted duplicate to reuse
+
+    app.load_finance_data.cache_clear()
+    expenses = app.load_finance_data()["sheets"]["Expenses"]
+    saved = next(r for r in expenses if r.get("Description") == "Adobe Creative Cloud subscription")
+    assert saved.get("Expense Type") == "Subscription"
+    assert saved.get("Subscription ID") == "sub-1"
+    assert saved.get("id", "").startswith("EXP-")
+
+    subscriptions = json.loads(app.SUBSCRIPTIONS_PATH.read_text(encoding="utf-8"))
+    sub = next(s for s in subscriptions if s["id"] == "sub-1")
+    assert sub["periods"]["2026-08"]["expense_id"] == saved["id"]
+    assert sub["periods"]["2026-08"]["paid"] is True
+    assert sub["next_charge_date"] == "2026-09-15"
+    assert sub["last_posted_date"] == "2026-08-15"
+
+
+def test_expense_save_reuses_auto_posted_entry_for_same_period(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+
+    app.SUBSCRIPTIONS_PATH.write_text(json.dumps([{
+        "id": "sub-1", "title": "Anthropic", "supplier": "Anthropic, PBC",
+        "category": "Software and Subscriptions", "status": "active", "frequency": "monthly",
+        "net_amount": 18.0, "total_amount": 22.14,
+        "next_charge_date": "2026-07-26", "start_date": "2026-01-26",
+    }]), encoding="utf-8")
+
+    # Simulate the auto-sync having already posted this period's expense.
+    sync_result = app._sync_subscriptions_to_expenses(today=app.date(2026, 8, 1))
+    assert sync_result["posted_count"] == 1
+
+    app.load_finance_data.cache_clear()
+    auto_posted = next(r for r in app.load_finance_data()["sheets"]["Expenses"] if r.get("Subscription ID") == "sub-1")
+    assert auto_posted["Status"] == "Auto-posted"
+    assert auto_posted["Receipt Attached"] == "No"
+    existing_row_count = len(app.load_finance_data()["sheets"]["Expenses"])
+
+    # Now the user uploads the real receipt for that same period via the review flow.
+    response = client.post('/expenses/add', data={
+        "date": "2026-07-26",
+        "description": "Claude Pro subscription",
+        "supplier": "Anthropic, PBC",
+        "supplier_vat_number": "IE1234567A",
+        "category": "Software and Subscriptions",
+        "net_amount": "18.00",
+        "total_amount": "22.14",
+        "input_vat_reclaimable": "Yes",
+        "status": "Paid",
+        "payment_method": "Business Bank",
+    }, follow_redirects=True)
+    assert response.status_code == 200
+    assert b"This matches your Anthropic subscription for this period" in response.data
+    assert b"receipt added to existing entry" in response.data
+
+    app.load_finance_data.cache_clear()
+    expenses_after = app.load_finance_data()["sheets"]["Expenses"]
+    assert len(expenses_after) == existing_row_count  # no duplicate row created
+    updated = next(r for r in expenses_after if r.get("Subscription ID") == "sub-1")
+    assert updated["id"] == auto_posted["id"]
+    assert updated["Description"] == "Claude Pro subscription"
+    assert updated["Status"] == "Paid"
+
+
+def test_subscriptions_page_shows_receipt_attached_indicator(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+
+    app.SUBSCRIPTIONS_PATH.write_text(json.dumps([{
+        "id": "sub-1", "title": "Figma", "supplier": "Figma Inc",
+        "category": "Software and Subscriptions", "status": "active", "frequency": "monthly",
+        "net_amount": 15.0, "total_amount": 18.45,
+        "next_charge_date": "2026-08-10", "start_date": "2026-01-10",
+    }]), encoding="utf-8")
+
+    client.post('/expenses/add', data={
+        "date": "2026-08-10",
+        "description": "Figma subscription",
+        "supplier": "Figma Inc",
+        "supplier_vat_number": "IE1234567A",
+        "category": "Software and Subscriptions",
+        "net_amount": "15.00",
+        "total_amount": "18.45",
+        "input_vat_reclaimable": "Yes",
+        "status": "Paid",
+        "payment_method": "Business Bank",
+        "receipt_file": (BytesIO(b"fake-receipt-bytes"), "figma-receipt.pdf"),
+    }, content_type='multipart/form-data', follow_redirects=True)
+
+    response = client.get('/subscriptions')
+    assert response.status_code == 200
+    assert b"Receipt" in response.data
+
+    subscriptions = json.loads(app.SUBSCRIPTIONS_PATH.read_text(encoding="utf-8"))
+    sub = next(s for s in subscriptions if s["id"] == "sub-1")
+    assert sub["periods"]["2026-08"]["receipt_attached"] is True
+
+
+def test_link_subscription_expense_does_not_advance_next_charge_for_past_period(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+
+    subscription = {
+        "id": "sub-1", "frequency": "monthly", "next_charge_date": "2026-09-10",
+        "last_posted_date": "2026-08-10", "periods": {},
+    }
+    app._link_subscription_expense(subscription, "EXP-099", "2026-06", True)
+    assert subscription["next_charge_date"] == "2026-09-10"  # unchanged — 2026-06 isn't the due period
+    assert subscription["periods"]["2026-06"]["expense_id"] == "EXP-099"
+    assert subscription["periods"]["2026-06"]["receipt_attached"] is True

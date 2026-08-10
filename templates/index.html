@@ -3170,6 +3170,7 @@
         <form method="post" action="{% if editing_expense %}/expenses/update{% else %}/expenses/add{% endif %}" class="form-shell" enctype="multipart/form-data" novalidate id="expense_manual_form" {% if not editing_expense %}style="display:none;"{% endif %}>
           {% if editing_expense %}<input type="hidden" name="row_number" value="{{ editing_expense.get('__row_number') }}">{% endif %}
           {% if not editing_expense %}
+          <input type="hidden" name="expense_type" id="expense_type_field" value="Receipt or Invoice">
           <div class="form-section-heading">Expense type</div>
           <div class="form-row form-row-1">
             <div class="field optional">
@@ -3460,7 +3461,7 @@
             <td>{{ row.get('next_charge_date') or '' }}</td>
             <td>{{ format_currency(row.get('total_amount', 0) or 0) }}</td>
             <td>{{ row.get('due_label') or row.get('status', '')|title }}</td>
-            <td>{{ row.get('last_posted_date') or 'Not posted yet' }}</td>
+            <td>{{ row.get('last_posted_date') or 'Not posted yet' }}{% if row.get('last_period_receipt_attached') %} <span class="ocr-field-badge" title="Receipt attached for this period">📎 Receipt</span>{% endif %}</td>
             <td>
               <div class="table-action-stack">
                 {{ edit_button('/subscriptions?edit_id=' ~ row.get('id')) }}
@@ -5664,6 +5665,7 @@
         }
 
         function applyOcrFieldsToForm(fields) {
+          if (fields.subscription_match && window.selectExpenseType) { window.selectExpenseType("subscription"); }
           var isoDate = convertDateToIso(fields.date);
           if (isoDate) { setFieldValue("expense_date", isoDate); }
           applyOcrSupplier(fields.supplier_name);
@@ -6325,17 +6327,27 @@
           var journeyLogField = document.getElementById("expense_journey_log");
           var MILEAGE_RATE = 0.43;
 
+          var EXPENSE_TYPE_LABELS = {
+            subscription: "Subscription",
+            receipt: "Receipt or Invoice",
+            travel: "Travel and Subsistence",
+            other: "Other",
+          };
+
           function selectExpenseType(type) {
             typeButtons.forEach(function (btn) {
               btn.classList.toggle("active", btn.getAttribute("data-expense-type") === type);
             });
             if (mileageBlock) { mileageBlock.style.display = type === "travel" ? "" : "none"; }
+            var typeField = document.getElementById("expense_type_field");
+            if (typeField) { typeField.value = EXPENSE_TYPE_LABELS[type] || "Receipt or Invoice"; }
             var categoryField = document.getElementById("expense_category");
             if (!categoryField) { return; }
             if (type === "subscription") { categoryField.value = "Software and Subscriptions"; }
             else if (type === "travel") { categoryField.value = "Travel and Subsistence"; }
             categoryField.dispatchEvent(new Event("change"));
           }
+          window.selectExpenseType = selectExpenseType;
 
           typeButtons.forEach(function (btn) {
             btn.addEventListener("click", function () { selectExpenseType(btn.getAttribute("data-expense-type")); });

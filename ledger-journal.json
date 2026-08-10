@@ -2068,5 +2068,42 @@
     "credit_total": 61.5,
     "entry_balanced": true,
     "phase_tag": "Phase 1"
+  },
+  {
+    "id": "e86f202b-b95c-457f-bccc-dac77c861376",
+    "timestamp": "2026-08-10T16:28:30",
+    "action": "create",
+    "entity_type": "expense",
+    "source": "workbook",
+    "row_number": 6,
+    "transaction_date": "2026-07-26",
+    "description": "Claude Pro subscription - Jul 26 to Aug 26, 2026",
+    "category": "Software and Subscriptions",
+    "account_code": "5000",
+    "account_name": "Software and Subscriptions",
+    "tax_treatment": "deductible",
+    "vat_rate": "23%",
+    "vat_treatment": "standard",
+    "supply_type": "services",
+    "net_amount_eur": 22.14,
+    "vat_amount_eur": 0.0,
+    "total_amount_eur": 22.14,
+    "amount_eur": 22.14,
+    "journal_lines": [
+      {
+        "account_code": "5000",
+        "debit": 22.14,
+        "credit": 0.0
+      },
+      {
+        "account_code": "1000",
+        "debit": 0.0,
+        "credit": 22.14
+      }
+    ],
+    "debit_total": 22.14,
+    "credit_total": 22.14,
+    "entry_balanced": true,
+    "phase_tag": "Phase 1"
   }
 ]

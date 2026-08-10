@@ -3524,6 +3524,8 @@ def _load_subscriptions() -> list[dict[str, Any]]:
                 "notes": str(record.get("notes") or "").strip(),
                 "created_at": str(record.get("created_at") or datetime.now().isoformat(timespec="seconds")),
                 "last_updated_at": str(record.get("last_updated_at") or datetime.now().isoformat(timespec="seconds")),
+                # Per-billing-period ledger: {"YYYY-MM": {"expense_id", "receipt_attached", "paid", "linked_at"}}
+                "periods": dict(record.get("periods")) if isinstance(record.get("periods"), dict) else {},
             }
         )
 
@@ -3552,6 +3554,7 @@ def _save_subscriptions(subscriptions: list[dict[str, Any]]) -> None:
                 "notes": str(subscription.get("notes") or "").strip(),
                 "created_at": str(subscription.get("created_at") or datetime.now().isoformat(timespec="seconds")),
                 "last_updated_at": str(subscription.get("last_updated_at") or datetime.now().isoformat(timespec="seconds")),
+                "periods": dict(subscription.get("periods")) if isinstance(subscription.get("periods"), dict) else {},
             }
         )
 
@@ -4542,6 +4545,8 @@ def _build_subscription_expense_payload(subscription: dict[str, Any], charge_dat
         "Description": f"{description} (Subscription charge)",
         "Supplier / Payee": subscription.get("supplier") or title,
         "Category": subscription.get("category") or "Subscription",
+        "Expense Type": "Subscription",
+        "Subscription ID": subscription.get("id") or "",
         "Net Amount (€)": subscription.get("net_amount") or subscription.get("total_amount") or 0,
         "Total (€)": subscription.get("total_amount") or subscription.get("net_amount") or 0,
         "Input VAT Reclaimable": "No",
@@ -4559,6 +4564,7 @@ def _sync_subscriptions_to_expenses(today: date | None = None) -> dict[str, int]
     subscriptions = _load_subscriptions()
     posted_count = 0
     changed = False
+    known_expense_records = _load_sheet_records_raw("Expenses")
 
     for subscription in subscriptions:
         if subscription.get("status") != "active":
@@ -4573,7 +4579,16 @@ def _sync_subscriptions_to_expenses(today: date | None = None) -> dict[str, int]
 
         while next_charge <= current_day and (end_date is None or next_charge <= end_date):
             payload = _build_subscription_expense_payload(subscription, next_charge)
+            payload["id"] = _generate_prefixed_id(known_expense_records, "EXP")
+            known_expense_records.append(payload)
             row_number = _append_row_to_sheet("Expenses", payload)
+            period = next_charge.isoformat()[:7]
+            subscription.setdefault("periods", {})[period] = {
+                "expense_id": payload["id"],
+                "receipt_attached": False,
+                "paid": True,
+                "linked_at": datetime.now().isoformat(timespec="seconds"),
+            }
             subscription["last_posted_date"] = next_charge.isoformat()
             subscription["last_updated_at"] = datetime.now().isoformat(timespec="seconds")
             next_charge = _add_months(next_charge, frequency_months)
@@ -4610,6 +4625,10 @@ def _build_subscription_rows(subscriptions: list[dict[str, Any]], today: date | 
         else:
             due_label = "Scheduled"
 
+        last_posted = _parse_iso_date(subscription.get("last_posted_date"))
+        last_period_key = last_posted.isoformat()[:7] if last_posted else ""
+        last_period_entry = subscription.get("periods", {}).get(last_period_key) if last_period_key else None
+
         rows.append(
             {
                 **subscription,
@@ -4619,6 +4638,7 @@ def _build_subscription_rows(subscriptions: list[dict[str, Any]], today: date | 
                 "days_until": days_until,
                 "due_label": due_label,
                 "monthly_equivalent": round((_coerce_number(subscription.get("total_amount")) or _coerce_number(subscription.get("net_amount"))) / SUBSCRIPTION_FREQUENCIES.get(str(subscription.get("frequency")), 1), 2),
+                "last_period_receipt_attached": bool(last_period_entry and last_period_entry.get("receipt_attached")),
             }
         )
 
@@ -5314,6 +5334,10 @@ def load_finance_data() -> dict[str, Any]:
         sheets[sheet_name] = _load_sheet_rows_with_row_numbers(sheet_name)
 
     if _migrate_expense_title_into_description(sheets["Expenses"]):
+        _save_sheet_records_raw("Expenses", [{k: v for k, v in row.items() if not k.startswith("__")} for row in sheets["Expenses"]])
+
+    _, expense_ids_changed = _migrate_prefixed_ids(sheets["Expenses"], "EXP")
+    if expense_ids_changed:
         _save_sheet_records_raw("Expenses", [{k: v for k, v in row.items() if not k.startswith("__")} for row in sheets["Expenses"]])
 
     for row in sheets["Expenses"]:
@@ -7919,12 +7943,12 @@ def delete_income():
     return redirect(url_for("income_view", message="Income entry archived"))
 
 
-def _match_subscription_by_supplier(supplier_name: str) -> dict[str, Any] | None:
+def _match_subscription_by_supplier(supplier_name: str, subscriptions: list[dict[str, Any]] | None = None) -> dict[str, Any] | None:
     normalized = str(supplier_name or "").strip().lower()
     if not normalized:
         return None
     best_match = None
-    for subscription in _load_subscriptions():
+    for subscription in (subscriptions if subscriptions is not None else _load_subscriptions()):
         if subscription.get("status") != "active":
             continue
         sub_supplier = str(subscription.get("supplier") or "").strip().lower()
@@ -7935,6 +7959,36 @@ def _match_subscription_by_supplier(supplier_name: str) -> dict[str, Any] | None
         if sub_supplier in normalized or normalized in sub_supplier:
             best_match = best_match or subscription
     return best_match
+
+
+def _find_expense_row_by_id(expense_id: str) -> dict[str, Any] | None:
+    resolved = str(expense_id or "").strip()
+    if not resolved:
+        return None
+    for row in _load_sheet_rows_with_row_numbers("Expenses"):
+        if str(row.get("id") or "") == resolved:
+            return row
+    return None
+
+
+def _link_subscription_expense(subscription: dict[str, Any], expense_id: str, period: str, receipt_attached: bool) -> None:
+    """Records that a billing period has been paid and links the expense that paid it.
+    Only advances the subscription's rolling next_charge_date when the linked period is
+    the one currently due — relinking a past/already-posted period (e.g. attaching a
+    receipt after the fact) must not push future billing dates forward again."""
+    periods = subscription.setdefault("periods", {})
+    periods[period] = {
+        "expense_id": expense_id,
+        "receipt_attached": bool(receipt_attached),
+        "paid": True,
+        "linked_at": datetime.now().isoformat(timespec="seconds"),
+    }
+    next_charge = _parse_iso_date(subscription.get("next_charge_date"))
+    if next_charge and next_charge.isoformat()[:7] == period:
+        frequency_months = SUBSCRIPTION_FREQUENCIES.get(str(subscription.get("frequency")), 1)
+        subscription["last_posted_date"] = next_charge.isoformat()
+        subscription["next_charge_date"] = _add_months(next_charge, frequency_months).isoformat()
+    subscription["last_updated_at"] = datetime.now().isoformat(timespec="seconds")
 
 
 def _find_duplicate_expense_for_period(supplier_name: str, category: str, iso_date: str) -> dict[str, Any] | None:
@@ -8029,6 +8083,8 @@ def add_expense():
         "Receipt / Invoice Ref": request.form.get("receipt_reference", ""),
         "Receipt Filename": "",
         "Category": request.form.get("category", ""),
+        "Expense Type": request.form.get("expense_type", "Receipt or Invoice"),
+        "Subscription ID": "",
         "Base Net Amount (€)": request.form.get("base_net_amount", request.form.get("net_amount", "")),
         "Delivery (€)": request.form.get("delivery_amount", ""),
         "Fees (€)": request.form.get("fees_amount", ""),
@@ -8116,12 +8172,41 @@ def add_expense():
             validation_errors,
             validation_tab="expenses",
         )
-    row_number = _append_row_to_sheet("Expenses", payload)
+    subscriptions = _load_subscriptions()
+    matched_subscription = _match_subscription_by_supplier(supplier_name, subscriptions)
+    reused_existing_row = None
+    period = payload["Date (Registered)"][:7]
+    if matched_subscription:
+        payload["Expense Type"] = "Subscription"
+        payload["Subscription ID"] = matched_subscription["id"]
+        existing_period = matched_subscription.get("periods", {}).get(period)
+        if existing_period and existing_period.get("expense_id"):
+            candidate_row = _find_expense_row_by_id(existing_period["expense_id"])
+            if candidate_row and candidate_row.get("Status") == "Auto-posted":
+                reused_existing_row = candidate_row
+
+    if reused_existing_row:
+        payload["id"] = reused_existing_row["id"]
+        row_number = reused_existing_row["__row_number"]
+        _update_row_in_sheet("Expenses", row_number, payload)
+        _record_audit("update", "expense", {"row_number": row_number, "record": payload})
+        _record_ledger_entry("update", "expense", payload, source="subscription_receipt_link", row_number=row_number)
+        message = f"This matches your {matched_subscription.get('title') or matched_subscription.get('supplier')} subscription for this period — receipt added to existing entry"
+    else:
+        payload["id"] = _generate_prefixed_id(load_finance_data()["sheets"]["Expenses"], "EXP")
+        row_number = _append_row_to_sheet("Expenses", payload)
+        _record_audit("create", "expense", {"row_number": row_number, "record": payload})
+        _record_ledger_entry("create", "expense", payload, source="workbook", row_number=row_number)
+        message = "Expense entry added"
+
     _upsert_capital_asset_from_expense(payload, row_number, active=payload.get("Capital Expenditure Flag") == "Yes")
     load_finance_data.cache_clear()
-    _record_audit("create", "expense", {"row_number": row_number, "record": payload})
-    _record_ledger_entry("create", "expense", payload, source="workbook", row_number=row_number)
-    return redirect(url_for("expenses_view", message="Expense entry added"))
+
+    if matched_subscription:
+        _link_subscription_expense(matched_subscription, payload["id"], period, payload.get("Receipt Attached") == "Yes")
+        _save_subscriptions(subscriptions)
+
+    return redirect(url_for("expenses_view", message=message))
 
 
 @app.route("/expenses/update", methods=["POST"])
@@ -8144,6 +8229,8 @@ def update_expense():
         "Receipt / Invoice Ref": request.form.get("receipt_reference", ""),
         "Receipt Filename": existing_expense_row.get("Receipt Filename", ""),
         "Category": request.form.get("category", ""),
+        "Expense Type": existing_expense_row.get("Expense Type", "Receipt or Invoice"),
+        "Subscription ID": existing_expense_row.get("Subscription ID", ""),
         "Base Net Amount (€)": request.form.get("base_net_amount", request.form.get("net_amount", "")),
         "Delivery (€)": request.form.get("delivery_amount", ""),
         "Fees (€)": request.form.get("fees_amount", ""),
@@ -8232,6 +8319,7 @@ def update_expense():
             validation_tab="expenses",
             edit_row=row_number,
         )
+    payload["id"] = existing_expense_row.get("id", "")
     _update_row_in_sheet("Expenses", row_number, payload)
     _upsert_capital_asset_from_expense(payload, row_number, active=payload.get("Capital Expenditure Flag") == "Yes")
     load_finance_data.cache_clear()

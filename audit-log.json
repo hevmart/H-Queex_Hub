@@ -3378,5 +3378,55 @@
         "Flags Acknowledged At": ""
       }
     }
+  },
+  {
+    "id": "42d0e9fe-b621-4480-a423-d3b44275005f",
+    "timestamp": "2026-08-10T16:28:30",
+    "action": "create",
+    "entity_type": "expense",
+    "details": {
+      "row_number": 6,
+      "record": {
+        "Date (Registered)": "2026-07-26",
+        "Title": "",
+        "Description": "Claude Pro subscription - Jul 26 to Aug 26, 2026",
+        "Supplier / Payee": "Anthropic, PBC",
+        "Supplier ID": "",
+        "One-Off Payee": "No",
+        "Supplier VAT Number": "IE04276970QH",
+        "Receipt / Invoice Ref": "FUIGCFQX-0003",
+        "Receipt Filename": "105378d4ec_260726_-_Anthropic_Claude_Invoice-FUIGCFQX-0003.pdf",
+        "Category": "Software and Subscriptions",
+        "Base Net Amount (\u20ac)": "18.00",
+        "Delivery (\u20ac)": "0.00",
+        "Fees (\u20ac)": "0.00",
+        "Other Charges (\u20ac)": "0.00",
+        "Discount Type": "\u20ac",
+        "Discount Value": "0.00",
+        "Net Amount (\u20ac)": "18.00",
+        "Total (\u20ac)": "22.14",
+        "VAT Rate": "23%",
+        "VAT Amount (\u20ac)": "4.14",
+        "VAT Treatment": "standard",
+        "Supply Type": "services",
+        "Input VAT Reclaimable": "Yes",
+        "Deductibility Status": "Fully Deductible",
+        "Capital Expenditure Flag": "Yes",
+        "Receipt Attached": "Yes",
+        "Bank Reconciliation": "Unreconciled",
+        "Status": "Paid",
+        "Payment Method": "Credit Card",
+        "Notes": "",
+        "Phase Tag": "Phase 1",
+        "OCR Processed": "Yes",
+        "OCR Confidence": "97",
+        "OCR Language": "en",
+        "OCR Raw Response": "{\"date\":\"26/07/2026\",\"supplier_name\":\"Anthropic, PBC\",\"supplier_vat_number\":\"IE04276970QH\",\"description\":\"Claude Pro subscription - Jul 26 to Aug 26, 2026\",\"net_amount\":18.00,\"vat_amount\":4.14,\"vat_rate\":23,\"total_amount\":22.14,\"currency\":\"EUR\",\"receipt_reference\":\"FUIGCFQX-0003\",\"category_suggestion\":\"Software and Subscriptions\",\"confidence\":97,\"language_detected\":\"en\",\"notes\":\"VAT applied at Irish standard rate of 23% on \u20ac18.00 net amount. Invoice issued and due on same date: July 26, 2026.\"}",
+        "Discount (\u20ac)": "0.00",
+        "Compliance Flags": "[]",
+        "Flags Acknowledged": "No",
+        "Flags Acknowledged At": ""
+      }
+    }
   }
 ]

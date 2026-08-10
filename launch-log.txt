@@ -127,3 +127,7 @@ Press CTRL+C to quit
 [2026-08-10 16:08:03] Python start command issued (PID: 25588)
 [2026-08-10 16:08:06] App HTTP endpoint is responsive
 [2026-08-10 16:08:06] Browser open command issued (explorer)
+[2026-08-10 16:39:06] Launch requested
+[2026-08-10 16:39:10] Python start command issued (PID: 36440)
+[2026-08-10 16:39:12] App HTTP endpoint is responsive
+[2026-08-10 16:39:12] Browser open command issued (explorer)
