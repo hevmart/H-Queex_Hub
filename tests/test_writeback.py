@@ -4844,3 +4844,184 @@ def test_invoice_line_item_service_id_join_key_works_end_to_end(workbook_copy):
     invoices = app.load_finance_data()["sheets"]["Invoices"]
     invoice = next(row for row in invoices if row.get("line_items") and row["line_items"][0].get("service_id") == service_id)
     assert invoice["line_items"][0]["service_id"] == service_id
+
+
+# --- Receipt OCR ---
+
+def test_receipt_ocr_rejects_oversized_file(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+
+    oversized = BytesIO(b"0" * (app.MAX_OCR_FILE_SIZE_BYTES + 1))
+    response = client.post(
+        '/expenses/ocr',
+        data={"receipt_file": (oversized, "receipt.jpg")},
+        content_type='multipart/form-data',
+    )
+    assert response.status_code == 400
+    assert "too large" in response.get_json()["error"].lower()
+
+
+def test_receipt_ocr_rejects_invalid_file_type(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+
+    response = client.post(
+        '/expenses/ocr',
+        data={"receipt_file": (BytesIO(b"not a receipt"), "receipt.exe")},
+        content_type='multipart/form-data',
+    )
+    assert response.status_code == 400
+    assert "unsupported" in response.get_json()["error"].lower()
+
+
+def test_receipt_ocr_rejects_missing_file(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+
+    response = client.post('/expenses/ocr', data={}, content_type='multipart/form-data')
+    assert response.status_code == 400
+
+
+def test_receipt_ocr_success_returns_parsed_fields(workbook_copy, monkeypatch):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+
+    fake_fields = {
+        "date": "01/08/2026",
+        "supplier_name": "Test Supplier",
+        "description": "Office chair",
+        "net_amount": 100.0,
+        "vat_amount": 23.0,
+        "vat_rate": 23,
+        "total_amount": 123.0,
+        "currency": "EUR",
+        "receipt_reference": "REC-1",
+        "category_suggestion": "Office Supplies",
+        "confidence": 92,
+        "language_detected": "English",
+        "notes": None,
+        "ocr_raw_response": "{}",
+    }
+    monkeypatch.setattr(app, "_run_receipt_ocr", lambda file_bytes, extension, category_options: fake_fields)
+
+    response = client.post(
+        '/expenses/ocr',
+        data={"receipt_file": (BytesIO(b"fake-image-bytes"), "receipt.jpg")},
+        content_type='multipart/form-data',
+    )
+    assert response.status_code == 200
+    body = response.get_json()
+    assert body["supplier_name"] == "Test Supplier"
+    assert body["confidence"] == 92
+
+
+def test_receipt_ocr_handles_null_fields_gracefully(workbook_copy, monkeypatch):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+
+    sparse_fields = {field: None for field in app.OCR_FIELDS}
+    sparse_fields["ocr_raw_response"] = "{}"
+    monkeypatch.setattr(app, "_run_receipt_ocr", lambda file_bytes, extension, category_options: sparse_fields)
+
+    response = client.post(
+        '/expenses/ocr',
+        data={"receipt_file": (BytesIO(b"fake-image-bytes"), "receipt.png")},
+        content_type='multipart/form-data',
+    )
+    assert response.status_code == 200
+    body = response.get_json()
+    assert body["supplier_name"] is None
+    assert body["confidence"] is None
+
+
+def test_receipt_ocr_failure_does_not_block_expense_saving(workbook_copy, monkeypatch):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+
+    def raise_error(file_bytes, extension, category_options):
+        raise app.OcrError("Receipt reading service unavailable")
+
+    monkeypatch.setattr(app, "_run_receipt_ocr", raise_error)
+
+    ocr_response = client.post(
+        '/expenses/ocr',
+        data={"receipt_file": (BytesIO(b"fake-image-bytes"), "receipt.jpg")},
+        content_type='multipart/form-data',
+    )
+    assert ocr_response.status_code == 502
+
+    payload = {
+        "date": "2026-08-05",
+        "title": "Manual entry after OCR failure",
+        "description": "Filled in manually",
+        "supplier": "Supplier A",
+        "supplier_vat_number": "IE1234567A",
+        "receipt_reference": "REC-2",
+        "category": "Equipment and Hardware",
+        "net_amount": "50.00",
+        "total_amount": "61.50",
+        "vat_rate": "23%",
+        "vat_amount": "11.50",
+        "input_vat_reclaimable": "Yes",
+        "status": "Paid",
+        "payment_method": "Business Bank",
+    }
+    save_response = client.post('/expenses/add', data=payload, follow_redirects=True)
+    assert save_response.status_code == 200
+    assert b'Expense entry added' in save_response.data
+
+
+def test_parse_ocr_response_text_handles_markdown_fences():
+    raw = '```json\n{"date": "01/08/2026", "supplier_name": "Acme"}\n```'
+    parsed = app._parse_ocr_response_text(raw)
+    assert parsed["date"] == "01/08/2026"
+    assert parsed["supplier_name"] == "Acme"
+    assert parsed["confidence"] is None
+
+
+def test_parse_ocr_response_text_rejects_unparseable_text():
+    with pytest.raises(app.OcrError):
+        app._parse_ocr_response_text("not json at all")
+
+
+def test_expense_ocr_audit_fields_saved_on_add(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+
+    payload = {
+        "date": "2026-08-05",
+        "title": "Receipt-read expense",
+        "description": "Read from receipt",
+        "supplier": "Supplier A",
+        "supplier_vat_number": "IE1234567A",
+        "receipt_reference": "REC-1",
+        "category": "Equipment and Hardware",
+        "net_amount": "50.00",
+        "total_amount": "61.50",
+        "vat_rate": "23%",
+        "vat_amount": "11.50",
+        "input_vat_reclaimable": "Yes",
+        "status": "Paid",
+        "payment_method": "Business Bank",
+        "ocr_processed": "Yes",
+        "ocr_confidence": "92",
+        "ocr_language": "English",
+        "ocr_raw_response": '{"supplier_name": "Supplier A"}',
+    }
+    response = client.post('/expenses/add', data=payload, follow_redirects=True)
+    assert response.status_code == 200
+
+    app.load_finance_data.cache_clear()
+    expenses = app.load_finance_data()["sheets"]["Expenses"]
+    saved = next(r for r in expenses if r.get("Title") == "Receipt-read expense")
+    assert saved.get("OCR Processed") == "Yes"
+    assert saved.get("OCR Confidence") == "92"
+    assert saved.get("OCR Language") == "English"

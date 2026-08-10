@@ -461,6 +461,17 @@
       .receipt-dropzone:hover, .receipt-dropzone.drag-over { border-color: var(--brand-gold); background: rgba(176, 141, 87, 0.06); }
       .receipt-dropzone-text { display: block; font-size: 13px; font-weight: 600; color: var(--brand-navy); }
       .receipt-dropzone-filename { display: block; margin-top: 6px; font-size: 12px; color: var(--brand-steel); }
+      .ocr-status { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: 13px; color: var(--brand-steel); }
+      .ocr-spinner {
+        width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--brand-border); border-top-color: var(--brand-gold);
+        animation: ocr-spin 700ms linear infinite; display: inline-block;
+      }
+      @keyframes ocr-spin { to { transform: rotate(360deg); } }
+      .field.ocr-filled input, .field.ocr-filled select, .field.ocr-filled textarea { border-left: 3px solid var(--brand-gold); }
+      .ocr-field-badge {
+        display: inline-block; margin-left: 6px; font-size: 11px; font-weight: 700; color: var(--brand-navy);
+        background: rgba(176, 141, 87, 0.15); border-radius: 4px; padding: 1px 6px; vertical-align: middle;
+      }
       .services-table { table-layout: fixed; }
       .services-table .col-name { text-align: left; width: 26%; }
       .services-table th.col-description { text-align: left; }
@@ -2998,10 +3009,23 @@
               <label for="expense_receipt_file">Receipt</label>
               <div class="receipt-dropzone" id="expense_receipt_dropzone">
                 <input type="file" id="expense_receipt_file" name="receipt_file" accept="image/*,.pdf" style="display:none;">
+                <input type="file" id="expense_receipt_camera" accept="image/*" capture="environment" style="display:none;">
                 <span class="receipt-dropzone-text">Drag receipt here or click to upload</span>
                 <span class="receipt-dropzone-filename" id="expense_receipt_filename">{% if editing_expense and editing_expense.get('Receipt Filename') %}Current file: {{ editing_expense.get('Receipt Filename') }}{% endif %}</span>
               </div>
-              <span class="one-off-hint">Auto-populate from receipt coming soon.</span>
+              <button type="button" class="btn-secondary" id="expense_receipt_camera_btn" style="display:none; margin-top: 8px;">Take Photo</button>
+              <div class="ocr-status" id="expense_ocr_status" style="display:none;">
+                <span class="ocr-spinner" aria-hidden="true"></span>
+                <span id="expense_ocr_status_text">Reading receipt...</span>
+              </div>
+              <div class="compliance-panel severity-warning" id="expense_ocr_banner_amber" style="display:none;">Some fields could not be read clearly — please review all highlighted fields before saving</div>
+              <div class="compliance-panel severity-danger" id="expense_ocr_banner_red" style="display:none;">Receipt could not be read clearly — please fill in fields manually</div>
+              <div class="compliance-panel severity-warning" id="expense_ocr_banner_currency" style="display:none;"></div>
+              <div class="compliance-panel severity-danger" id="expense_ocr_banner_error" style="display:none;"></div>
+              <input type="hidden" id="expense_ocr_processed" name="ocr_processed" value="{{ 'Yes' if editing_expense and editing_expense.get('OCR Processed') == 'Yes' else 'No' }}">
+              <input type="hidden" id="expense_ocr_confidence" name="ocr_confidence" value="{{ editing_expense.get('OCR Confidence') if editing_expense else '' }}">
+              <input type="hidden" id="expense_ocr_language" name="ocr_language" value="{{ editing_expense.get('OCR Language') if editing_expense else '' }}">
+              <input type="hidden" id="expense_ocr_raw_response" name="ocr_raw_response" value="{{ editing_expense.get('OCR Raw Response') if editing_expense else '' }}">
             </div>
             <div class="field optional {% if validation_errors.get('supplier_vat_number') %}has-error{% endif %}"><label for="expense_supplier_vat">Supplier VAT number</label><input id="expense_supplier_vat" type="text" name="supplier_vat_number" value="{{ expense_form.get('supplier_vat_number') if expense_form else (editing_expense.get('Supplier VAT Number') if editing_expense else '') }}" placeholder="IE1234567A">{% if validation_errors.get('supplier_vat_number') %}<span class="field-error">{{ validation_errors.get('supplier_vat_number') }}</span>{% endif %}</div>
             <div class="field optional"><label for="expense_receipt_reference">Receipt / invoice ref</label><input id="expense_receipt_reference" type="text" name="receipt_reference" value="{{ expense_form.get('receipt_reference') if expense_form else (editing_expense.get('Receipt / Invoice Ref') if editing_expense else '') }}" placeholder="INV-12345"></div>
@@ -5181,12 +5205,221 @@
 
         var dropzone = document.getElementById("expense_receipt_dropzone");
         var fileInput = document.getElementById("expense_receipt_file");
+        var cameraInput = document.getElementById("expense_receipt_camera");
+        var cameraBtn = document.getElementById("expense_receipt_camera_btn");
         var filenameLabel = document.getElementById("expense_receipt_filename");
+
+        // Multi-language UI support (Portuguese, Spanish) to be added in a future session.
+        var ocrStatus = document.getElementById("expense_ocr_status");
+        var ocrStatusText = document.getElementById("expense_ocr_status_text");
+        var ocrBannerAmber = document.getElementById("expense_ocr_banner_amber");
+        var ocrBannerRed = document.getElementById("expense_ocr_banner_red");
+        var ocrBannerCurrency = document.getElementById("expense_ocr_banner_currency");
+        var ocrBannerError = document.getElementById("expense_ocr_banner_error");
+        var ocrProcessedField = document.getElementById("expense_ocr_processed");
+        var ocrConfidenceField = document.getElementById("expense_ocr_confidence");
+        var ocrLanguageField = document.getElementById("expense_ocr_language");
+        var ocrRawResponseField = document.getElementById("expense_ocr_raw_response");
+
+        if (cameraBtn && ("ontouchstart" in window || navigator.maxTouchPoints > 0)) {
+          cameraBtn.style.display = "inline-block";
+        }
+        if (cameraBtn && cameraInput) {
+          cameraBtn.addEventListener("click", function () { cameraInput.click(); });
+          cameraInput.addEventListener("change", function () {
+            if (cameraInput.files && cameraInput.files[0]) {
+              runReceiptOcr(cameraInput.files[0]);
+            }
+          });
+        }
+
+        function hideOcrBanners() {
+          [ocrBannerAmber, ocrBannerRed, ocrBannerCurrency, ocrBannerError].forEach(function (el) {
+            if (el) { el.style.display = "none"; }
+          });
+        }
+
+        function markOcrFilled(fieldId) {
+          var field = document.getElementById(fieldId);
+          if (!field) { return; }
+          var wrap = field.closest(".field");
+          if (!wrap) { return; }
+          wrap.classList.add("ocr-filled");
+          var label = wrap.querySelector("label");
+          if (label && !label.querySelector(".ocr-field-badge")) {
+            var badge = document.createElement("span");
+            badge.className = "ocr-field-badge";
+            badge.textContent = "From receipt";
+            label.appendChild(badge);
+          }
+        }
+
+        function setFieldValue(fieldId, value) {
+          if (value === null || value === undefined || value === "") { return; }
+          var field = document.getElementById(fieldId);
+          if (!field) { return; }
+          field.value = value;
+          field.dispatchEvent(new Event("input"));
+          field.dispatchEvent(new Event("change"));
+          markOcrFilled(fieldId);
+        }
+
+        function convertDateToIso(ddmmyyyy) {
+          if (!ddmmyyyy || typeof ddmmyyyy !== "string") { return null; }
+          var parts = ddmmyyyy.split("/");
+          if (parts.length !== 3) { return null; }
+          var day = parts[0].padStart(2, "0");
+          var month = parts[1].padStart(2, "0");
+          var year = parts[2];
+          if (year.length !== 4) { return null; }
+          return year + "-" + month + "-" + day;
+        }
+
+        function matchVatRateOption(vatRate) {
+          var select = document.getElementById("expense_vat_rate");
+          if (!select || vatRate === null || vatRate === undefined) { return null; }
+          var target = parseFloat(vatRate);
+          if (!Number.isFinite(target)) { return null; }
+          var best = null;
+          var bestDiff = Infinity;
+          Array.prototype.forEach.call(select.options, function (option) {
+            var optionValue = parseFloat(option.value);
+            if (!Number.isFinite(optionValue)) { return; }
+            var diff = Math.abs(optionValue - target);
+            if (diff < bestDiff) { bestDiff = diff; best = option.value; }
+          });
+          return best;
+        }
+
+        function matchCategoryOption(suggestion) {
+          var select = document.getElementById("expense_category");
+          if (!select || !suggestion) { return null; }
+          var target = String(suggestion).trim().toLowerCase();
+          var match = null;
+          Array.prototype.forEach.call(select.options, function (option) {
+            if (option.value.trim().toLowerCase() === target) { match = option.value; }
+          });
+          return match;
+        }
+
+        function applyOcrSupplier(supplierName) {
+          if (!supplierName) { return; }
+          var input = document.getElementById("expense_supplier");
+          var recordIdField = document.getElementById("expense_supplier_record_id");
+          if (!input) { return; }
+          fetch("/api/suppliers/search?q=" + encodeURIComponent(supplierName))
+            .then(function (response) { return response.json(); })
+            .then(function (matches) {
+              var exact = (matches || []).find(function (match) {
+                return match.name && match.name.toLowerCase() === supplierName.toLowerCase();
+              });
+              input.value = supplierName;
+              if (recordIdField) { recordIdField.value = exact ? (exact.id || "") : ""; }
+              input.dispatchEvent(new Event("change"));
+              markOcrFilled("expense_supplier");
+            })
+            .catch(function () {
+              input.value = supplierName;
+              markOcrFilled("expense_supplier");
+            });
+        }
+
+        function runReceiptOcr(file) {
+          if (!file) { return; }
+          if (file.size > 10 * 1024 * 1024) {
+            hideOcrBanners();
+            if (ocrBannerError) {
+              ocrBannerError.textContent = "File too large — receipts must be under 10MB";
+              ocrBannerError.style.display = "block";
+            }
+            return;
+          }
+          hideOcrBanners();
+          if (ocrStatus) {
+            ocrStatus.style.display = "flex";
+            if (ocrStatusText) { ocrStatusText.textContent = "Reading receipt..."; }
+          }
+
+          var controller = ("AbortController" in window) ? new AbortController() : null;
+          var timeoutId = setTimeout(function () {
+            if (controller) { controller.abort(); }
+          }, 30000);
+
+          var formData = new FormData();
+          formData.append("receipt_file", file);
+
+          fetch("/expenses/ocr", {
+            method: "POST",
+            body: formData,
+            signal: controller ? controller.signal : undefined
+          })
+            .then(function (response) {
+              clearTimeout(timeoutId);
+              return response.json().then(function (data) { return { ok: response.ok, data: data }; });
+            })
+            .then(function (result) {
+              if (ocrStatus) { ocrStatus.style.display = "none"; }
+              if (!result.ok || result.data.error) {
+                if (ocrBannerError) {
+                  ocrBannerError.textContent = result.data && result.data.error ? result.data.error : "Receipt could not be read — please fill in fields manually";
+                  ocrBannerError.style.display = "block";
+                }
+                return;
+              }
+              var fields = result.data;
+
+              var isoDate = convertDateToIso(fields.date);
+              if (isoDate) { setFieldValue("expense_date", isoDate); }
+              applyOcrSupplier(fields.supplier_name);
+              if (fields.description) { setFieldValue("expense_description", fields.description); }
+              if (fields.net_amount !== null && fields.net_amount !== undefined) { setFieldValue("expense_base_net", fields.net_amount); }
+              var vatOption = matchVatRateOption(fields.vat_rate);
+              if (vatOption) { setFieldValue("expense_vat_rate", vatOption); }
+              if (fields.vat_amount !== null && fields.vat_amount !== undefined) { markOcrFilled("expense_vat_amount"); }
+              if (fields.total_amount !== null && fields.total_amount !== undefined) { markOcrFilled("expense_total"); }
+              if (fields.receipt_reference) { setFieldValue("expense_receipt_reference", fields.receipt_reference); }
+              var categoryOption = matchCategoryOption(fields.category_suggestion);
+              if (categoryOption) { setFieldValue("expense_category", categoryOption); }
+
+              if (window.recalculateExpenseAmounts) { window.recalculateExpenseAmounts(); }
+
+              if (ocrProcessedField) { ocrProcessedField.value = "Yes"; }
+              if (ocrConfidenceField) { ocrConfidenceField.value = fields.confidence != null ? fields.confidence : ""; }
+              if (ocrLanguageField) { ocrLanguageField.value = fields.language_detected || ""; }
+              if (ocrRawResponseField) { ocrRawResponseField.value = fields.ocr_raw_response || ""; }
+
+              var confidence = Number(fields.confidence);
+              if (Number.isFinite(confidence) && confidence < 40) {
+                if (ocrBannerRed) { ocrBannerRed.style.display = "block"; }
+              } else if (Number.isFinite(confidence) && confidence < 70) {
+                if (ocrBannerAmber) { ocrBannerAmber.style.display = "block"; }
+              }
+
+              if (fields.currency && fields.currency.toUpperCase() !== "EUR") {
+                if (ocrBannerCurrency) {
+                  ocrBannerCurrency.textContent = "Receipt currency detected as " + fields.currency + " — amounts have been entered as-is, please convert to EUR before saving";
+                  ocrBannerCurrency.style.display = "block";
+                }
+              }
+            })
+            .catch(function (error) {
+              clearTimeout(timeoutId);
+              if (ocrStatus) { ocrStatus.style.display = "none"; }
+              if (ocrBannerError) {
+                ocrBannerError.textContent = (error && error.name === "AbortError")
+                  ? "Receipt reading timed out — please fill in fields manually or try again"
+                  : "Receipt could not be read — please fill in fields manually";
+                ocrBannerError.style.display = "block";
+              }
+            });
+        }
+
         if (dropzone && fileInput) {
           dropzone.addEventListener("click", function () { fileInput.click(); });
           fileInput.addEventListener("change", function () {
             if (fileInput.files && fileInput.files[0] && filenameLabel) {
               filenameLabel.textContent = "Selected: " + fileInput.files[0].name;
+              runReceiptOcr(fileInput.files[0]);
             }
           });
           ["dragenter", "dragover"].forEach(function (evtName) {
@@ -5206,6 +5439,7 @@
             if (files && files[0]) {
               fileInput.files = files;
               if (filenameLabel) { filenameLabel.textContent = "Selected: " + files[0].name; }
+              runReceiptOcr(files[0]);
             }
           });
         }

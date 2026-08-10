@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import base64
 import csv
 import json
+import os
 import shutil
 import time
 import threading
@@ -14,9 +16,12 @@ from typing import Any
 from urllib.parse import quote
 from uuid import uuid4
 
+from dotenv import load_dotenv
 from flask import Flask, Response, jsonify, redirect, render_template, request, send_from_directory, url_for
 from openpyxl import load_workbook
 from werkzeug.utils import secure_filename
+
+load_dotenv()
 
 app = Flask(__name__)
 
@@ -1296,6 +1301,84 @@ def _apply_compliance_flags_to_payload(payload: dict[str, Any], flags: list[dict
     payload["Flags Acknowledged"] = "Yes" if (has_red_flag and acknowledged) else "No"
     payload["Flags Acknowledged At"] = acknowledged_at if (has_red_flag and acknowledged) else ""
     return errors
+
+
+ALLOWED_OCR_EXTENSIONS = {"pdf", "jpg", "jpeg", "png", "webp"}
+OCR_MIME_TYPES = {
+    "pdf": "application/pdf",
+    "jpg": "image/jpeg",
+    "jpeg": "image/jpeg",
+    "png": "image/png",
+    "webp": "image/webp",
+}
+MAX_OCR_FILE_SIZE_BYTES = 10 * 1024 * 1024
+OCR_MODEL = "claude-sonnet-4-6"
+OCR_SYSTEM_PROMPT = (
+    "You are a receipt reading assistant for H-Queex, an Irish business consultancy. "
+    "Extract financial data from the receipt image provided. Return ONLY a valid JSON "
+    "object with no markdown, no explanation, just the raw JSON. Use DD/MM/YYYY date "
+    "format. Amounts in numbers only, no currency symbols. If a field cannot be "
+    "determined return null. For VAT: Irish standard rates are 23%, 13.5%, 9%, 4.8% and "
+    "0% — if you see an amount that looks like VAT use these rates to verify. For "
+    "category_suggestion choose the single most likely category from the provided list "
+    "based on the supplier and items purchased."
+)
+OCR_FIELDS = (
+    "date", "supplier_name", "description", "net_amount", "vat_amount", "vat_rate",
+    "total_amount", "currency", "receipt_reference", "category_suggestion",
+    "confidence", "language_detected", "notes",
+)
+
+
+class OcrError(RuntimeError):
+    """Raised when a receipt cannot be read via the OCR route."""
+
+
+def _get_anthropic_client():
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key or api_key == "your_key_here":
+        raise OcrError("ANTHROPIC_API_KEY is not configured")
+    import anthropic
+    return anthropic.Anthropic(api_key=api_key)
+
+
+def _parse_ocr_response_text(raw_text: str) -> dict[str, Any]:
+    text = (raw_text or "").strip()
+    if text.startswith("```"):
+        text = text.strip("`")
+        if text.lower().startswith("json"):
+            text = text[4:]
+        text = text.strip()
+    try:
+        parsed = json.loads(text)
+    except (json.JSONDecodeError, TypeError):
+        raise OcrError("Receipt reading returned an unreadable response")
+    if not isinstance(parsed, dict):
+        raise OcrError("Receipt reading returned an unreadable response")
+    return {field: parsed.get(field) for field in OCR_FIELDS}
+
+
+def _run_receipt_ocr(file_bytes: bytes, extension: str, category_options: list[str]) -> dict[str, Any]:
+    client = _get_anthropic_client()
+    media_type = OCR_MIME_TYPES.get(extension, "application/octet-stream")
+    encoded = base64.b64encode(file_bytes).decode("ascii")
+    category_list_text = ", ".join(category_options) if category_options else "Other"
+    user_text = f"Available categories for category_suggestion: {category_list_text}"
+    if extension == "pdf":
+        content_block = {"type": "document", "source": {"type": "base64", "media_type": media_type, "data": encoded}}
+    else:
+        content_block = {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": encoded}}
+    response = client.messages.create(
+        model=OCR_MODEL,
+        max_tokens=1024,
+        system=OCR_SYSTEM_PROMPT,
+        messages=[{"role": "user", "content": [content_block, {"type": "text", "text": user_text}]}],
+        timeout=30.0,
+    )
+    raw_text = "".join(block.text for block in response.content if getattr(block, "type", "") == "text")
+    fields = _parse_ocr_response_text(raw_text)
+    fields["ocr_raw_response"] = raw_text
+    return fields
 
 
 def _save_uploaded_receipt(file_storage: Any) -> str:
@@ -7755,6 +7838,39 @@ def delete_income():
     return redirect(url_for("income_view", message="Income entry archived"))
 
 
+@app.route("/expenses/ocr", methods=["POST"])
+def expense_ocr():
+    file_storage = request.files.get("receipt_file")
+    if not file_storage or not getattr(file_storage, "filename", ""):
+        return jsonify({"error": "No file provided"}), 400
+
+    original_name = secure_filename(file_storage.filename)
+    if not original_name or "." not in original_name:
+        return jsonify({"error": "Invalid file"}), 400
+    extension = original_name.rsplit(".", 1)[-1].lower()
+    if extension not in ALLOWED_OCR_EXTENSIONS:
+        return jsonify({"error": "Unsupported file type — use PDF, JPG, PNG, or WEBP"}), 400
+
+    file_bytes = file_storage.read()
+    if len(file_bytes) > MAX_OCR_FILE_SIZE_BYTES:
+        return jsonify({"error": "File too large — receipts must be under 10MB"}), 400
+    if not file_bytes:
+        return jsonify({"error": "Invalid file"}), 400
+
+    category_options = _chart_of_accounts_category_options("Expense")
+    try:
+        fields = _run_receipt_ocr(file_bytes, extension, category_options)
+    except OcrError as error:
+        return jsonify({"error": str(error)}), 502
+    except Exception as error:
+        message = str(error)
+        if "timeout" in message.lower() or "timed out" in message.lower():
+            return jsonify({"error": "Receipt reading timed out — please fill in fields manually or try again"}), 504
+        return jsonify({"error": "Receipt could not be read — please fill in fields manually"}), 502
+
+    return jsonify(fields)
+
+
 @app.route("/expenses/add", methods=["POST"])
 def add_expense():
     supplier_name = request.form.get("supplier", "")
@@ -7791,6 +7907,10 @@ def add_expense():
         "Payment Method": request.form.get("payment_method", ""),
         "Notes": request.form.get("notes", ""),
         "Phase Tag": _resolve_phase_tag(request.form.get("date", "")),
+        "OCR Processed": "Yes" if request.form.get("ocr_processed") == "Yes" else "No",
+        "OCR Confidence": request.form.get("ocr_confidence", ""),
+        "OCR Language": request.form.get("ocr_language", ""),
+        "OCR Raw Response": request.form.get("ocr_raw_response", ""),
     }
     uploaded_receipt_name = _save_uploaded_receipt(request.files.get("receipt_file"))
     if uploaded_receipt_name:
@@ -7899,6 +8019,10 @@ def update_expense():
         "Payment Method": request.form.get("payment_method", ""),
         "Notes": request.form.get("notes", ""),
         "Phase Tag": _resolve_phase_tag(request.form.get("date", "")),
+        "OCR Processed": "Yes" if request.form.get("ocr_processed") == "Yes" else existing_expense_row.get("OCR Processed", "No"),
+        "OCR Confidence": request.form.get("ocr_confidence", existing_expense_row.get("OCR Confidence", "")),
+        "OCR Language": request.form.get("ocr_language", existing_expense_row.get("OCR Language", "")),
+        "OCR Raw Response": request.form.get("ocr_raw_response", existing_expense_row.get("OCR Raw Response", "")),
     }
     uploaded_receipt_name = _save_uploaded_receipt(request.files.get("receipt_file"))
     if uploaded_receipt_name:
