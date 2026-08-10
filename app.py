@@ -103,6 +103,18 @@ DELIVERY_SERVICE_TYPES = (
 SOP_STATUSES = ("Draft", "Review", "Approved", "Superseded")
 SOP_STATUS_WORKFLOW = ("Draft", "Review", "Approved")
 PROJECT_DEADLINE_WARNING_DAYS = 14
+LEADS_PATH = BASE_DIR / "leads.json"
+PROPOSALS_PATH = BASE_DIR / "proposals.json"
+TERMS_PATH = BASE_DIR / "terms.json"
+LEAD_SOURCES = ("Website", "Referral", "LinkedIn", "Direct", "Other")
+LEAD_STATUSES = ("New", "Contacted", "Qualified", "Proposal Sent", "Negotiating", "Won", "Lost", "On Hold")
+LEAD_KANBAN_STATUSES = ("New", "Contacted", "Qualified", "Proposal Sent", "Negotiating", "Won", "Lost")
+LEAD_CLOSED_STATUSES = ("Won", "Lost")
+PROPOSAL_STATUSES = ("Draft", "Sent", "Accepted", "Declined", "Expired")
+PROPOSAL_EXPIRY_WARNING_DAYS = 7
+PROPOSAL_DEFAULT_VALIDITY_DAYS = 30
+LEAD_FOLLOWUP_WINDOW_DAYS = 7
+RECENTLY_WON_WINDOW_DAYS = 30
 GDRIVE_BACKUP_DIR = Path("G:/My Drive/H-Queex — Working Documents/H-Queex Hub/Backups")
 BACKUP_STATUS_PATH = BASE_DIR / "backup-status.json"
 BACKUP_RETENTION_DAYS = 30
@@ -3693,6 +3705,262 @@ def _save_uploaded_sop(file_storage: Any) -> tuple[str, str]:
     return stored_name, ""
 
 
+# --- CRM: Standard terms -----------------------------------------------------
+
+def _default_terms_text() -> str:
+    return (
+        "Payment: 50% deposit required on proposal acceptance, balance due on project completion. "
+        "Clarity Partner retainers are invoiced monthly in advance with 30 days written notice required to cancel. "
+        "All deliverables become the property of the client upon receipt of full payment. "
+        "Both parties agree to maintain confidentiality of all information shared during the engagement. "
+        "This agreement is governed by the laws of the Republic of Ireland."
+    )
+
+
+def _load_terms() -> dict[str, Any]:
+    if not TERMS_PATH.exists():
+        return {"standard_terms": _default_terms_text()}
+    try:
+        payload = json.loads(TERMS_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {"standard_terms": _default_terms_text()}
+    if not isinstance(payload, dict):
+        return {"standard_terms": _default_terms_text()}
+    return {"standard_terms": str(payload.get("standard_terms") or _default_terms_text())}
+
+
+def _save_terms(terms: dict[str, Any]) -> None:
+    TERMS_PATH.write_text(json.dumps({"standard_terms": str(terms.get("standard_terms") or "")}, indent=2), encoding="utf-8")
+
+
+# --- CRM: Leads ---------------------------------------------------------------
+
+def _generate_lead_number(existing_leads: list[dict[str, Any]], *, year: int | None = None) -> str:
+    target_year = year or date.today().year
+    prefix = f"HQ-LEAD-{target_year}-"
+    highest = 0
+    for lead in existing_leads:
+        number = str(lead.get("lead_number") or "")
+        if number.startswith(prefix):
+            try:
+                highest = max(highest, int(number[len(prefix):]))
+            except ValueError:
+                continue
+    return f"{prefix}{highest + 1:03d}"
+
+
+def _normalize_lead(record: dict[str, Any]) -> dict[str, Any]:
+    source = str(record.get("source") or "Other").strip()
+    status = str(record.get("status") or "New").strip()
+    service_interest = record.get("service_interest")
+    if not isinstance(service_interest, list):
+        service_interest = [service_interest] if service_interest else []
+    activity_log = record.get("activity_log")
+    if not isinstance(activity_log, list):
+        activity_log = []
+    now = datetime.now().isoformat(timespec="seconds")
+    return {
+        "id": str(record.get("id") or uuid4()),
+        "lead_number": str(record.get("lead_number") or "").strip(),
+        "source": source if source in LEAD_SOURCES else "Other",
+        "contact_name": str(record.get("contact_name") or "").strip(),
+        "company_name": str(record.get("company_name") or "").strip(),
+        "email": str(record.get("email") or "").strip(),
+        "phone": str(record.get("phone") or "").strip(),
+        "country": str(record.get("country") or "").strip(),
+        "service_interest": [str(item).strip() for item in service_interest if str(item).strip()],
+        "estimated_value": round(_coerce_number(record.get("estimated_value")), 2),
+        "status": status if status in LEAD_STATUSES else "New",
+        "created_at": str(record.get("created_at") or now),
+        "updated_at": str(record.get("updated_at") or now),
+        "next_action": str(record.get("next_action") or "").strip(),
+        "next_action_date": str(record.get("next_action_date") or "").strip(),
+        "notes": str(record.get("notes") or "").strip(),
+        "converted_client_id": str(record.get("converted_client_id") or "").strip(),
+        "activity_log": [entry for entry in activity_log if isinstance(entry, dict)],
+    }
+
+
+def _load_leads() -> list[dict[str, Any]]:
+    return [_normalize_lead(record) for record in _load_json_records(LEADS_PATH) if isinstance(record, dict)]
+
+
+def _save_leads(leads: list[dict[str, Any]]) -> None:
+    _save_json_records(LEADS_PATH, [_normalize_lead(lead) for lead in leads])
+
+
+def _add_lead_activity(lead: dict[str, Any], entry_type: str, text: str) -> None:
+    lead["activity_log"].append({
+        "timestamp": datetime.now().isoformat(timespec="seconds"),
+        "type": entry_type,
+        "text": text,
+    })
+
+
+def _leads_pipeline_value(leads: list[dict[str, Any]]) -> float:
+    return round(sum(lead["estimated_value"] for lead in leads if lead["status"] not in LEAD_CLOSED_STATUSES), 2)
+
+
+def _leads_conversion_rate(leads: list[dict[str, Any]]) -> float:
+    closed = [lead for lead in leads if lead["status"] in LEAD_CLOSED_STATUSES]
+    if not closed:
+        return 0.0
+    won = sum(1 for lead in closed if lead["status"] == "Won")
+    return round((won / len(closed)) * 100, 1)
+
+
+def _average_deal_value(leads: list[dict[str, Any]]) -> float:
+    won = [lead for lead in leads if lead["status"] == "Won"]
+    if not won:
+        return 0.0
+    return round(sum(lead["estimated_value"] for lead in won) / len(won), 2)
+
+
+def _leads_by_source(leads: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    counts: dict[str, int] = {source: 0 for source in LEAD_SOURCES}
+    for lead in leads:
+        counts[lead["source"]] = counts.get(lead["source"], 0) + 1
+    return [{"source": source, "count": count} for source, count in counts.items()]
+
+
+def _upcoming_followups(leads: list[dict[str, Any]], *, days: int = LEAD_FOLLOWUP_WINDOW_DAYS, today: date | None = None) -> list[dict[str, Any]]:
+    current_day = today or date.today()
+    followups = []
+    for lead in leads:
+        if lead["status"] in LEAD_CLOSED_STATUSES:
+            continue
+        next_action_date = _parse_iso_date(lead.get("next_action_date"))
+        if next_action_date and current_day <= next_action_date <= current_day + timedelta(days=days):
+            followups.append(lead)
+    return sorted(followups, key=lambda item: item["next_action_date"])
+
+
+def _overdue_followups(leads: list[dict[str, Any]], *, today: date | None = None) -> list[dict[str, Any]]:
+    current_day = today or date.today()
+    overdue = []
+    for lead in leads:
+        if lead["status"] in LEAD_CLOSED_STATUSES:
+            continue
+        next_action_date = _parse_iso_date(lead.get("next_action_date"))
+        if next_action_date and next_action_date < current_day:
+            overdue.append(lead)
+    return sorted(overdue, key=lambda item: item["next_action_date"])
+
+
+def _recently_won(leads: list[dict[str, Any]], *, days: int = RECENTLY_WON_WINDOW_DAYS, today: date | None = None) -> list[dict[str, Any]]:
+    current_day = today or date.today()
+    won = []
+    for lead in leads:
+        if lead["status"] != "Won":
+            continue
+        updated = _parse_iso_date(lead.get("updated_at"))
+        if updated and updated >= current_day - timedelta(days=days):
+            won.append(lead)
+    return sorted(won, key=lambda item: item["updated_at"], reverse=True)
+
+
+def _lead_days_in_status(lead: dict[str, Any], *, today: date | None = None) -> int:
+    current_day = today or date.today()
+    updated = _parse_iso_date(lead.get("updated_at"))
+    if not updated:
+        return 0
+    return max((current_day - updated).days, 0)
+
+
+def _lead_followup_severity(lead: dict[str, Any], *, today: date | None = None) -> str:
+    current_day = today or date.today()
+    next_action_date = _parse_iso_date(lead.get("next_action_date"))
+    if next_action_date is None:
+        return ""
+    if next_action_date < current_day:
+        return "red"
+    if next_action_date == current_day:
+        return "amber"
+    return "green"
+
+
+# --- CRM: Proposals -------------------------------------------------------------
+
+def _generate_proposal_number(existing_proposals: list[dict[str, Any]], *, year: int | None = None) -> str:
+    target_year = year or date.today().year
+    prefix = f"HQ-PROP-{target_year}-"
+    highest = 0
+    for proposal in existing_proposals:
+        number = str(proposal.get("proposal_number") or "")
+        if number.startswith(prefix):
+            try:
+                highest = max(highest, int(number[len(prefix):]))
+            except ValueError:
+                continue
+    return f"{prefix}{highest + 1:03d}"
+
+
+def _normalize_proposal_line_items(raw_line_items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [_compute_invoice_line_item(item) for item in raw_line_items if str(item.get("name") or "").strip()]
+
+
+def _normalize_proposal(record: dict[str, Any]) -> dict[str, Any]:
+    status = str(record.get("status") or "Draft").strip()
+    raw_line_items = record.get("line_items")
+    if not isinstance(raw_line_items, list):
+        raw_line_items = []
+    already_computed = all(isinstance(item, dict) and "total" in item for item in raw_line_items) if raw_line_items else True
+    line_items = raw_line_items if already_computed else _normalize_proposal_line_items(raw_line_items)
+    subtotal = round(sum(_coerce_number(item.get("net_amount")) for item in line_items), 2)
+    vat_amount = round(sum(_coerce_number(item.get("vat_amount")) for item in line_items), 2)
+    total = round(sum(_coerce_number(item.get("total")) for item in line_items), 2)
+    now = datetime.now().isoformat(timespec="seconds")
+    return {
+        "id": str(record.get("id") or uuid4()),
+        "proposal_number": str(record.get("proposal_number") or "").strip(),
+        "lead_id": str(record.get("lead_id") or "").strip(),
+        "client_id": str(record.get("client_id") or "").strip(),
+        "contact_name": str(record.get("contact_name") or "").strip(),
+        "company_name": str(record.get("company_name") or "").strip(),
+        "email": str(record.get("email") or "").strip(),
+        "title": str(record.get("title") or "").strip(),
+        "status": status if status in PROPOSAL_STATUSES else "Draft",
+        "created_at": str(record.get("created_at") or now),
+        "sent_date": str(record.get("sent_date") or "").strip(),
+        "expiry_date": str(record.get("expiry_date") or "").strip(),
+        "line_items": line_items,
+        "subtotal": subtotal,
+        "vat_amount": vat_amount,
+        "total": total,
+        "cover_letter": str(record.get("cover_letter") or "").strip(),
+        "terms": str(record.get("terms") or "").strip(),
+        "notes": str(record.get("notes") or "").strip(),
+        "converted_invoice_id": str(record.get("converted_invoice_id") or "").strip(),
+        "updated_at": str(record.get("updated_at") or now),
+    }
+
+
+def _load_proposals() -> list[dict[str, Any]]:
+    return [_normalize_proposal(record) for record in _load_json_records(PROPOSALS_PATH) if isinstance(record, dict)]
+
+
+def _save_proposals(proposals: list[dict[str, Any]]) -> None:
+    _save_json_records(PROPOSALS_PATH, [_normalize_proposal(proposal) for proposal in proposals])
+
+
+def _proposals_outstanding(proposals: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [proposal for proposal in proposals if proposal["status"] == "Sent"]
+
+
+def _proposal_expiry_severity(proposal: dict[str, Any], *, today: date | None = None) -> str:
+    if proposal.get("status") != "Sent":
+        return ""
+    expiry = _parse_iso_date(proposal.get("expiry_date"))
+    if expiry is None:
+        return ""
+    current_day = today or date.today()
+    if expiry < current_day:
+        return "expired"
+    if expiry <= current_day + timedelta(days=PROPOSAL_EXPIRY_WARNING_DAYS):
+        return "soon"
+    return "ok"
+
+
 def _normalize_service(record: dict[str, Any]) -> dict[str, Any]:
     now = datetime.now().isoformat(timespec="seconds")
     tier = str(record.get("tier") or "addon").strip().lower()
@@ -4274,6 +4542,12 @@ def _build_page_context(
     sop_form: dict[str, Any] | None = None,
     status_filter: str | None = None,
     tier_filter: str | None = None,
+    editing_lead: dict[str, Any] | None = None,
+    lead_form: dict[str, Any] | None = None,
+    lead_detail: dict[str, Any] | None = None,
+    editing_proposal: dict[str, Any] | None = None,
+    proposal_form: dict[str, Any] | None = None,
+    proposal_detail: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     try:
         workbook_path = _resolve_workbook_path()
@@ -4360,6 +4634,31 @@ def _build_page_context(
         })
     sops = _load_sops()
     dmaic_completion_percentage = _dmaic_completion_percentage(dmaic_project["dmaic"]) if dmaic_project else 0
+
+    leads = _load_leads()
+    for lead in leads:
+        lead["days_in_status"] = _lead_days_in_status(lead)
+        lead["followup_severity"] = _lead_followup_severity(lead)
+    proposals = _load_proposals()
+    for proposal in proposals:
+        proposal["expiry_severity"] = _proposal_expiry_severity(proposal)
+    pipeline_value = _leads_pipeline_value(leads)
+    proposals_outstanding_list = _proposals_outstanding(proposals)
+    conversion_rate = _leads_conversion_rate(leads)
+    average_deal_value = _average_deal_value(leads)
+    leads_by_source = _leads_by_source(leads)
+    upcoming_followups = _upcoming_followups(leads)
+    overdue_followups = _overdue_followups(leads)
+    recently_won_leads = _recently_won(leads)
+    standard_terms = _load_terms()["standard_terms"]
+    for overdue_lead in overdue_followups[:3]:
+        upcoming_actions.append({
+            "severity": "danger",
+            "label": f"Follow-up overdue: {overdue_lead['contact_name'] or overdue_lead['company_name']}",
+            "detail": overdue_lead.get("next_action") or "Follow up needed",
+            "link": f"/crm/leads/{overdue_lead['id']}",
+        })
+
     monthly_net_trend = _build_monthly_net_trend(data)
     return {
         "page_title": page_title,
@@ -4506,6 +4805,27 @@ def _build_page_context(
         "editing_sop": editing_sop,
         "sop_form": sop_form or {},
         "dmaic_completion_percentage": dmaic_completion_percentage,
+        "leads": leads,
+        "lead_sources": list(LEAD_SOURCES),
+        "lead_statuses": list(LEAD_STATUSES),
+        "lead_kanban_statuses": list(LEAD_KANBAN_STATUSES),
+        "editing_lead": editing_lead,
+        "lead_form": lead_form or {},
+        "lead_detail": lead_detail,
+        "pipeline_value": pipeline_value,
+        "conversion_rate": conversion_rate,
+        "average_deal_value": average_deal_value,
+        "leads_by_source": leads_by_source,
+        "upcoming_followups": upcoming_followups,
+        "overdue_followups": overdue_followups,
+        "recently_won_leads": recently_won_leads,
+        "proposals": proposals,
+        "proposal_statuses": list(PROPOSAL_STATUSES),
+        "proposals_outstanding_list": proposals_outstanding_list,
+        "editing_proposal": editing_proposal,
+        "proposal_form": proposal_form or {},
+        "proposal_detail": proposal_detail,
+        "standard_terms": standard_terms,
     }
 
 
@@ -5563,6 +5883,549 @@ def serve_delivery_file(filename):
     return send_from_directory(DELIVERY_FILES_DIR, filename, as_attachment=as_attachment)
 
 
+# --- CRM: Pipeline dashboard --------------------------------------------------
+
+@app.route("/crm")
+def crm_view():
+    data = load_finance_data()
+    return render_template(
+        "index.html",
+        **_build_page_context(
+            "CRM",
+            "crm",
+            data,
+            message=request.args.get("message"),
+        ),
+    )
+
+
+# --- CRM: Leads ----------------------------------------------------------------
+
+def _lead_payload_from_form() -> dict[str, Any]:
+    service_interest = request.form.getlist("service_interest")
+    return {
+        "source": str(request.form.get("source") or "Other").strip(),
+        "contact_name": str(request.form.get("contact_name") or "").strip(),
+        "company_name": str(request.form.get("company_name") or "").strip(),
+        "email": str(request.form.get("email") or "").strip(),
+        "phone": str(request.form.get("phone") or "").strip(),
+        "country": str(request.form.get("country") or "").strip(),
+        "service_interest": service_interest,
+        "estimated_value": request.form.get("estimated_value") or 0,
+        "status": str(request.form.get("status") or "New").strip(),
+        "next_action": str(request.form.get("next_action") or "").strip(),
+        "next_action_date": str(request.form.get("next_action_date") or "").strip(),
+        "notes": str(request.form.get("notes") or "").strip(),
+    }
+
+
+def _validate_lead_payload(payload: dict[str, Any]) -> dict[str, str]:
+    errors: dict[str, str] = {}
+    if not payload.get("contact_name") and not payload.get("company_name"):
+        errors["contact_name"] = "Contact name or company name is required"
+    if payload.get("status") not in LEAD_STATUSES:
+        errors["status"] = "Invalid status"
+    if payload.get("next_action_date") and _parse_transaction_date(payload["next_action_date"]) is None:
+        errors["next_action_date"] = "Next action date must be valid"
+    email = payload.get("email")
+    if email and "@" not in email:
+        errors["email"] = "Email must be a valid address"
+    return errors
+
+
+@app.route("/crm/leads")
+def crm_leads_view():
+    data = load_finance_data()
+    leads = _load_leads()
+    editing_lead = _find_record_by_id(leads, request.args.get("edit_id"))
+    return render_template(
+        "index.html",
+        **_build_page_context(
+            "Leads",
+            "crm_leads",
+            data,
+            editing_lead=editing_lead,
+            message=request.args.get("message"),
+        ),
+    )
+
+
+@app.route("/crm/leads/<lead_id>")
+def crm_lead_detail_view(lead_id):
+    data = load_finance_data()
+    leads = _load_leads()
+    lead = _find_record_by_id(leads, lead_id)
+    if lead is None:
+        return redirect(url_for("crm_leads_view", message="Lead not found"))
+    lead["days_in_status"] = _lead_days_in_status(lead)
+    lead["followup_severity"] = _lead_followup_severity(lead)
+    linked_proposals = [proposal for proposal in _load_proposals() if proposal.get("lead_id") == lead_id]
+    return render_template(
+        "index.html",
+        **_build_page_context(
+            f"Lead: {lead.get('contact_name') or lead.get('company_name')}",
+            "crm_lead_detail",
+            data,
+            lead_detail={"lead": lead, "linked_proposals": linked_proposals},
+            message=request.args.get("message"),
+        ),
+    )
+
+
+@app.route("/crm/leads/add", methods=["POST"])
+def add_lead():
+    payload = _lead_payload_from_form()
+    errors = _validate_lead_payload(payload)
+    if errors:
+        return _redirect_with_form_errors("crm_leads_view", payload, errors)
+
+    leads = _load_leads()
+    now = datetime.now().isoformat(timespec="seconds")
+    lead = _normalize_lead({
+        **payload,
+        "id": str(uuid4()),
+        "lead_number": _generate_lead_number(leads),
+        "created_at": now,
+        "updated_at": now,
+    })
+    _add_lead_activity(lead, "created", "Lead created")
+    leads.append(lead)
+    _save_leads(leads)
+    _record_audit("create", "lead", {"lead_id": lead["id"], "record": lead})
+    return redirect(url_for("crm_leads_view", message="Lead added"))
+
+
+@app.route("/crm/leads/update", methods=["POST"])
+def update_lead():
+    lead_id = str(request.form.get("lead_id") or "").strip()
+    payload = _lead_payload_from_form()
+    errors = _validate_lead_payload(payload)
+
+    leads = _load_leads()
+    lead = _find_record_by_id(leads, lead_id)
+    if lead is None:
+        return redirect(url_for("crm_leads_view", message="Lead not found"))
+
+    if errors:
+        return _redirect_with_form_errors("crm_leads_view", payload, errors, edit_id=lead_id)
+
+    status_changed = lead["status"] != payload["status"]
+    lead.update(payload)
+    lead["updated_at"] = datetime.now().isoformat(timespec="seconds")
+    if status_changed:
+        _add_lead_activity(lead, "status_change", f"Status changed to {payload['status']}")
+    _save_leads(leads)
+    _record_audit("update", "lead", {"lead_id": lead_id, "record": lead})
+    return redirect(url_for("crm_leads_view", message="Lead updated"))
+
+
+@app.route("/crm/leads/status", methods=["POST"])
+def update_lead_status():
+    lead_id = str(request.form.get("lead_id") or "").strip()
+    new_status = str(request.form.get("status") or "").strip()
+    next_page = str(request.args.get("next") or url_for("crm_leads_view"))
+    if new_status not in LEAD_STATUSES:
+        return redirect(_append_message_to_path(next_page, "Invalid status"))
+
+    leads = _load_leads()
+    lead = _find_record_by_id(leads, lead_id)
+    if lead is not None:
+        lead["status"] = new_status
+        lead["updated_at"] = datetime.now().isoformat(timespec="seconds")
+        _add_lead_activity(lead, "status_change", f"Status changed to {new_status}")
+        _save_leads(leads)
+        _record_audit("update", "lead", {"lead_id": lead_id, "field": "status", "value": new_status})
+    return redirect(_append_message_to_path(next_page, "Lead status updated"))
+
+
+@app.route("/crm/leads/log-contact", methods=["POST"])
+def log_lead_contact():
+    lead_id = str(request.form.get("lead_id") or "").strip()
+    text = str(request.form.get("text") or "").strip()
+    next_page = str(request.args.get("next") or url_for("crm_leads_view"))
+    if not text:
+        return redirect(_append_message_to_path(next_page, "Contact note text is required"))
+
+    leads = _load_leads()
+    lead = _find_record_by_id(leads, lead_id)
+    if lead is not None:
+        _add_lead_activity(lead, "contact", text)
+        lead["updated_at"] = datetime.now().isoformat(timespec="seconds")
+        _save_leads(leads)
+        _record_audit("update", "lead", {"lead_id": lead_id, "field": "activity_log", "value": text})
+    return redirect(_append_message_to_path(next_page, "Contact logged"))
+
+
+@app.route("/crm/leads/schedule-followup", methods=["POST"])
+def schedule_lead_followup():
+    lead_id = str(request.form.get("lead_id") or "").strip()
+    next_action = str(request.form.get("next_action") or "").strip()
+    next_action_date = str(request.form.get("next_action_date") or "").strip()
+    next_page = str(request.args.get("next") or url_for("crm_leads_view"))
+    if not next_action_date or _parse_transaction_date(next_action_date) is None:
+        return redirect(_append_message_to_path(next_page, "A valid follow-up date is required"))
+
+    leads = _load_leads()
+    lead = _find_record_by_id(leads, lead_id)
+    if lead is not None:
+        lead["next_action"] = next_action
+        lead["next_action_date"] = next_action_date
+        lead["updated_at"] = datetime.now().isoformat(timespec="seconds")
+        _add_lead_activity(lead, "followup_scheduled", f"Follow-up scheduled for {next_action_date}: {next_action}" if next_action else f"Follow-up scheduled for {next_action_date}")
+        _save_leads(leads)
+    return redirect(_append_message_to_path(next_page, "Follow-up scheduled"))
+
+
+@app.route("/crm/leads/convert-to-client", methods=["POST"])
+def convert_lead_to_client():
+    lead_id = str(request.form.get("lead_id") or "").strip()
+    leads = _load_leads()
+    lead = _find_record_by_id(leads, lead_id)
+    if lead is None:
+        return redirect(url_for("crm_leads_view", message="Lead not found"))
+
+    client_name = lead.get("company_name") or lead.get("contact_name")
+    payload = {
+        "Client Name": client_name,
+        "Contact Person": lead.get("contact_name", ""),
+        "Email": lead.get("email", ""),
+        "Phone": lead.get("phone", ""),
+        "Country": lead.get("country", ""),
+        "Service Tier": "None",
+        "Retainer Frequency": "",
+        "Retainer Amount (€)": "",
+    }
+    validation_errors = _validate_client_payload(payload)
+    if validation_errors:
+        return redirect(url_for("crm_leads_view", message="Could not convert lead — client name is required"))
+
+    row_number = _append_row_to_sheet("Clients", payload)
+    load_finance_data.cache_clear()
+    lead["status"] = "Won"
+    lead["converted_client_id"] = client_name
+    lead["updated_at"] = datetime.now().isoformat(timespec="seconds")
+    _add_lead_activity(lead, "converted", f"Converted to client: {client_name}")
+    _save_leads(leads)
+    _record_audit("create", "client", {"row_number": row_number, "record": payload, "source": "lead_conversion", "lead_id": lead_id})
+    return redirect(url_for("crm_lead_detail_view", lead_id=lead_id, message=f"Lead converted to client {client_name}"))
+
+
+# --- CRM: Proposals --------------------------------------------------------------
+
+def _proposal_line_items_from_form() -> list[dict[str, Any]]:
+    try:
+        raw_line_items = json.loads(request.form.get("line_items_json") or "[]")
+        if not isinstance(raw_line_items, list):
+            raw_line_items = []
+    except (TypeError, ValueError):
+        raw_line_items = []
+    return _normalize_proposal_line_items(raw_line_items)
+
+
+def _proposal_payload_from_form() -> dict[str, Any]:
+    expiry_date = str(request.form.get("expiry_date") or "").strip()
+    if not expiry_date:
+        sent_date = _parse_transaction_date(request.form.get("sent_date")) or date.today()
+        expiry_date = (sent_date + timedelta(days=PROPOSAL_DEFAULT_VALIDITY_DAYS)).isoformat()
+    return {
+        "lead_id": str(request.form.get("lead_id") or "").strip(),
+        "client_id": str(request.form.get("client_id") or "").strip(),
+        "contact_name": str(request.form.get("contact_name") or "").strip(),
+        "company_name": str(request.form.get("company_name") or "").strip(),
+        "email": str(request.form.get("email") or "").strip(),
+        "title": str(request.form.get("title") or "").strip(),
+        "expiry_date": expiry_date,
+        "cover_letter": str(request.form.get("cover_letter") or "").strip(),
+        "terms": str(request.form.get("terms") or "").strip() or _load_terms()["standard_terms"],
+        "notes": str(request.form.get("notes") or "").strip(),
+        "line_items": _proposal_line_items_from_form(),
+    }
+
+
+def _validate_proposal_payload(payload: dict[str, Any]) -> dict[str, str]:
+    errors: dict[str, str] = {}
+    _validate_required_text(payload.get("title"), "title", "Proposal title", errors)
+    if not payload.get("company_name") and not payload.get("contact_name"):
+        errors["contact_name"] = "Client contact or company name is required"
+    if not payload.get("line_items"):
+        errors["line_items"] = "At least one line item is required"
+    return errors
+
+
+@app.route("/crm/proposals")
+def crm_proposals_view():
+    data = load_finance_data()
+    proposals = _load_proposals()
+    editing_proposal = _find_record_by_id(proposals, request.args.get("edit_id"))
+    return render_template(
+        "index.html",
+        **_build_page_context(
+            "Proposals",
+            "crm_proposals",
+            data,
+            editing_proposal=editing_proposal,
+            message=request.args.get("message"),
+        ),
+    )
+
+
+@app.route("/crm/proposals/<proposal_id>")
+def crm_proposal_detail_view(proposal_id):
+    data = load_finance_data()
+    proposals = _load_proposals()
+    proposal = _find_record_by_id(proposals, proposal_id)
+    if proposal is None:
+        return redirect(url_for("crm_proposals_view", message="Proposal not found"))
+    proposal["expiry_severity"] = _proposal_expiry_severity(proposal)
+    return render_template(
+        "index.html",
+        **_build_page_context(
+            f"Proposal: {proposal.get('title')}",
+            "crm_proposal_detail",
+            data,
+            proposal_detail={"proposal": proposal},
+            message=request.args.get("message"),
+        ),
+    )
+
+
+@app.route("/crm/proposals/add", methods=["POST"])
+def add_proposal():
+    payload = _proposal_payload_from_form()
+    errors = _validate_proposal_payload(payload)
+    if errors:
+        return _redirect_with_form_errors("crm_proposals_view", {**payload, "line_items_json": request.form.get("line_items_json", "")}, errors)
+
+    proposals = _load_proposals()
+    now = datetime.now().isoformat(timespec="seconds")
+    proposal = _normalize_proposal({
+        **payload,
+        "id": str(uuid4()),
+        "proposal_number": _generate_proposal_number(proposals),
+        "status": "Draft",
+        "created_at": now,
+        "updated_at": now,
+    })
+    proposals.append(proposal)
+    _save_proposals(proposals)
+    _record_audit("create", "proposal", {"proposal_id": proposal["id"], "record": proposal})
+
+    lead_id = payload.get("lead_id")
+    if lead_id:
+        leads = _load_leads()
+        lead = _find_record_by_id(leads, lead_id)
+        if lead is not None:
+            lead["status"] = "Proposal Sent" if lead["status"] in ("New", "Contacted", "Qualified") else lead["status"]
+            lead["updated_at"] = now
+            _add_lead_activity(lead, "proposal_created", f"Proposal {proposal['proposal_number']} created")
+            _save_leads(leads)
+
+    return redirect(url_for("crm_proposals_view", message="Proposal created"))
+
+
+@app.route("/crm/proposals/update", methods=["POST"])
+def update_proposal():
+    proposal_id = str(request.form.get("proposal_id") or "").strip()
+    payload = _proposal_payload_from_form()
+    errors = _validate_proposal_payload(payload)
+
+    proposals = _load_proposals()
+    proposal = _find_record_by_id(proposals, proposal_id)
+    if proposal is None:
+        return redirect(url_for("crm_proposals_view", message="Proposal not found"))
+
+    if errors:
+        return _redirect_with_form_errors("crm_proposals_view", {**payload, "line_items_json": request.form.get("line_items_json", "")}, errors, edit_id=proposal_id)
+
+    proposal.update(payload)
+    proposal["updated_at"] = datetime.now().isoformat(timespec="seconds")
+    _save_proposals(proposals)
+    _record_audit("update", "proposal", {"proposal_id": proposal_id, "record": proposal})
+    return redirect(url_for("crm_proposals_view", message="Proposal updated"))
+
+
+@app.route("/crm/proposals/mark-sent", methods=["POST"])
+def mark_proposal_sent():
+    proposal_id = str(request.form.get("proposal_id") or "").strip()
+    proposals = _load_proposals()
+    proposal = _find_record_by_id(proposals, proposal_id)
+    if proposal is None:
+        return redirect(url_for("crm_proposals_view", message="Proposal not found"))
+
+    proposal["status"] = "Sent"
+    proposal["sent_date"] = date.today().isoformat()
+    if not proposal.get("expiry_date"):
+        proposal["expiry_date"] = (date.today() + timedelta(days=PROPOSAL_DEFAULT_VALIDITY_DAYS)).isoformat()
+    proposal["updated_at"] = datetime.now().isoformat(timespec="seconds")
+    _save_proposals(proposals)
+    _record_audit("update", "proposal", {"proposal_id": proposal_id, "field": "status", "value": "Sent"})
+    return redirect(url_for("crm_proposal_detail_view", proposal_id=proposal_id, message="Proposal marked as sent"))
+
+
+@app.route("/crm/proposals/status", methods=["POST"])
+def update_proposal_status():
+    proposal_id = str(request.form.get("proposal_id") or "").strip()
+    new_status = str(request.form.get("status") or "").strip()
+    if new_status not in PROPOSAL_STATUSES:
+        return redirect(url_for("crm_proposal_detail_view", proposal_id=proposal_id, message="Invalid status"))
+
+    proposals = _load_proposals()
+    proposal = _find_record_by_id(proposals, proposal_id)
+    if proposal is not None:
+        proposal["status"] = new_status
+        proposal["updated_at"] = datetime.now().isoformat(timespec="seconds")
+        _save_proposals(proposals)
+        _record_audit("update", "proposal", {"proposal_id": proposal_id, "field": "status", "value": new_status})
+
+        if new_status == "Accepted" and proposal.get("lead_id"):
+            leads = _load_leads()
+            lead = _find_record_by_id(leads, proposal["lead_id"])
+            if lead is not None:
+                _add_lead_activity(lead, "proposal_accepted", f"Proposal {proposal['proposal_number']} accepted")
+                lead["updated_at"] = datetime.now().isoformat(timespec="seconds")
+                _save_leads(leads)
+
+    return redirect(url_for("crm_proposal_detail_view", proposal_id=proposal_id, message=f"Proposal status set to {new_status}"))
+
+
+@app.route("/crm/proposals/convert-to-invoice", methods=["POST"])
+def convert_proposal_to_invoice():
+    proposal_id = str(request.form.get("proposal_id") or "").strip()
+    proposals = _load_proposals()
+    proposal = _find_record_by_id(proposals, proposal_id)
+    if proposal is None:
+        return redirect(url_for("crm_proposals_view", message="Proposal not found"))
+    if proposal["status"] != "Accepted":
+        return redirect(url_for("crm_proposal_detail_view", proposal_id=proposal_id, message="Only Accepted proposals can be converted to an invoice"))
+
+    client_name = proposal.get("company_name") or proposal.get("contact_name")
+    existing_invoices = load_finance_data().get("sheets", {}).get("Invoices", [])
+    issue_date = date.today().isoformat()
+    invoice_payload = {
+        "Invoice #": _next_invoice_number(issue_date, existing_invoices),
+        "Issue Date": issue_date,
+        "Due Date": (date.today() + timedelta(days=14)).isoformat(),
+        "Client Name": client_name,
+        "Client VAT Number": "",
+        "Client Address": "",
+        "Service / Product": "",
+        "VAT Treatment": "standard",
+        "Supply Type": "services",
+        "Balance Due (€)": "",
+        "Status": "Draft",
+        "Payment Method": "",
+        "Payment Date": "",
+        "Bank Reconciliation": "Unreconciled",
+        "Notes": f"Generated from Proposal {proposal['proposal_number']}",
+        "Phase Tag": _resolve_phase_tag(issue_date),
+    }
+    raw_line_items = [
+        {
+            "service_id": item.get("service_id", ""),
+            "name": item.get("name", ""),
+            "description": item.get("description", ""),
+            "quantity": item.get("quantity", 1),
+            "unit_price": item.get("unit_price", 0),
+            "discount_type": item.get("discount_type", "€"),
+            "discount_value": item.get("discount_value", 0),
+            "vat_rate": item.get("vat_rate", "0%"),
+        }
+        for item in proposal["line_items"]
+    ]
+    _apply_invoice_line_items(invoice_payload, raw_line_items)
+    _apply_vat_classification(invoice_payload, vat_rate_key="VAT Rate")
+    _normalize_invoice_balance(invoice_payload)
+    validation_errors = _validate_invoice_payload(invoice_payload)
+    if validation_errors:
+        return redirect(url_for("crm_proposal_detail_view", proposal_id=proposal_id, message=_build_validation_message(validation_errors)))
+
+    _append_row_to_sheet("Invoices", invoice_payload)
+    load_finance_data.cache_clear()
+    _record_audit("create", "invoice", {"record": invoice_payload, "source": "proposal", "proposal_id": proposal_id})
+
+    proposal["converted_invoice_id"] = invoice_payload["Invoice #"]
+    proposal["updated_at"] = datetime.now().isoformat(timespec="seconds")
+    _save_proposals(proposals)
+
+    return redirect(url_for(
+        "crm_proposal_detail_view",
+        proposal_id=proposal_id,
+        message=f"Invoice {invoice_payload['Invoice #']} created — consider creating a project for this engagement",
+    ))
+
+
+@app.route("/crm/proposals/export-pdf/<proposal_id>")
+def export_proposal_pdf(proposal_id):
+    data = load_finance_data()
+    proposals = _load_proposals()
+    proposal = _find_record_by_id(proposals, proposal_id)
+    if proposal is None:
+        return redirect(url_for("crm_proposals_view", message="Proposal not found"))
+    return render_template(
+        "index.html",
+        **_build_page_context(
+            f"Proposal: {proposal.get('title')}",
+            "crm_proposal_pdf",
+            data,
+            proposal_detail={"proposal": proposal},
+        ),
+    )
+
+
+# --- CRM: Public lead intake API (website integration) -----------------------
+
+def _cors_response(payload: dict[str, Any], status_code: int = 200):
+    response = jsonify(payload)
+    response.status_code = status_code
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+    return response
+
+
+@app.route("/api/leads", methods=["POST", "OPTIONS"])
+def api_create_lead():
+    if request.method == "OPTIONS":
+        return _cors_response({}, 204)
+
+    payload = request.get_json(silent=True) or request.form
+    contact_name = str(payload.get("contact_name") or "").strip()
+    company_name = str(payload.get("company_name") or "").strip()
+    email = str(payload.get("email") or "").strip()
+    phone = str(payload.get("phone") or "").strip()
+    message = str(payload.get("message") or "").strip()
+    service_interest = payload.get("service_interest") or []
+    if isinstance(service_interest, str):
+        service_interest = [service_interest]
+
+    if not contact_name and not company_name:
+        return _cors_response({"success": False, "error": "contact_name or company_name is required"}, 400)
+    if not email:
+        return _cors_response({"success": False, "error": "email is required"}, 400)
+
+    leads = _load_leads()
+    now = datetime.now().isoformat(timespec="seconds")
+    lead = _normalize_lead({
+        "id": str(uuid4()),
+        "lead_number": _generate_lead_number(leads),
+        "source": "Website",
+        "contact_name": contact_name,
+        "company_name": company_name,
+        "email": email,
+        "phone": phone,
+        "service_interest": service_interest,
+        "status": "New",
+        "notes": message,
+        "created_at": now,
+        "updated_at": now,
+    })
+    _add_lead_activity(lead, "created", "Lead submitted via website enquiry form")
+    leads.append(lead)
+    _save_leads(leads)
+    _record_audit("create", "lead", {"lead_id": lead["id"], "record": lead, "source": "public_api"})
+    return _cors_response({"success": True, "lead_id": lead["id"], "lead_number": lead["lead_number"]}, 201)
+
+
 def _backup_eligible_files() -> list[Path]:
     return list(SHEET_JSON_PATHS.values()) + [
         SUBSCRIPTIONS_PATH,
@@ -5580,6 +6443,9 @@ def _backup_eligible_files() -> list[Path]:
         PROJECTS_PATH,
         DELIVERY_LOG_PATH,
         SOPS_PATH,
+        LEADS_PATH,
+        PROPOSALS_PATH,
+        TERMS_PATH,
     ]
 
 

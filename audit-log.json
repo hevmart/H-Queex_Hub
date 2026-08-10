@@ -3037,5 +3037,196 @@
         "last_updated_at": "2026-08-10T00:55:30"
       }
     }
+  },
+  {
+    "id": "327bf697-f6ba-42ce-9ddc-7d21ca288521",
+    "timestamp": "2026-08-10T01:19:19",
+    "action": "create",
+    "entity_type": "lead",
+    "details": {
+      "lead_id": "36a3610d-9cb1-4ccd-983e-c10e11033c12",
+      "record": {
+        "id": "36a3610d-9cb1-4ccd-983e-c10e11033c12",
+        "lead_number": "HQ-LEAD-2026-001",
+        "source": "Website",
+        "contact_name": "Jane Enquirer",
+        "company_name": "Acme Ltd",
+        "email": "jane@acme.com",
+        "phone": "0851234567",
+        "country": "",
+        "service_interest": [
+          "Brand Strategy"
+        ],
+        "estimated_value": 0.0,
+        "status": "New",
+        "created_at": "2026-08-10T01:19:19",
+        "updated_at": "2026-08-10T01:19:19",
+        "next_action": "",
+        "next_action_date": "",
+        "notes": "Interested in your services",
+        "converted_client_id": "",
+        "activity_log": [
+          {
+            "timestamp": "2026-08-10T01:19:19",
+            "type": "created",
+            "text": "Lead submitted via website enquiry form"
+          }
+        ]
+      },
+      "source": "public_api"
+    }
+  },
+  {
+    "id": "0cb9541c-9188-4696-bbec-2be0cfd70e03",
+    "timestamp": "2026-08-10T01:19:40",
+    "action": "update",
+    "entity_type": "lead",
+    "details": {
+      "lead_id": "36a3610d-9cb1-4ccd-983e-c10e11033c12",
+      "field": "status",
+      "value": "Won"
+    }
+  },
+  {
+    "id": "bed91e38-3110-4aed-97db-3b48876a82b3",
+    "timestamp": "2026-08-10T01:19:40",
+    "action": "create",
+    "entity_type": "client",
+    "details": {
+      "row_number": 4,
+      "record": {
+        "Client Name": "Acme Ltd",
+        "Contact Person": "Jane Enquirer",
+        "Email": "jane@acme.com",
+        "Phone": "0851234567",
+        "Country": "",
+        "Service Tier": "None",
+        "Retainer Frequency": "",
+        "Retainer Amount (\u20ac)": ""
+      },
+      "source": "lead_conversion",
+      "lead_id": "36a3610d-9cb1-4ccd-983e-c10e11033c12"
+    }
+  },
+  {
+    "id": "7535e236-079c-41c1-9671-1b730ea11e64",
+    "timestamp": "2026-08-10T01:20:24",
+    "action": "create",
+    "entity_type": "proposal",
+    "details": {
+      "proposal_id": "17b4edd3-c96a-4dc5-9645-6928f6b18d78",
+      "record": {
+        "id": "17b4edd3-c96a-4dc5-9645-6928f6b18d78",
+        "proposal_number": "HQ-PROP-2026-001",
+        "lead_id": "",
+        "client_id": "",
+        "contact_name": "Jane Enquirer",
+        "company_name": "Acme Ltd",
+        "email": "jane@acme.com",
+        "title": "Brand Strategy Engagement",
+        "status": "Draft",
+        "created_at": "2026-08-10T01:20:24",
+        "sent_date": "",
+        "expiry_date": "2026-09-09",
+        "line_items": [
+          {
+            "service_id": "",
+            "name": "Brand Strategy",
+            "description": "",
+            "quantity": 1.0,
+            "unit_price": 2000.0,
+            "discount_type": "\u20ac",
+            "discount_value": 0.0,
+            "discount_amount": 0.0,
+            "net_amount": 2000.0,
+            "vat_rate": "23%",
+            "vat_amount": 0.0,
+            "total": 2000.0
+          }
+        ],
+        "subtotal": 2000.0,
+        "vat_amount": 0.0,
+        "total": 2000.0,
+        "cover_letter": "Thank you for your enquiry.",
+        "terms": "Payment: 50% deposit required on proposal acceptance, balance due on project completion. Clarity Partner retainers are invoiced monthly in advance with 30 days written notice required to cancel. All deliverables become the property of the client upon receipt of full payment. Both parties agree to maintain confidentiality of all information shared during the engagement. This agreement is governed by the laws of the Republic of Ireland.",
+        "notes": "",
+        "converted_invoice_id": "",
+        "updated_at": "2026-08-10T01:20:24"
+      }
+    }
+  },
+  {
+    "id": "0aff1da7-9ea4-400f-a346-5913a6f6d4fc",
+    "timestamp": "2026-08-10T01:20:40",
+    "action": "update",
+    "entity_type": "proposal",
+    "details": {
+      "proposal_id": "17b4edd3-c96a-4dc5-9645-6928f6b18d78",
+      "field": "status",
+      "value": "Sent"
+    }
+  },
+  {
+    "id": "7c2658ff-9ade-4c79-8018-a6d9bf97bdf6",
+    "timestamp": "2026-08-10T01:20:40",
+    "action": "update",
+    "entity_type": "proposal",
+    "details": {
+      "proposal_id": "17b4edd3-c96a-4dc5-9645-6928f6b18d78",
+      "field": "status",
+      "value": "Accepted"
+    }
+  },
+  {
+    "id": "2e855ff0-5633-41e4-a19e-d66da9d472e7",
+    "timestamp": "2026-08-10T01:20:40",
+    "action": "create",
+    "entity_type": "invoice",
+    "details": {
+      "record": {
+        "Invoice #": "HQ-2026-011",
+        "Issue Date": "2026-08-10",
+        "Due Date": "2026-08-24",
+        "Client Name": "Acme Ltd",
+        "Client VAT Number": "",
+        "Client Address": "",
+        "Service / Product": "Brand Strategy",
+        "VAT Treatment": "standard",
+        "Supply Type": "services",
+        "Balance Due (\u20ac)": "2000.00",
+        "Status": "Draft",
+        "Payment Method": "",
+        "Payment Date": "",
+        "Bank Reconciliation": "Unreconciled",
+        "Notes": "Generated from Proposal HQ-PROP-2026-001",
+        "Phase Tag": "Phase 1",
+        "line_items": [
+          {
+            "service_id": "",
+            "name": "Brand Strategy",
+            "description": "",
+            "quantity": 1.0,
+            "unit_price": 2000.0,
+            "discount_type": "\u20ac",
+            "discount_value": 0.0,
+            "discount_amount": 0.0,
+            "net_amount": 2000.0,
+            "vat_rate": "23%",
+            "vat_amount": 0.0,
+            "total": 2000.0
+          }
+        ],
+        "Base Net Amount (\u20ac)": "2000.00",
+        "Discount Type": "\u20ac",
+        "Discount Value": "0.00",
+        "Discount (\u20ac)": "0.00",
+        "Net (\u20ac)": "2000.00",
+        "VAT Amount (\u20ac)": "0.00",
+        "Total (\u20ac)": "2000.00",
+        "VAT Rate": "23%"
+      },
+      "source": "proposal",
+      "proposal_id": "17b4edd3-c96a-4dc5-9645-6928f6b18d78"
+    }
   }
 ]

@@ -1,0 +1,42 @@
+[
+  {
+    "Client Name": "HQ Client",
+    "Contact Person": "HQ Test",
+    "Email": "hq@example.com",
+    "Phone": "123456",
+    "Country": "Ireland",
+    "Service Tier": "Clarity Base",
+    "Retainer Frequency": "",
+    "Retainer Amount (\u20ac)": ""
+  },
+  {
+    "Client Name": "HQ Client Form",
+    "Contact Person": "HQ Form",
+    "Email": "hq-form@example.com",
+    "Phone": "555",
+    "Country": "Ireland",
+    "Service Tier": "None",
+    "Retainer Frequency": "",
+    "Retainer Amount (\u20ac)": ""
+  },
+  {
+    "Client Name": "Test Combo Client XYZ",
+    "Contact Person": "",
+    "Email": "",
+    "Phone": "",
+    "Country": "",
+    "Service Tier": "None",
+    "Retainer Frequency": "",
+    "Retainer Amount (\u20ac)": ""
+  },
+  {
+    "Client Name": "Acme Ltd",
+    "Contact Person": "Jane Enquirer",
+    "Email": "jane@acme.com",
+    "Phone": "0851234567",
+    "Country": "",
+    "Service Tier": "None",
+    "Retainer Frequency": "",
+    "Retainer Amount (\u20ac)": ""
+  }
+]

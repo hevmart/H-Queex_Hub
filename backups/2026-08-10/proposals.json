@@ -1,0 +1,40 @@
+[
+  {
+    "id": "17b4edd3-c96a-4dc5-9645-6928f6b18d78",
+    "proposal_number": "HQ-PROP-2026-001",
+    "lead_id": "",
+    "client_id": "",
+    "contact_name": "Jane Enquirer",
+    "company_name": "Acme Ltd",
+    "email": "jane@acme.com",
+    "title": "Brand Strategy Engagement",
+    "status": "Accepted",
+    "created_at": "2026-08-10T01:20:24",
+    "sent_date": "2026-08-10",
+    "expiry_date": "2026-09-09",
+    "line_items": [
+      {
+        "service_id": "",
+        "name": "Brand Strategy",
+        "description": "",
+        "quantity": 1.0,
+        "unit_price": 2000.0,
+        "discount_type": "\u20ac",
+        "discount_value": 0.0,
+        "discount_amount": 0.0,
+        "net_amount": 2000.0,
+        "vat_rate": "23%",
+        "vat_amount": 0.0,
+        "total": 2000.0
+      }
+    ],
+    "subtotal": 2000.0,
+    "vat_amount": 0.0,
+    "total": 2000.0,
+    "cover_letter": "Thank you for your enquiry.",
+    "terms": "Payment: 50% deposit required on proposal acceptance, balance due on project completion. Clarity Partner retainers are invoiced monthly in advance with 30 days written notice required to cancel. All deliverables become the property of the client upon receipt of full payment. Both parties agree to maintain confidentiality of all information shared during the engagement. This agreement is governed by the laws of the Republic of Ireland.",
+    "notes": "",
+    "converted_invoice_id": "HQ-2026-011",
+    "updated_at": "2026-08-10T01:20:40"
+  }
+]

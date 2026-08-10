@@ -1,0 +1,78 @@
+[
+  {
+    "Invoice #": "HQ-2026-010",
+    "Issue Date": "2026-08-08",
+    "Due Date": "2026-08-22",
+    "Client Name": "HQ Client",
+    "Client VAT Number": "IE1234567T",
+    "Client Address": "HQ Office, Dublin",
+    "Service / Product": "HQ sample service",
+    "VAT Treatment": "standard",
+    "Supply Type": "services",
+    "Balance Due (\u20ac)": "300.00",
+    "Status": "Issued",
+    "Payment Method": "Business Bank Account",
+    "Payment Date": "2026-08-08",
+    "Bank Reconciliation": "Unreconciled",
+    "Notes": "HQ sample",
+    "Phase Tag": "Phase 1",
+    "line_items": [
+      {
+        "service_id": "",
+        "name": "HQ sample service",
+        "description": "HQ sample service",
+        "quantity": 1,
+        "unit_price": 300,
+        "discount_type": "\u20ac",
+        "discount_value": 0,
+        "discount_amount": 0,
+        "net_amount": 300,
+        "vat_rate": "23%",
+        "vat_amount": 0,
+        "total": 300
+      }
+    ]
+  },
+  {
+    "Invoice #": "HQ-2026-011",
+    "Issue Date": "2026-08-10",
+    "Due Date": "2026-08-24",
+    "Client Name": "Acme Ltd",
+    "Client VAT Number": "",
+    "Client Address": "",
+    "Service / Product": "Brand Strategy",
+    "VAT Treatment": "standard",
+    "Supply Type": "services",
+    "Balance Due (\u20ac)": "2000.00",
+    "Status": "Draft",
+    "Payment Method": "",
+    "Payment Date": "",
+    "Bank Reconciliation": "Unreconciled",
+    "Notes": "Generated from Proposal HQ-PROP-2026-001",
+    "Phase Tag": "Phase 1",
+    "line_items": [
+      {
+        "service_id": "",
+        "name": "Brand Strategy",
+        "description": "",
+        "quantity": 1.0,
+        "unit_price": 2000.0,
+        "discount_type": "\u20ac",
+        "discount_value": 0.0,
+        "discount_amount": 0.0,
+        "net_amount": 2000.0,
+        "vat_rate": "23%",
+        "vat_amount": 0.0,
+        "total": 2000.0
+      }
+    ],
+    "Base Net Amount (\u20ac)": "2000.00",
+    "Discount Type": "\u20ac",
+    "Discount Value": "0.00",
+    "Discount (\u20ac)": "0.00",
+    "Net (\u20ac)": "2000.00",
+    "VAT Amount (\u20ac)": "0.00",
+    "Total (\u20ac)": "2000.00",
+    "VAT Rate": "23%"
+  }
+]

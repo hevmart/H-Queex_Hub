@@ -72,6 +72,9 @@ def isolated_subscription_file(tmp_path):
     original_sops_path = app.SOPS_PATH
     original_sop_files_dir = app.SOP_FILES_DIR
     original_delivery_files_dir = app.DELIVERY_FILES_DIR
+    original_leads_path = app.LEADS_PATH
+    original_proposals_path = app.PROPOSALS_PATH
+    original_terms_path = app.TERMS_PATH
     app.BACKUPS_DIR = tmp_path / "backups"
     app.GDRIVE_BACKUP_DIR = tmp_path / "gdrive-backups"
     app.BACKUP_STATUS_PATH = tmp_path / "backup-status.json"
@@ -109,6 +112,9 @@ def isolated_subscription_file(tmp_path):
     app.SOP_FILES_DIR.mkdir(parents=True, exist_ok=True)
     app.DELIVERY_FILES_DIR = tmp_path / "delivery-files"
     app.DELIVERY_FILES_DIR.mkdir(parents=True, exist_ok=True)
+    app.LEADS_PATH = tmp_path / "leads.json"
+    app.PROPOSALS_PATH = tmp_path / "proposals.json"
+    app.TERMS_PATH = tmp_path / "terms.json"
     app.load_finance_data.cache_clear()
     yield
     app.SUBSCRIPTIONS_PATH = original_path
@@ -138,6 +144,9 @@ def isolated_subscription_file(tmp_path):
     app.SOPS_PATH = original_sops_path
     app.SOP_FILES_DIR = original_sop_files_dir
     app.DELIVERY_FILES_DIR = original_delivery_files_dir
+    app.LEADS_PATH = original_leads_path
+    app.PROPOSALS_PATH = original_proposals_path
+    app.TERMS_PATH = original_terms_path
     app.load_finance_data.cache_clear()
 
 
@@ -3832,3 +3841,436 @@ def test_dashboard_shows_active_projects_kpi_and_upcoming_deadline(workbook_copy
     assert response.status_code == 200
     assert b'Active Projects' in response.data
     assert b'Deadline soon project' in response.data
+
+
+# --- CRM: Leads ---------------------------------------------------------------
+
+def test_crm_nav_link_present_and_lead_created(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+
+    dashboard_response = client.get('/')
+    assert b'href="/crm"' in dashboard_response.data
+
+    response = client.post(
+        '/crm/leads/add',
+        data={
+            "contact_name": "Sarah Prospect",
+            "company_name": "Prospect Co",
+            "email": "sarah@prospect.co",
+            "source": "Referral",
+            "status": "New",
+            "estimated_value": "5000",
+        },
+        follow_redirects=True,
+    )
+    assert response.status_code == 200
+    assert b'Sarah Prospect' in response.data
+
+    leads = json.loads(app.LEADS_PATH.read_text(encoding="utf-8"))
+    assert len(leads) == 1
+    lead = leads[0]
+    assert lead["lead_number"] == "HQ-LEAD-2026-001"
+    assert lead["source"] == "Referral"
+    assert lead["estimated_value"] == 5000.0
+    assert len(lead["activity_log"]) == 1
+    assert lead["activity_log"][0]["type"] == "created"
+
+
+def test_lead_add_requires_contact_or_company_name(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+
+    client.post('/crm/leads/add', data={"contact_name": "", "company_name": "", "email": ""}, follow_redirects=True)
+
+    leads = json.loads(app.LEADS_PATH.read_text(encoding="utf-8")) if app.LEADS_PATH.exists() else []
+    assert leads == []
+
+
+def test_lead_status_route_moves_kanban_card(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+
+    client.post('/crm/leads/add', data={"contact_name": "Kanban Lead", "source": "Direct", "status": "New"}, follow_redirects=True)
+    lead_id = json.loads(app.LEADS_PATH.read_text(encoding="utf-8"))[0]["id"]
+
+    response = client.post('/crm/leads/status', data={"lead_id": lead_id, "status": "Contacted"}, follow_redirects=True)
+    assert response.status_code == 200
+
+    leads = json.loads(app.LEADS_PATH.read_text(encoding="utf-8"))
+    assert leads[0]["status"] == "Contacted"
+    assert any(entry["type"] == "status_change" for entry in leads[0]["activity_log"])
+
+
+def test_lead_log_contact_adds_timestamped_activity(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+
+    client.post('/crm/leads/add', data={"contact_name": "Contact Log Lead", "source": "Direct"}, follow_redirects=True)
+    lead_id = json.loads(app.LEADS_PATH.read_text(encoding="utf-8"))[0]["id"]
+
+    response = client.post('/crm/leads/log-contact', data={"lead_id": lead_id, "text": "Had a great call about scope"}, follow_redirects=True)
+    assert response.status_code == 200
+
+    leads = json.loads(app.LEADS_PATH.read_text(encoding="utf-8"))
+    contact_entries = [e for e in leads[0]["activity_log"] if e["type"] == "contact"]
+    assert len(contact_entries) == 1
+    assert contact_entries[0]["text"] == "Had a great call about scope"
+    assert contact_entries[0]["timestamp"]
+
+
+def test_lead_schedule_followup_sets_next_action(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+
+    client.post('/crm/leads/add', data={"contact_name": "Followup Lead", "source": "Direct"}, follow_redirects=True)
+    lead_id = json.loads(app.LEADS_PATH.read_text(encoding="utf-8"))[0]["id"]
+
+    response = client.post(
+        '/crm/leads/schedule-followup',
+        data={"lead_id": lead_id, "next_action_date": "2026-09-01", "next_action": "Send updated quote"},
+        follow_redirects=True,
+    )
+    assert response.status_code == 200
+
+    leads = json.loads(app.LEADS_PATH.read_text(encoding="utf-8"))
+    assert leads[0]["next_action_date"] == "2026-09-01"
+    assert leads[0]["next_action"] == "Send updated quote"
+
+
+def test_lead_convert_to_client_creates_client_record_and_links(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+
+    client.post(
+        '/crm/leads/add',
+        data={"contact_name": "Won Contact", "company_name": "Won Co", "email": "won@co.com", "source": "Direct", "status": "Negotiating"},
+        follow_redirects=True,
+    )
+    lead_id = json.loads(app.LEADS_PATH.read_text(encoding="utf-8"))[0]["id"]
+
+    response = client.post('/crm/leads/convert-to-client', data={"lead_id": lead_id}, follow_redirects=True)
+    assert response.status_code == 200
+    assert b'converted to client' in response.data
+
+    app.load_finance_data.cache_clear()
+    clients = app.load_finance_data()["sheets"]["Clients"]
+    assert any(row.get("Client Name") == "Won Co" for row in clients)
+
+    leads = json.loads(app.LEADS_PATH.read_text(encoding="utf-8"))
+    assert leads[0]["status"] == "Won"
+    assert leads[0]["converted_client_id"] == "Won Co"
+    assert any(entry["type"] == "converted" for entry in leads[0]["activity_log"])
+
+
+def test_lead_detail_page_shows_lead_and_handles_missing(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+
+    client.post('/crm/leads/add', data={"contact_name": "Detail Page Lead", "source": "Direct"}, follow_redirects=True)
+    lead_id = json.loads(app.LEADS_PATH.read_text(encoding="utf-8"))[0]["id"]
+
+    response = client.get(f'/crm/leads/{lead_id}')
+    assert response.status_code == 200
+    assert b'Detail Page Lead' in response.data
+
+    missing_response = client.get('/crm/leads/does-not-exist', follow_redirects=True)
+    assert b'Lead not found' in missing_response.data
+
+
+# --- CRM: pipeline calculations (unit tests) --------------------------------
+
+def test_leads_pipeline_value_excludes_closed_leads():
+    leads = [
+        {"status": "New", "estimated_value": 1000},
+        {"status": "Negotiating", "estimated_value": 2000},
+        {"status": "Won", "estimated_value": 5000},
+        {"status": "Lost", "estimated_value": 3000},
+    ]
+    assert app._leads_pipeline_value(leads) == 3000.0
+
+
+def test_leads_conversion_rate_computes_won_over_closed():
+    leads = [
+        {"status": "Won"}, {"status": "Won"}, {"status": "Lost"}, {"status": "New"},
+    ]
+    assert app._leads_conversion_rate(leads) == pytest.approx(66.7, rel=0.01)
+
+
+def test_leads_conversion_rate_zero_when_no_closed_leads():
+    assert app._leads_conversion_rate([{"status": "New"}, {"status": "Contacted"}]) == 0.0
+
+
+def test_average_deal_value_only_counts_won_leads():
+    leads = [
+        {"status": "Won", "estimated_value": 1000},
+        {"status": "Won", "estimated_value": 3000},
+        {"status": "Lost", "estimated_value": 9000},
+    ]
+    assert app._average_deal_value(leads) == 2000.0
+
+
+# --- CRM: Proposals --------------------------------------------------------------
+
+def _proposal_line_items_json():
+    return json.dumps([
+        {"name": "Brand Strategy", "quantity": 1, "unit_price": 2000, "discount_type": "€", "discount_value": 0, "vat_rate": "0%"},
+    ])
+
+
+def test_proposal_creation_from_lead_links_and_updates_lead_status(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+
+    client.post('/crm/leads/add', data={"contact_name": "Proposal Lead", "company_name": "Proposal Co", "source": "Direct", "status": "Qualified"}, follow_redirects=True)
+    lead_id = json.loads(app.LEADS_PATH.read_text(encoding="utf-8"))[0]["id"]
+
+    response = client.post(
+        '/crm/proposals/add',
+        data={
+            "lead_id": lead_id,
+            "title": "Brand Strategy Proposal",
+            "contact_name": "Proposal Lead",
+            "company_name": "Proposal Co",
+            "line_items_json": _proposal_line_items_json(),
+        },
+        follow_redirects=True,
+    )
+    assert response.status_code == 200
+    assert b'Proposal created' in response.data
+
+    proposals = json.loads(app.PROPOSALS_PATH.read_text(encoding="utf-8"))
+    assert len(proposals) == 1
+    proposal = proposals[0]
+    assert proposal["proposal_number"] == "HQ-PROP-2026-001"
+    assert proposal["status"] == "Draft"
+    assert proposal["total"] == 2000.0
+    assert proposal["lead_id"] == lead_id
+    assert proposal["terms"]  # standard terms auto-populated
+
+    leads = json.loads(app.LEADS_PATH.read_text(encoding="utf-8"))
+    assert leads[0]["status"] == "Proposal Sent"
+    assert any(entry["type"] == "proposal_created" for entry in leads[0]["activity_log"])
+
+
+def test_proposal_add_requires_title_contact_and_line_items(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+
+    client.post('/crm/proposals/add', data={"title": "", "contact_name": "", "line_items_json": "[]"}, follow_redirects=True)
+
+    proposals = json.loads(app.PROPOSALS_PATH.read_text(encoding="utf-8")) if app.PROPOSALS_PATH.exists() else []
+    assert proposals == []
+
+
+def test_proposal_standard_terms_default_populated_in_add_form(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+
+    response = client.get('/crm/proposals')
+    assert response.status_code == 200
+    assert b'50% deposit required on proposal acceptance' in response.data
+
+
+def test_proposal_mark_sent_sets_status_and_dates(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+
+    client.post(
+        '/crm/proposals/add',
+        data={"title": "Sent Proposal", "contact_name": "Contact", "company_name": "Co", "line_items_json": _proposal_line_items_json()},
+        follow_redirects=True,
+    )
+    proposal_id = json.loads(app.PROPOSALS_PATH.read_text(encoding="utf-8"))[0]["id"]
+
+    response = client.post('/crm/proposals/mark-sent', data={"proposal_id": proposal_id}, follow_redirects=True)
+    assert response.status_code == 200
+
+    proposals = json.loads(app.PROPOSALS_PATH.read_text(encoding="utf-8"))
+    assert proposals[0]["status"] == "Sent"
+    assert proposals[0]["sent_date"] == date.today().isoformat()
+
+
+def test_proposal_convert_to_invoice_requires_accepted_status(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+
+    client.post(
+        '/crm/proposals/add',
+        data={"title": "Draft Proposal", "contact_name": "Contact", "company_name": "Co", "line_items_json": _proposal_line_items_json()},
+        follow_redirects=True,
+    )
+    proposal_id = json.loads(app.PROPOSALS_PATH.read_text(encoding="utf-8"))[0]["id"]
+
+    response = client.post('/crm/proposals/convert-to-invoice', data={"proposal_id": proposal_id}, follow_redirects=True)
+    assert response.status_code == 200
+    assert b'Only Accepted proposals' in response.data
+
+    app.load_finance_data.cache_clear()
+    invoices = app.load_finance_data()["sheets"]["Invoices"]
+    assert not any(row.get("Notes", "").startswith("Generated from Proposal") for row in invoices)
+
+
+def test_proposal_convert_to_invoice_creates_invoice_and_links_back(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+
+    client.post(
+        '/crm/proposals/add',
+        data={"title": "Accepted Proposal", "contact_name": "Contact", "company_name": "Accepted Co", "line_items_json": _proposal_line_items_json()},
+        follow_redirects=True,
+    )
+    proposal_id = json.loads(app.PROPOSALS_PATH.read_text(encoding="utf-8"))[0]["id"]
+
+    client.post('/crm/proposals/mark-sent', data={"proposal_id": proposal_id}, follow_redirects=True)
+    client.post('/crm/proposals/status', data={"proposal_id": proposal_id, "status": "Accepted"}, follow_redirects=True)
+
+    response = client.post('/crm/proposals/convert-to-invoice', data={"proposal_id": proposal_id}, follow_redirects=True)
+    assert response.status_code == 200
+    assert b'created' in response.data
+
+    app.load_finance_data.cache_clear()
+    invoices = app.load_finance_data()["sheets"]["Invoices"]
+    matching = [row for row in invoices if row.get("Client Name") == "Accepted Co"]
+    assert len(matching) == 1
+    assert matching[0]["line_items"][0]["name"] == "Brand Strategy"
+
+    proposals = json.loads(app.PROPOSALS_PATH.read_text(encoding="utf-8"))
+    assert proposals[0]["converted_invoice_id"] == matching[0]["Invoice #"]
+
+
+def test_proposal_accepted_logs_lead_activity(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+
+    client.post('/crm/leads/add', data={"contact_name": "Accept Activity Lead", "source": "Direct"}, follow_redirects=True)
+    lead_id = json.loads(app.LEADS_PATH.read_text(encoding="utf-8"))[0]["id"]
+
+    client.post(
+        '/crm/proposals/add',
+        data={"lead_id": lead_id, "title": "Activity Proposal", "contact_name": "Accept Activity Lead", "line_items_json": _proposal_line_items_json()},
+        follow_redirects=True,
+    )
+    proposal_id = json.loads(app.PROPOSALS_PATH.read_text(encoding="utf-8"))[0]["id"]
+
+    client.post('/crm/proposals/status', data={"proposal_id": proposal_id, "status": "Accepted"}, follow_redirects=True)
+
+    leads = json.loads(app.LEADS_PATH.read_text(encoding="utf-8"))
+    assert any(entry["type"] == "proposal_accepted" for entry in leads[0]["activity_log"])
+
+
+def test_proposal_expiry_severity_classification():
+    today = date(2026, 8, 10)
+    sent_proposal = {"status": "Sent", "expiry_date": "2026-08-05"}
+    assert app._proposal_expiry_severity(sent_proposal, today=today) == "expired"
+    sent_proposal["expiry_date"] = "2026-08-14"
+    assert app._proposal_expiry_severity(sent_proposal, today=today) == "soon"
+    sent_proposal["expiry_date"] = "2026-12-01"
+    assert app._proposal_expiry_severity(sent_proposal, today=today) == "ok"
+    draft_proposal = {"status": "Draft", "expiry_date": "2026-08-05"}
+    assert app._proposal_expiry_severity(draft_proposal, today=today) == ""
+
+
+# --- CRM: public lead intake API (website integration) ----------------------
+
+def test_public_api_creates_lead_with_website_source(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+
+    response = client.post(
+        '/api/leads',
+        json={
+            "contact_name": "Web Visitor",
+            "company_name": "Web Co",
+            "email": "visitor@web.com",
+            "phone": "0871234567",
+            "service_interest": ["Brand Strategy"],
+            "message": "Please get in touch",
+        },
+    )
+    assert response.status_code == 201
+    payload = response.get_json()
+    assert payload["success"] is True
+    assert payload["lead_number"] == "HQ-LEAD-2026-001"
+
+    leads = json.loads(app.LEADS_PATH.read_text(encoding="utf-8"))
+    assert len(leads) == 1
+    assert leads[0]["source"] == "Website"
+    assert leads[0]["status"] == "New"
+    assert leads[0]["notes"] == "Please get in touch"
+
+
+def test_public_api_requires_email(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+
+    response = client.post('/api/leads', json={"contact_name": "No Email Visitor"})
+    assert response.status_code == 400
+    payload = response.get_json()
+    assert payload["success"] is False
+
+    leads = json.loads(app.LEADS_PATH.read_text(encoding="utf-8")) if app.LEADS_PATH.exists() else []
+    assert leads == []
+
+
+def test_public_api_cors_headers_present(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+
+    options_response = client.options('/api/leads')
+    assert options_response.status_code == 204
+    assert options_response.headers["Access-Control-Allow-Origin"] == "*"
+    assert "POST" in options_response.headers["Access-Control-Allow-Methods"]
+
+    post_response = client.post('/api/leads', json={"contact_name": "CORS Test", "email": "cors@test.com"})
+    assert post_response.headers["Access-Control-Allow-Origin"] == "*"
+
+
+# --- CRM: dashboard integration ----------------------------------------------
+
+def test_crm_dashboard_shows_pipeline_kpis(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+
+    client.post('/crm/leads/add', data={"contact_name": "Dashboard Lead", "source": "Direct", "status": "New", "estimated_value": "1500"}, follow_redirects=True)
+
+    response = client.get('/')
+    assert response.status_code == 200
+    assert b'Pipeline Value' in response.data
+    assert b'Proposals Awaiting Response' in response.data
+
+
+def test_dashboard_upcoming_actions_flags_overdue_followup(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+
+    overdue_date = (date.today() - timedelta(days=3)).isoformat()
+    client.post(
+        '/crm/leads/add',
+        data={"contact_name": "Overdue Followup Lead", "source": "Direct", "status": "Contacted", "next_action_date": overdue_date, "next_action": "Call back"},
+        follow_redirects=True,
+    )
+
+    response = client.get('/')
+    assert response.status_code == 200
+    assert b'Follow-up overdue' in response.data
+    assert b'Overdue Followup Lead' in response.data

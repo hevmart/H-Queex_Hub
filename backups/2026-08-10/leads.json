@@ -1,0 +1,40 @@
+[
+  {
+    "id": "36a3610d-9cb1-4ccd-983e-c10e11033c12",
+    "lead_number": "HQ-LEAD-2026-001",
+    "source": "Website",
+    "contact_name": "Jane Enquirer",
+    "company_name": "Acme Ltd",
+    "email": "jane@acme.com",
+    "phone": "0851234567",
+    "country": "",
+    "service_interest": [
+      "Brand Strategy"
+    ],
+    "estimated_value": 0.0,
+    "status": "Won",
+    "created_at": "2026-08-10T01:19:19",
+    "updated_at": "2026-08-10T01:19:40",
+    "next_action": "",
+    "next_action_date": "",
+    "notes": "Interested in your services",
+    "converted_client_id": "Acme Ltd",
+    "activity_log": [
+      {
+        "timestamp": "2026-08-10T01:19:19",
+        "type": "created",
+        "text": "Lead submitted via website enquiry form"
+      },
+      {
+        "timestamp": "2026-08-10T01:19:40",
+        "type": "status_change",
+        "text": "Status changed to Won"
+      },
+      {
+        "timestamp": "2026-08-10T01:19:40",
+        "type": "converted",
+        "text": "Converted to client: Acme Ltd"
+      }
+    ]
+  }
+]
