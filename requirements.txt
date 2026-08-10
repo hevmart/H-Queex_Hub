@@ -2,4 +2,6 @@ flask
 openpyxl
 anthropic
 python-dotenv
+pdf2image
+Pillow
 pytest

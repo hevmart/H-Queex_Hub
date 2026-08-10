@@ -44,6 +44,9 @@ Font: Segoe UI throughout. No other typeface, no other colours.
   single-line inputs.** Any field labelled Description, Notes, or Details anywhere in
   the app must follow this rule — full width, resizable vertically, same font size and
   Segoe UI as every other field, with comfortable padding for reading and editing.
+- **Every currency amount field shows a `€` prefix inside the field and always displays
+  two decimal places** (`€18.00`, not `18`), applied consistently across Income,
+  Expenses, Invoices, and Payroll. Values are formatted to two decimals on blur.
 
 ## Dropdowns
 
@@ -85,6 +88,12 @@ Font: Segoe UI throughout. No other typeface, no other colours.
 - Archive/cancel confirmation is an inline step below the link ("Are you sure? This will
   archive the record. Yes, archive / Cancel"), never a full modal on top of a modal and
   never a floating tooltip.
+- **Every add/edit form must have a Cancel button.** Secondary style (white background,
+  navy `#16294A` text and border), positioned immediately to the left of the primary
+  Save/Update button. Clicking it discards any entered changes and returns the form to a
+  blank/clean state; if the form has been modified from its initial state, confirm before
+  discarding. This is distinct from the archive/cancel-record link above — this Cancel
+  button abandons an in-progress edit, it never deletes or archives a saved record.
 - If archiving a record is blocked by a dependency (e.g. an Income entry linked to a paid
   invoice), the archive link does not render at all — show a plain explanatory line
   instead (steel blue `#618096`) telling the user where to make the change.

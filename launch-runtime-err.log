@@ -1,20 +1,12 @@
 WARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.
  * Running on http://127.0.0.1:5000
 Press CTRL+C to quit
-127.0.0.1 - - [10/Aug/2026 13:35:32] "GET /healthz HTTP/1.1" 200 -
-127.0.0.1 - - [10/Aug/2026 13:35:35] "GET / HTTP/1.1" 200 -
-127.0.0.1 - - [10/Aug/2026 13:35:35] "GET /static/H-Queex%20Logo%20Blue%20and%20Gold%20with%20Tagline%20V4.0.png HTTP/1.1" 200 -
-127.0.0.1 - - [10/Aug/2026 13:35:41] "GET /healthz HTTP/1.1" 200 -
-127.0.0.1 - - [10/Aug/2026 13:35:41] "GET /expenses HTTP/1.1" 200 -
-127.0.0.1 - - [10/Aug/2026 13:35:41] "GET / HTTP/1.1" 200 -
-127.0.0.1 - - [10/Aug/2026 13:35:53] "GET / HTTP/1.1" 200 -
-127.0.0.1 - - [10/Aug/2026 13:35:53] "GET /static/H-Queex%20Logo%20Blue%20and%20Gold%20with%20Tagline%20V4.0.png HTTP/1.1" 200 -
-127.0.0.1 - - [10/Aug/2026 13:35:55] "GET /finance HTTP/1.1" 200 -
-127.0.0.1 - - [10/Aug/2026 13:35:55] "GET /static/H-Queex%20Logo%20Blue%20and%20Gold%20with%20Tagline%20V4.0.png HTTP/1.1" 200 -
-127.0.0.1 - - [10/Aug/2026 13:35:56] "GET / HTTP/1.1" 200 -
-127.0.0.1 - - [10/Aug/2026 13:35:56] "GET /static/H-Queex%20Logo%20Blue%20and%20Gold%20with%20Tagline%20V4.0.png HTTP/1.1" 200 -
-127.0.0.1 - - [10/Aug/2026 13:36:29] "GET /finance HTTP/1.1" 200 -
-127.0.0.1 - - [10/Aug/2026 13:36:29] "GET /static/H-Queex%20Logo%20Blue%20and%20Gold%20with%20Tagline%20V4.0.png HTTP/1.1" 200 -
-127.0.0.1 - - [10/Aug/2026 13:36:32] "GET /expenses HTTP/1.1" 200 -
-127.0.0.1 - - [10/Aug/2026 13:36:32] "GET /static/H-Queex%20Logo%20Blue%20and%20Gold%20with%20Tagline%20V4.0.png HTTP/1.1" 200 -
-127.0.0.1 - - [10/Aug/2026 13:37:25] "POST /expenses/ocr HTTP/1.1" 502 -
+127.0.0.1 - - [10/Aug/2026 14:56:01] "GET /healthz HTTP/1.1" 200 -
+127.0.0.1 - - [10/Aug/2026 14:56:03] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [10/Aug/2026 14:56:03] "GET /static/H-Queex%20Logo%20Blue%20and%20Gold%20with%20Tagline%20V4.0.png HTTP/1.1" 200 -
+127.0.0.1 - - [10/Aug/2026 14:56:29] "GET /finance HTTP/1.1" 200 -
+127.0.0.1 - - [10/Aug/2026 14:56:29] "GET /static/H-Queex%20Logo%20Blue%20and%20Gold%20with%20Tagline%20V4.0.png HTTP/1.1" 200 -
+127.0.0.1 - - [10/Aug/2026 14:56:31] "GET /expenses HTTP/1.1" 200 -
+127.0.0.1 - - [10/Aug/2026 14:56:31] "GET /static/H-Queex%20Logo%20Blue%20and%20Gold%20with%20Tagline%20V4.0.png HTTP/1.1" 200 -
+127.0.0.1 - - [10/Aug/2026 14:56:56] "POST /expenses/ocr HTTP/1.1" 200 -
+127.0.0.1 - - [10/Aug/2026 14:56:56] "GET /api/suppliers/search?q=Anthropic,%20PBC HTTP/1.1" 200 -

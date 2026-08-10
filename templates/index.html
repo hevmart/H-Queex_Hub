@@ -472,6 +472,12 @@
         display: inline-block; margin-left: 6px; font-size: 11px; font-weight: 700; color: var(--brand-navy);
         background: rgba(176, 141, 87, 0.15); border-radius: 4px; padding: 1px 6px; vertical-align: middle;
       }
+      .currency-field-wrap { position: relative; }
+      .currency-field-wrap .currency-prefix {
+        position: absolute; left: 10px; top: 50%; transform: translateY(-50%); color: var(--brand-steel);
+        font-size: 13px; pointer-events: none;
+      }
+      .currency-field-wrap input { padding-left: 22px; }
       .services-table { table-layout: fixed; }
       .services-table .col-name { text-align: left; width: 26%; }
       .services-table th.col-description { text-align: left; }
@@ -495,7 +501,7 @@
       }
       .btn-export-xlsm:hover { background: rgba(176, 141, 87, 0.08); }
       @keyframes fade-scale { from { opacity: 0; transform: translateY(-2px); } to { opacity: 1; transform: translateY(0); } }
-      .form-actions { display: flex; justify-content: flex-start; }
+      .form-actions { display: flex; justify-content: flex-start; align-items: center; gap: 10px; flex-wrap: wrap; }
       .form-actions button, .btn-primary {
         border: 0; border-bottom: 2px solid var(--brand-gold); border-radius: 8px; background: var(--brand-navy); color: var(--brand-white); padding: 12px 18px; font-weight: 700; cursor: pointer; font-family: 'Segoe UI', sans-serif;
       }
@@ -3054,14 +3060,14 @@
               <div class="compliance-panel" id="expense_amount_panel" style="display:none;"></div>
             </div>
             <div class="field optional field-total {% if validation_errors.get('total_amount') %}has-error{% endif %}"><label for="expense_total">Total amount (calculated)</label><input id="expense_total" type="number" step="0.01" name="total_amount" value="{{ expense_form.get('total_amount') if expense_form else (editing_expense.get('Total (€)') if editing_expense else '') }}" placeholder="Total amount" readonly>{% if validation_errors.get('total_amount') %}<span class="field-error">{{ validation_errors.get('total_amount') }}</span>{% endif %}</div>
-            {% if vat_registered %}
             <div class="field optional"><label for="expense_vat_rate">VAT rate</label><select id="expense_vat_rate" name="vat_rate">{% for option in vat_rate_options %}<option value="{{ option }}" {% if (expense_form and expense_form.get('vat_rate') == option) or (not expense_form and editing_expense and editing_expense.get('VAT Rate') == option) or (not expense_form and not editing_expense and option == '23%') %}selected{% endif %}>{{ option }}</option>{% endfor %}</select>
               <div class="compliance-panel" id="expense_vat_panel" style="display:none;"></div>
             </div>
-            <div class="field optional"><label for="expense_vat_amount">VAT amount (calculated)</label><input id="expense_vat_amount" type="number" step="0.01" name="vat_amount" value="{{ expense_form.get('vat_amount') if expense_form else (editing_expense.get('VAT Amount (€)') if editing_expense else '') }}" placeholder="VAT amount" readonly></div>
+            <div class="field optional"><label for="expense_vat_amount">VAT amount (calculated)</label><input id="expense_vat_amount" type="number" step="0.01" name="vat_amount" value="{{ expense_form.get('vat_amount') if expense_form else (editing_expense.get('VAT Amount (€)') if editing_expense else '') }}" placeholder="VAT amount" readonly>
+              {% if not vat_registered %}<span class="mini" style="display:block;">VAT paid to suppliers — recorded for your records, not reclaimable while unregistered.</span>{% endif %}
+            </div>
             <div class="field optional"><label for="expense_vat_treatment">VAT treatment</label><select id="expense_vat_treatment" name="vat_treatment">{% for option in vat_treatment_options %}<option value="{{ option.value }}" {% if (expense_form and expense_form.get('vat_treatment') == option.value) or (not expense_form and editing_expense and editing_expense.get('VAT Treatment') == option.value) or (not expense_form and not editing_expense and option.value == 'standard') %}selected{% endif %}>{{ option.label }}</option>{% endfor %}</select></div>
             <div class="field optional"><label for="expense_supply_type">Supply type</label><select id="expense_supply_type" name="supply_type">{% for option in supply_type_options %}<option value="{{ option.value }}" {% if (expense_form and expense_form.get('supply_type') == option.value) or (not expense_form and editing_expense and editing_expense.get('Supply Type') == option.value) or (not expense_form and not editing_expense and option.value == 'services') %}selected{% endif %}>{{ option.label }}</option>{% endfor %}</select></div>
-            {% endif %}
             <div class="field optional"><label for="expense_input_vat_reclaimable">Input VAT reclaimable</label><select id="expense_input_vat_reclaimable" name="input_vat_reclaimable">{% for option in expense_input_vat_options %}<option value="{{ option }}" {% if (expense_form and expense_form.get('input_vat_reclaimable') == option) or (not expense_form and editing_expense and editing_expense.get('Input VAT Reclaimable') == option) or (not expense_form and not editing_expense and option == 'Yes') %}selected{% endif %}>{{ option }}</option>{% endfor %}</select>
               <span class="mini field-lock-hint" id="expense_input_vat_lock_hint" style="display:none;">Locked to No for Entertainment.</span>
             </div>
@@ -3085,7 +3091,10 @@
           <input type="hidden" name="compliance_flags_json" id="expense_compliance_flags_json" value="[]">
           <input type="hidden" name="flags_acknowledged" id="expense_flags_acknowledged" value="0">
           <input type="hidden" name="flags_acknowledged_at" id="expense_flags_acknowledged_at" value="">
-          <div class="form-actions"><button type="submit">{% if editing_expense %}Update expense{% else %}Save expense{% endif %}</button></div>
+          <div class="form-actions">
+            <button type="button" class="btn-secondary" id="expense_clear_ocr_btn" style="display:none;">Clear OCR</button>
+            <button type="submit">{% if editing_expense %}Update expense{% else %}Save expense{% endif %}</button>
+          </div>
           {% if editing_expense %}
           {{ archive_in_modal('/expenses/delete', 'row_number', editing_expense.get('__row_number')) }}
           {% endif %}
@@ -5233,6 +5242,13 @@
           });
         }
 
+        var ocrClearBtn = document.getElementById("expense_clear_ocr_btn");
+        var ocrFilledFieldIds = [];
+
+        function updateOcrClearButtonVisibility() {
+          if (ocrClearBtn) { ocrClearBtn.style.display = ocrFilledFieldIds.length ? "inline-block" : "none"; }
+        }
+
         function hideOcrBanners() {
           [ocrBannerAmber, ocrBannerRed, ocrBannerCurrency, ocrBannerError].forEach(function (el) {
             if (el) { el.style.display = "none"; }
@@ -5252,16 +5268,93 @@
             badge.textContent = "From receipt";
             label.appendChild(badge);
           }
+          if (ocrFilledFieldIds.indexOf(fieldId) === -1) { ocrFilledFieldIds.push(fieldId); }
+          updateOcrClearButtonVisibility();
+        }
+
+        function unmarkOcrFilled(fieldId) {
+          var field = document.getElementById(fieldId);
+          if (!field) { return; }
+          var wrap = field.closest(".field");
+          if (wrap) {
+            wrap.classList.remove("ocr-filled");
+            var badge = wrap.querySelector(".ocr-field-badge");
+            if (badge) { badge.remove(); }
+          }
+        }
+
+        function formatCurrencyInputValue(value) {
+          var numeric = parseFloat(value);
+          return Number.isFinite(numeric) ? numeric.toFixed(2) : value;
         }
 
         function setFieldValue(fieldId, value) {
           if (value === null || value === undefined || value === "") { return; }
           var field = document.getElementById(fieldId);
           if (!field) { return; }
-          field.value = value;
+          field.value = (field.tagName === "INPUT" && field.type === "number") ? formatCurrencyInputValue(value) : value;
           field.dispatchEvent(new Event("input"));
           field.dispatchEvent(new Event("change"));
           markOcrFilled(fieldId);
+        }
+
+        var EXPENSE_CLEARABLE_FIELD_IDS = [
+          "expense_date", "expense_title", "expense_description", "expense_supplier",
+          "expense_supplier_vat", "expense_receipt_reference", "expense_category",
+          "expense_base_net", "expense_delivery", "expense_fees", "expense_other_charges",
+          "expense_discount_value", "expense_vat_rate", "expense_notes",
+        ];
+
+        function clearExpenseFieldsForOcr() {
+          EXPENSE_CLEARABLE_FIELD_IDS.forEach(function (fieldId) {
+            var field = document.getElementById(fieldId);
+            if (!field) { return; }
+            if (field.tagName === "SELECT") {
+              field.selectedIndex = 0;
+            } else {
+              field.value = "";
+            }
+            unmarkOcrFilled(fieldId);
+          });
+          var supplierRecordId = document.getElementById("expense_supplier_record_id");
+          if (supplierRecordId) { supplierRecordId.value = ""; }
+          unmarkOcrFilled("expense_vat_amount");
+          unmarkOcrFilled("expense_total");
+          if (ocrProcessedField) { ocrProcessedField.value = "No"; }
+          if (ocrConfidenceField) { ocrConfidenceField.value = ""; }
+          if (ocrLanguageField) { ocrLanguageField.value = ""; }
+          if (ocrRawResponseField) { ocrRawResponseField.value = ""; }
+          ocrFilledFieldIds = [];
+          updateOcrClearButtonVisibility();
+          hideOcrBanners();
+          if (window.recalculateExpenseAmounts) { window.recalculateExpenseAmounts(); }
+        }
+
+        if (ocrClearBtn) {
+          ocrClearBtn.addEventListener("click", function () {
+            ocrFilledFieldIds.slice().forEach(function (fieldId) {
+              var field = document.getElementById(fieldId);
+              if (field && field.tagName !== "SELECT" && fieldId !== "expense_supplier") {
+                field.value = "";
+                field.dispatchEvent(new Event("input"));
+              }
+              unmarkOcrFilled(fieldId);
+            });
+            var supplierField = document.getElementById("expense_supplier");
+            var supplierRecordId = document.getElementById("expense_supplier_record_id");
+            if (supplierField && ocrFilledFieldIds.indexOf("expense_supplier") !== -1) {
+              supplierField.value = "";
+              if (supplierRecordId) { supplierRecordId.value = ""; }
+            }
+            if (ocrProcessedField) { ocrProcessedField.value = "No"; }
+            if (ocrConfidenceField) { ocrConfidenceField.value = ""; }
+            if (ocrLanguageField) { ocrLanguageField.value = ""; }
+            if (ocrRawResponseField) { ocrRawResponseField.value = ""; }
+            ocrFilledFieldIds = [];
+            updateOcrClearButtonVisibility();
+            hideOcrBanners();
+            if (window.recalculateExpenseAmounts) { window.recalculateExpenseAmounts(); }
+          });
         }
 
         function convertDateToIso(ddmmyyyy) {
@@ -5334,7 +5427,7 @@
             }
             return;
           }
-          hideOcrBanners();
+          clearExpenseFieldsForOcr();
           if (ocrStatus) {
             ocrStatus.style.display = "flex";
             if (ocrStatusText) { ocrStatusText.textContent = "Reading receipt..."; }
@@ -5371,11 +5464,24 @@
               var isoDate = convertDateToIso(fields.date);
               if (isoDate) { setFieldValue("expense_date", isoDate); }
               applyOcrSupplier(fields.supplier_name);
+              if (fields.supplier_vat_number) { setFieldValue("expense_supplier_vat", fields.supplier_vat_number); }
               if (fields.description) { setFieldValue("expense_description", fields.description); }
-              if (fields.net_amount !== null && fields.net_amount !== undefined) { setFieldValue("expense_base_net", fields.net_amount); }
-              var vatOption = matchVatRateOption(fields.vat_rate);
-              if (vatOption) { setFieldValue("expense_vat_rate", vatOption); }
-              if (fields.vat_amount !== null && fields.vat_amount !== undefined) { markOcrFilled("expense_vat_amount"); }
+
+              // When the business isn't VAT-registered, the VAT rate/amount fields don't
+              // render at all — there's nowhere to record VAT separately, so the full
+              // amount actually paid (VAT-inclusive) must go into base net, otherwise the
+              // calculated total silently drops the VAT portion.
+              var vatRateFieldExists = !!document.getElementById("expense_vat_rate");
+              if (vatRateFieldExists) {
+                if (fields.net_amount !== null && fields.net_amount !== undefined) { setFieldValue("expense_base_net", fields.net_amount); }
+                var vatOption = matchVatRateOption(fields.vat_rate);
+                if (vatOption) { setFieldValue("expense_vat_rate", vatOption); }
+                if (fields.vat_amount !== null && fields.vat_amount !== undefined) { markOcrFilled("expense_vat_amount"); }
+              } else if (fields.total_amount !== null && fields.total_amount !== undefined) {
+                setFieldValue("expense_base_net", fields.total_amount);
+              } else if (fields.net_amount !== null && fields.net_amount !== undefined) {
+                setFieldValue("expense_base_net", fields.net_amount);
+              }
               if (fields.total_amount !== null && fields.total_amount !== undefined) { markOcrFilled("expense_total"); }
               if (fields.receipt_reference) { setFieldValue("expense_receipt_reference", fields.receipt_reference); }
               var categoryOption = matchCategoryOption(fields.category_suggestion);
@@ -5620,6 +5726,77 @@
           if (!event.target.closest(".modal-archive-section")) {
             closeAllModalArchiveConfirms();
           }
+        });
+      })();
+    </script>
+    <script>
+      (function () {
+        // Applies two consistent, app-wide conventions to every rendered form without
+        // requiring each of the ~15 add/edit forms to be hand-edited: currency amount
+        // fields get a € prefix + 2-decimal formatting, and every .form-shell gets a
+        // Cancel button that reloads the page's base URL (dropping any ?edit_row=/
+        // ?edit_id= query string), which is the same "start clean" behaviour the
+        // existing per-section "Cancel edit" links already use.
+
+        function isCurrencyInput(input) {
+          if (input.tagName !== "INPUT" || input.type !== "number") { return false; }
+          if (input.step !== "0.01") { return false; }
+          var name = (input.name || "").toLowerCase();
+          if (/quantity|qty|percent|rate$/.test(name)) { return false; }
+          return true;
+        }
+
+        document.querySelectorAll("input[type='number'][step='0.01']").forEach(function (input) {
+          if (!isCurrencyInput(input)) { return; }
+          if (input.closest(".currency-field-wrap")) { return; }
+          var wrap = document.createElement("span");
+          wrap.className = "currency-field-wrap";
+          input.parentNode.insertBefore(wrap, input);
+          wrap.appendChild(input);
+          var prefix = document.createElement("span");
+          prefix.className = "currency-prefix";
+          prefix.textContent = "€";
+          prefix.setAttribute("aria-hidden", "true");
+          wrap.insertBefore(prefix, input);
+
+          input.addEventListener("blur", function () {
+            if (input.value === "") { return; }
+            var numeric = parseFloat(input.value);
+            if (Number.isFinite(numeric)) { input.value = numeric.toFixed(2); }
+          });
+        });
+
+        function serializeForm(form) {
+          var parts = [];
+          new FormData(form).forEach(function (value, key) {
+            parts.push(key + "=" + (value instanceof File ? value.name : value));
+          });
+          return parts.sort().join("&");
+        }
+
+        document.querySelectorAll("form.form-shell").forEach(function (form) {
+          var actions = form.querySelector(".form-actions");
+          if (!actions || actions.querySelector(".form-cancel-btn")) { return; }
+          var submitBtn = actions.querySelector("button[type='submit']");
+          var initialSnapshot = serializeForm(form);
+
+          var cancelBtn = document.createElement("button");
+          cancelBtn.type = "button";
+          cancelBtn.className = "btn-secondary form-cancel-btn";
+          cancelBtn.textContent = "Cancel";
+          if (submitBtn) {
+            actions.insertBefore(cancelBtn, submitBtn);
+          } else {
+            actions.appendChild(cancelBtn);
+          }
+
+          cancelBtn.addEventListener("click", function () {
+            var dirty = serializeForm(form) !== initialSnapshot;
+            if (dirty && !window.confirm("Discard your changes and reset this form?")) {
+              return;
+            }
+            window.location.href = window.location.pathname;
+          });
         });
       })();
     </script>

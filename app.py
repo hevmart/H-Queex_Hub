@@ -10,7 +10,7 @@ import threading
 from calendar import monthrange
 from datetime import date, datetime, timedelta
 from functools import lru_cache
-from io import StringIO
+from io import BytesIO, StringIO
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -1312,21 +1312,41 @@ OCR_MIME_TYPES = {
     "webp": "image/webp",
 }
 MAX_OCR_FILE_SIZE_BYTES = 10 * 1024 * 1024
+MAX_OCR_PDF_PAGES = 2
+OCR_PDF_DPI = 300
+_POPPLER_VENDOR_DIR = BASE_DIR / "vendor" / "poppler"
 OCR_MODEL = "claude-sonnet-4-6"
 OCR_SYSTEM_PROMPT = (
-    "You are a receipt reading assistant for H-Queex, an Irish business consultancy. "
-    "Extract financial data from the receipt image provided. Return ONLY a valid JSON "
-    "object with no markdown, no explanation, just the raw JSON. Use DD/MM/YYYY date "
-    "format. Amounts in numbers only, no currency symbols. If a field cannot be "
-    "determined return null. For VAT: Irish standard rates are 23%, 13.5%, 9%, 4.8% and "
-    "0% — if you see an amount that looks like VAT use these rates to verify. For "
-    "category_suggestion choose the single most likely category from the provided list "
-    "based on the supplier and items purchased."
+    "You are a financial document reader for H-Queex, an Irish business. You will "
+    "receive an image of a receipt, invoice, or billing document. Your job is to "
+    "extract every financial detail visible. Look carefully for: the total amount due "
+    "or paid (often the largest number on the document, may be labelled Total, Amount "
+    "Due, Grand Total, Balance Due), the supplier or vendor name (usually at the top of "
+    "the document, may be a logo or company name), the date (invoice date, date issued, "
+    "or billing date), any VAT or tax amounts shown separately, the invoice or receipt "
+    "reference number. Return ONLY a valid JSON object with no markdown, no explanation, "
+    "just the raw JSON. Use DD/MM/YYYY date format. Amounts in numbers only, no currency "
+    "symbols. If a field cannot be determined return null. For VAT: Irish standard rates "
+    "are 23%, 13.5%, 9%, 4.8% and 0% — if you see an amount that looks like VAT use these "
+    "rates to verify. Also look for the seller or vendor VAT number, tax ID, or "
+    "registration number — this belongs to the company issuing the invoice, not the "
+    "recipient. Do not return the buyer's VAT number. If no supplier VAT number is "
+    "visible, return null for supplier_vat_number. For category_suggestion choose the "
+    "single most likely category from the provided list based on the supplier and items "
+    "purchased. Be generous with confidence — if you can read the document clearly give a "
+    "high confidence score. A well-formatted digital PDF invoice should score 85 or above. "
+    "The JSON object must contain exactly these keys, spelled exactly this way, with no "
+    "other keys: date, supplier_name, supplier_vat_number, description, net_amount, "
+    "vat_amount, vat_rate, total_amount, currency, receipt_reference, category_suggestion, "
+    "confidence, language_detected, notes. \"receipt_reference\" is the invoice or receipt "
+    "number. \"confidence\" is a number from 0 to 100 with no percent sign. \"net_amount\" "
+    "is the amount before VAT/tax; if the document does not show tax separately, set "
+    "net_amount equal to total_amount."
 )
 OCR_FIELDS = (
-    "date", "supplier_name", "description", "net_amount", "vat_amount", "vat_rate",
-    "total_amount", "currency", "receipt_reference", "category_suggestion",
-    "confidence", "language_detected", "notes",
+    "date", "supplier_name", "supplier_vat_number", "description", "net_amount",
+    "vat_amount", "vat_rate", "total_amount", "currency", "receipt_reference",
+    "category_suggestion", "confidence", "language_detected", "notes",
 )
 
 
@@ -1358,21 +1378,56 @@ def _parse_ocr_response_text(raw_text: str) -> dict[str, Any]:
     return {field: parsed.get(field) for field in OCR_FIELDS}
 
 
+def _poppler_path() -> str | None:
+    if not _POPPLER_VENDOR_DIR.exists():
+        return None
+    for candidate in _POPPLER_VENDOR_DIR.glob("*/Library/bin"):
+        if (candidate / "pdftoppm.exe").exists() or (candidate / "pdftoppm").exists():
+            return str(candidate)
+    return None
+
+
+def _pdf_to_images(file_bytes: bytes) -> list[bytes]:
+    from pdf2image import convert_from_bytes
+
+    pages = convert_from_bytes(
+        file_bytes,
+        dpi=OCR_PDF_DPI,
+        first_page=1,
+        last_page=MAX_OCR_PDF_PAGES,
+        poppler_path=_poppler_path(),
+    )
+    image_bytes_list = []
+    for page in pages:
+        buffer = BytesIO()
+        page.save(buffer, format="PNG")
+        image_bytes_list.append(buffer.getvalue())
+    return image_bytes_list
+
+
 def _run_receipt_ocr(file_bytes: bytes, extension: str, category_options: list[str]) -> dict[str, Any]:
     client = _get_anthropic_client()
-    media_type = OCR_MIME_TYPES.get(extension, "application/octet-stream")
-    encoded = base64.b64encode(file_bytes).decode("ascii")
     category_list_text = ", ".join(category_options) if category_options else "Other"
     user_text = f"Available categories for category_suggestion: {category_list_text}"
+
+    content_blocks: list[dict[str, Any]] = []
     if extension == "pdf":
-        content_block = {"type": "document", "source": {"type": "base64", "media_type": media_type, "data": encoded}}
+        page_images = _pdf_to_images(file_bytes)
+        if not page_images:
+            raise OcrError("Receipt PDF could not be converted to an image")
+        for page_bytes in page_images:
+            encoded_page = base64.b64encode(page_bytes).decode("ascii")
+            content_blocks.append({"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": encoded_page}})
     else:
-        content_block = {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": encoded}}
+        media_type = OCR_MIME_TYPES.get(extension, "application/octet-stream")
+        encoded = base64.b64encode(file_bytes).decode("ascii")
+        content_blocks.append({"type": "image", "source": {"type": "base64", "media_type": media_type, "data": encoded}})
+
     response = client.messages.create(
         model=OCR_MODEL,
         max_tokens=1024,
         system=OCR_SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": [content_block, {"type": "text", "text": user_text}]}],
+        messages=[{"role": "user", "content": content_blocks + [{"type": "text", "text": user_text}]}],
         timeout=30.0,
     )
     raw_text = "".join(block.text for block in response.content if getattr(block, "type", "") == "text")
@@ -7861,12 +7916,19 @@ def expense_ocr():
     try:
         fields = _run_receipt_ocr(file_bytes, extension, category_options)
     except OcrError as error:
+        print(f"[receipt-ocr] {original_name}: OCR error — {error}", flush=True)
         return jsonify({"error": str(error)}), 502
     except Exception as error:
         message = str(error)
+        print(f"[receipt-ocr] {original_name}: unexpected error — {error!r}", flush=True)
         if "timeout" in message.lower() or "timed out" in message.lower():
             return jsonify({"error": "Receipt reading timed out — please fill in fields manually or try again"}), 504
         return jsonify({"error": "Receipt could not be read — please fill in fields manually"}), 502
+
+    print(f"[receipt-ocr] {original_name}: extracted fields from Claude:", flush=True)
+    for field_name in OCR_FIELDS:
+        print(f"[receipt-ocr]   {field_name}: {fields.get(field_name)!r}", flush=True)
+    print(f"[receipt-ocr]   ocr_raw_response: {fields.get('ocr_raw_response')!r}", flush=True)
 
     return jsonify(fields)
 
@@ -7927,7 +7989,11 @@ def add_expense():
         total_key="Total (€)",
         vat_rate_key="VAT Rate",
         vat_amount_key="VAT Amount (€)",
-        vat_registered=_is_vat_registered(),
+        # Expenses always record VAT actually paid, even when the business itself isn't
+        # VAT-registered — non-reclaimable input VAT is still a real cost that must be
+        # visible. Registration status only affects whether it can be reclaimed
+        # (Input VAT Reclaimable), not whether it's recorded.
+        vat_registered=True,
     )
     _apply_vat_classification(payload, vat_rate_key="VAT Rate")
     _apply_expense_compliance_fields(payload)
@@ -8039,7 +8105,11 @@ def update_expense():
         total_key="Total (€)",
         vat_rate_key="VAT Rate",
         vat_amount_key="VAT Amount (€)",
-        vat_registered=_is_vat_registered(),
+        # Expenses always record VAT actually paid, even when the business itself isn't
+        # VAT-registered — non-reclaimable input VAT is still a real cost that must be
+        # visible. Registration status only affects whether it can be reclaimed
+        # (Input VAT Reclaimable), not whether it's recorded.
+        vat_registered=True,
     )
     _apply_vat_classification(payload, vat_rate_key="VAT Rate")
     _apply_expense_compliance_fields(payload)

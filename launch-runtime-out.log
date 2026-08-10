@@ -1,2 +1,18 @@
  * Serving Flask app 'app'
  * Debug mode: off
+[receipt-ocr] 260726_-_Anthropic_Claude_Invoice-FUIGCFQX-0003.pdf: extracted fields from Claude:
+[receipt-ocr]   date: '26/07/2026'
+[receipt-ocr]   supplier_name: 'Anthropic, PBC'
+[receipt-ocr]   supplier_vat_number: 'IE 04276970QH'
+[receipt-ocr]   description: 'Claude Pro subscription Jul 26 – Aug 26, 2026'
+[receipt-ocr]   net_amount: 18.0
+[receipt-ocr]   vat_amount: 4.14
+[receipt-ocr]   vat_rate: 23
+[receipt-ocr]   total_amount: 22.14
+[receipt-ocr]   currency: 'EUR'
+[receipt-ocr]   receipt_reference: 'FUIGCFQX-0003'
+[receipt-ocr]   category_suggestion: 'Software and Subscriptions'
+[receipt-ocr]   confidence: 97
+[receipt-ocr]   language_detected: 'en'
+[receipt-ocr]   notes: 'VAT applied at Irish standard rate of 23% on €18.00 net. Supplier is US-based Anthropic, PBC billing with Irish VAT registration IE 04276970QH.'
+[receipt-ocr]   ocr_raw_response: '{"date":"26/07/2026","supplier_name":"Anthropic, PBC","supplier_vat_number":"IE 04276970QH","description":"Claude Pro subscription Jul 26 – Aug 26, 2026","net_amount":18.00,"vat_amount":4.14,"vat_rate":23,"total_amount":22.14,"currency":"EUR","receipt_reference":"FUIGCFQX-0003","category_suggestion":"Software and Subscriptions","confidence":97,"language_detected":"en","notes":"VAT applied at Irish standard rate of 23% on €18.00 net. Supplier is US-based Anthropic, PBC billing with Irish VAT registration IE 04276970QH."}'
