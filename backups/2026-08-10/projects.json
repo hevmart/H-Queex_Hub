@@ -1,0 +1,65 @@
+[
+  {
+    "id": "3b12967d-d0de-4a46-b42e-12ae496ae200",
+    "project_number": "HQ-PRJ-2026-001",
+    "client_id": "HQ Client",
+    "client_name": "HQ Client",
+    "service_tier": "Clarity Base",
+    "title": "Test Ops Project",
+    "description": "",
+    "status": "Active",
+    "start_date": "2026-08-10",
+    "target_end_date": "2026-08-20",
+    "actual_end_date": "",
+    "linked_invoice_ids": [],
+    "line_items": [],
+    "total_value": 0.0,
+    "notes": "",
+    "dmaic": {
+      "Define": {
+        "status": "Complete",
+        "start_date": "",
+        "completion_date": "",
+        "notes": "",
+        "deliverables": [
+          "Charter signed"
+        ],
+        "key_findings": ""
+      },
+      "Measure": {
+        "status": "Complete",
+        "start_date": "",
+        "completion_date": "",
+        "notes": "",
+        "deliverables": [],
+        "key_findings": ""
+      },
+      "Analyse": {
+        "status": "Not Started",
+        "start_date": "",
+        "completion_date": "",
+        "notes": "",
+        "deliverables": [],
+        "key_findings": ""
+      },
+      "Improve": {
+        "status": "Not Started",
+        "start_date": "",
+        "completion_date": "",
+        "notes": "",
+        "deliverables": [],
+        "key_findings": ""
+      },
+      "Control": {
+        "status": "Not Started",
+        "start_date": "",
+        "completion_date": "",
+        "notes": "",
+        "deliverables": [],
+        "key_findings": ""
+      }
+    },
+    "created_at": "2026-08-10T00:51:06",
+    "updated_at": "2026-08-10T00:51:20"
+  }
+]

@@ -77,6 +77,32 @@ DOCUMENT_STATUSES = ("active", "archived")
 COMPLIANCE_REPEAT_FREQUENCIES = ("", "monthly", "quarterly", "annual")
 COMPLIANCE_STATUSES = ("pending", "complete")
 DOCUMENT_EXPIRY_WARNING_DAYS = 30
+PROJECTS_PATH = BASE_DIR / "projects.json"
+DELIVERY_LOG_PATH = BASE_DIR / "delivery-log.json"
+SOPS_PATH = BASE_DIR / "sops.json"
+SOP_FILES_DIR = BASE_DIR / "sops"
+SOP_FILES_DIR.mkdir(parents=True, exist_ok=True)
+ALLOWED_SOP_EXTENSIONS = {"pdf", "docx", "png", "jpg", "jpeg"}
+DELIVERY_FILES_DIR = BASE_DIR / "delivery-files"
+DELIVERY_FILES_DIR.mkdir(parents=True, exist_ok=True)
+ALLOWED_DELIVERY_EXTENSIONS = {"pdf", "docx", "png", "jpg", "jpeg", "xlsx", "csv"}
+PROJECT_STATUSES = ("Enquiry", "Proposed", "Active", "On Hold", "Completed", "Cancelled")
+PROJECT_KANBAN_STATUSES = ("Enquiry", "Proposed", "Active", "On Hold", "Completed")
+DMAIC_PHASES = ("Define", "Measure", "Analyse", "Improve", "Control")
+DMAIC_PHASE_STATUSES = ("Not Started", "In Progress", "Complete")
+DELIVERY_SERVICE_TYPES = (
+    "Process Review",
+    "SOP Creation",
+    "Workshop",
+    "Report",
+    "Advisory Call",
+    "KPI Review",
+    "Implementation",
+    "Other",
+)
+SOP_STATUSES = ("Draft", "Review", "Approved", "Superseded")
+SOP_STATUS_WORKFLOW = ("Draft", "Review", "Approved")
+PROJECT_DEADLINE_WARNING_DAYS = 14
 GDRIVE_BACKUP_DIR = Path("G:/My Drive/H-Queex — Working Documents/H-Queex Hub/Backups")
 BACKUP_STATUS_PATH = BASE_DIR / "backup-status.json"
 BACKUP_RETENTION_DAYS = 30
@@ -2859,9 +2885,9 @@ def _validate_invoice_payload(payload: dict[str, Any]) -> dict[str, str]:
         errors["payment_method"] = "Payment method is required when status is Paid"
     if _is_paid_status("invoice", status) and _parse_iso_date(payload.get("Payment Date")) is None:
         errors["payment_date"] = "Payment date is required when status is Paid"
-    if not str(payload.get("Client VAT Number") or "").strip() and _is_vat_registered():
+    if status != "Draft" and not str(payload.get("Client VAT Number") or "").strip() and _is_vat_registered():
         errors["client_vat_number"] = "Client VAT number is required for VAT invoices"
-    if not str(payload.get("Client Address") or "").strip() and _is_vat_registered():
+    if status != "Draft" and not str(payload.get("Client Address") or "").strip() and _is_vat_registered():
         errors["client_address"] = "Client address is required for VAT invoices"
     return errors
 
@@ -3399,6 +3425,272 @@ def _build_compliance_deadlines(
         )
 
     return sorted(deadlines, key=lambda item: item["due_date"])
+
+
+# --- Operations: Projects ---------------------------------------------------
+
+def _default_dmaic_phase() -> dict[str, Any]:
+    return {
+        "status": "Not Started",
+        "start_date": "",
+        "completion_date": "",
+        "notes": "",
+        "deliverables": [],
+        "key_findings": "",
+    }
+
+
+def _default_dmaic() -> dict[str, Any]:
+    return {phase: _default_dmaic_phase() for phase in DMAIC_PHASES}
+
+
+def _normalize_dmaic_phase(raw: Any) -> dict[str, Any]:
+    if not isinstance(raw, dict):
+        raw = {}
+    status = str(raw.get("status") or "Not Started").strip()
+    deliverables = raw.get("deliverables")
+    if not isinstance(deliverables, list):
+        deliverables = []
+    return {
+        "status": status if status in DMAIC_PHASE_STATUSES else "Not Started",
+        "start_date": str(raw.get("start_date") or "").strip(),
+        "completion_date": str(raw.get("completion_date") or "").strip(),
+        "notes": str(raw.get("notes") or "").strip(),
+        "deliverables": [str(item).strip() for item in deliverables if str(item).strip()],
+        "key_findings": str(raw.get("key_findings") or "").strip(),
+    }
+
+
+def _normalize_dmaic(raw: Any) -> dict[str, Any]:
+    if not isinstance(raw, dict):
+        raw = {}
+    return {phase: _normalize_dmaic_phase(raw.get(phase)) for phase in DMAIC_PHASES}
+
+
+def _dmaic_completion_percentage(dmaic: dict[str, Any]) -> int:
+    complete_count = sum(1 for phase in DMAIC_PHASES if dmaic.get(phase, {}).get("status") == "Complete")
+    return round((complete_count / len(DMAIC_PHASES)) * 100)
+
+
+def _validate_dmaic_transition(dmaic: dict[str, Any], phase: str, new_status: str) -> str:
+    """Returns an error message if the transition is not allowed, else ''."""
+    if phase not in DMAIC_PHASES:
+        return "Unknown DMAIC phase"
+    if new_status not in DMAIC_PHASE_STATUSES:
+        return "Unknown status"
+    if new_status != "Complete":
+        return ""
+    phase_index = DMAIC_PHASES.index(phase)
+    if phase_index == 0:
+        return ""
+    previous_phase = DMAIC_PHASES[phase_index - 1]
+    if dmaic.get(previous_phase, {}).get("status") != "Complete":
+        return f"{previous_phase} must be marked Complete before {phase} can be completed"
+    return ""
+
+
+def _generate_project_number(existing_projects: list[dict[str, Any]], *, year: int | None = None) -> str:
+    target_year = year or date.today().year
+    prefix = f"HQ-PRJ-{target_year}-"
+    highest = 0
+    for project in existing_projects:
+        number = str(project.get("project_number") or "")
+        if number.startswith(prefix):
+            try:
+                sequence = int(number[len(prefix):])
+            except ValueError:
+                continue
+            highest = max(highest, sequence)
+    return f"{prefix}{highest + 1:03d}"
+
+
+def _normalize_project_line_item(item: dict[str, Any]) -> dict[str, Any]:
+    quantity = _coerce_number(item.get("quantity")) or 1.0
+    unit_price = round(_coerce_number(item.get("unit_price")), 2)
+    return {
+        "service_id": str(item.get("service_id") or "").strip(),
+        "name": str(item.get("name") or "").strip(),
+        "quantity": quantity,
+        "unit_price": unit_price,
+        "total": round(quantity * unit_price, 2),
+    }
+
+
+def _normalize_project(record: dict[str, Any]) -> dict[str, Any]:
+    status = str(record.get("status") or "Enquiry").strip()
+    tier = str(record.get("service_tier") or "None").strip()
+    linked_invoice_ids = record.get("linked_invoice_ids")
+    if not isinstance(linked_invoice_ids, list):
+        linked_invoice_ids = []
+    raw_line_items = record.get("line_items")
+    if not isinstance(raw_line_items, list):
+        raw_line_items = []
+    line_items = [_normalize_project_line_item(item) for item in raw_line_items if isinstance(item, dict)]
+    total_value = record.get("total_value")
+    now = datetime.now().isoformat(timespec="seconds")
+    return {
+        "id": str(record.get("id") or uuid4()),
+        "project_number": str(record.get("project_number") or "").strip(),
+        "client_id": str(record.get("client_id") or "").strip(),
+        "client_name": str(record.get("client_name") or "").strip(),
+        "service_tier": tier if tier in CLIENT_SERVICE_TIERS else "None",
+        "title": str(record.get("title") or "").strip(),
+        "description": str(record.get("description") or "").strip(),
+        "status": status if status in PROJECT_STATUSES else "Enquiry",
+        "start_date": str(record.get("start_date") or "").strip(),
+        "target_end_date": str(record.get("target_end_date") or "").strip(),
+        "actual_end_date": str(record.get("actual_end_date") or "").strip(),
+        "linked_invoice_ids": [str(item) for item in linked_invoice_ids],
+        "line_items": line_items,
+        "total_value": round(_coerce_number(total_value), 2) if total_value not in (None, "") else round(sum(item["total"] for item in line_items), 2),
+        "notes": str(record.get("notes") or "").strip(),
+        "dmaic": _normalize_dmaic(record.get("dmaic")),
+        "created_at": str(record.get("created_at") or now),
+        "updated_at": str(record.get("updated_at") or now),
+    }
+
+
+def _load_projects() -> list[dict[str, Any]]:
+    return [_normalize_project(record) for record in _load_json_records(PROJECTS_PATH) if isinstance(record, dict)]
+
+
+def _save_projects(projects: list[dict[str, Any]]) -> None:
+    _save_json_records(PROJECTS_PATH, [_normalize_project(project) for project in projects])
+
+
+def _projects_with_deadline_within(projects: list[dict[str, Any]], days: int, *, today: date | None = None) -> list[dict[str, Any]]:
+    current_day = today or date.today()
+    upcoming = []
+    for project in projects:
+        if project.get("status") in ("Completed", "Cancelled"):
+            continue
+        target = _parse_iso_date(project.get("target_end_date"))
+        if target and current_day <= target <= current_day + timedelta(days=days):
+            upcoming.append(project)
+    return sorted(upcoming, key=lambda item: item["target_end_date"])
+
+
+# --- Operations: Delivery Log ------------------------------------------------
+
+def _normalize_delivery_entry(record: dict[str, Any]) -> dict[str, Any]:
+    service_type = str(record.get("service_type") or "Other").strip()
+    now = datetime.now().isoformat(timespec="seconds")
+    hours_spent = record.get("hours_spent")
+    return {
+        "id": str(record.get("id") or uuid4()),
+        "date": str(record.get("date") or date.today().isoformat()).strip(),
+        "project_id": str(record.get("project_id") or "").strip(),
+        "client_id": str(record.get("client_id") or "").strip(),
+        "client_name": str(record.get("client_name") or "").strip(),
+        "service_type": service_type if service_type in DELIVERY_SERVICE_TYPES else "Other",
+        "description": str(record.get("description") or "").strip(),
+        "hours_spent": round(_coerce_number(hours_spent), 2) if hours_spent not in (None, "") else None,
+        "deliverable_filename": str(record.get("deliverable_filename") or "").strip(),
+        "billing_period": str(record.get("billing_period") or "").strip(),
+        "invoiced": bool(record.get("invoiced", False)),
+        "invoice_id": str(record.get("invoice_id") or "").strip(),
+        "created_at": str(record.get("created_at") or now),
+        "last_updated_at": str(record.get("last_updated_at") or now),
+    }
+
+
+def _load_delivery_log() -> list[dict[str, Any]]:
+    return [_normalize_delivery_entry(record) for record in _load_json_records(DELIVERY_LOG_PATH) if isinstance(record, dict)]
+
+
+def _save_delivery_log(entries: list[dict[str, Any]]) -> None:
+    _save_json_records(DELIVERY_LOG_PATH, [_normalize_delivery_entry(entry) for entry in entries])
+
+
+def _save_uploaded_delivery_file(file_storage: Any) -> tuple[str, str]:
+    if not file_storage or not getattr(file_storage, "filename", ""):
+        return "", ""
+    original_name = secure_filename(file_storage.filename)
+    if not original_name or "." not in original_name:
+        return "", "File must have a valid name and extension"
+    extension = original_name.rsplit(".", 1)[-1].lower()
+    if extension not in ALLOWED_DELIVERY_EXTENSIONS:
+        return "", "File type not allowed"
+    file_storage.seek(0, 2)
+    size_bytes = file_storage.tell()
+    file_storage.seek(0)
+    if size_bytes > MAX_DOCUMENT_SIZE_BYTES:
+        return "", "File exceeds the 10MB maximum size"
+    stored_name = f"{uuid4().hex[:10]}_{original_name}"
+    file_storage.save(DELIVERY_FILES_DIR / stored_name)
+    return stored_name, ""
+
+
+def _clarity_partner_pending_billing(delivery_entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for entry in delivery_entries:
+        if entry.get("invoiced") or not entry.get("billing_period"):
+            continue
+        key = (entry.get("client_name") or "", entry.get("billing_period") or "")
+        groups.setdefault(key, []).append(entry)
+    pending = []
+    for (client_name, billing_period), entries in groups.items():
+        if not client_name:
+            continue
+        pending.append({
+            "client_name": client_name,
+            "billing_period": billing_period,
+            "entry_count": len(entries),
+            "total_hours": round(sum(_coerce_number(entry.get("hours_spent")) for entry in entries), 2),
+        })
+    return sorted(pending, key=lambda item: (item["client_name"], item["billing_period"]))
+
+
+# --- Operations: SOP Library -------------------------------------------------
+
+def _normalize_sop(record: dict[str, Any]) -> dict[str, Any]:
+    status = str(record.get("status") or "Draft").strip()
+    now = datetime.now().isoformat(timespec="seconds")
+    return {
+        "id": str(record.get("id") or uuid4()),
+        "title": str(record.get("title") or "").strip(),
+        "client_id": str(record.get("client_id") or "").strip(),
+        "client_name": str(record.get("client_name") or "").strip(),
+        "project_id": str(record.get("project_id") or "").strip(),
+        "version": str(record.get("version") or "V1.0").strip(),
+        "status": status if status in SOP_STATUSES else "Draft",
+        "process_area": str(record.get("process_area") or "").strip(),
+        "description": str(record.get("description") or "").strip(),
+        "filename": str(record.get("filename") or "").strip(),
+        "date_created": str(record.get("date_created") or date.today().isoformat()).strip(),
+        "date_approved": str(record.get("date_approved") or "").strip(),
+        "approved_by": str(record.get("approved_by") or "").strip(),
+        "notes": str(record.get("notes") or "").strip(),
+        "created_at": str(record.get("created_at") or now),
+        "last_updated_at": str(record.get("last_updated_at") or now),
+    }
+
+
+def _load_sops() -> list[dict[str, Any]]:
+    return [_normalize_sop(record) for record in _load_json_records(SOPS_PATH) if isinstance(record, dict)]
+
+
+def _save_sops(sops: list[dict[str, Any]]) -> None:
+    _save_json_records(SOPS_PATH, [_normalize_sop(sop) for sop in sops])
+
+
+def _save_uploaded_sop(file_storage: Any) -> tuple[str, str]:
+    if not file_storage or not getattr(file_storage, "filename", ""):
+        return "", ""
+    original_name = secure_filename(file_storage.filename)
+    if not original_name or "." not in original_name:
+        return "", "File must have a valid name and extension"
+    extension = original_name.rsplit(".", 1)[-1].lower()
+    if extension not in ALLOWED_SOP_EXTENSIONS:
+        return "", "File type not allowed. Accepted: PDF, DOCX, PNG, JPG"
+    file_storage.seek(0, 2)
+    size_bytes = file_storage.tell()
+    file_storage.seek(0)
+    if size_bytes > MAX_DOCUMENT_SIZE_BYTES:
+        return "", "File exceeds the 10MB maximum size"
+    stored_name = f"{uuid4().hex[:10]}_{original_name}"
+    file_storage.save(SOP_FILES_DIR / stored_name)
+    return stored_name, ""
 
 
 def _normalize_service(record: dict[str, Any]) -> dict[str, Any]:
@@ -3972,6 +4264,16 @@ def _build_page_context(
     document_form: dict[str, Any] | None = None,
     editing_compliance_entry: dict[str, Any] | None = None,
     compliance_form: dict[str, Any] | None = None,
+    editing_project: dict[str, Any] | None = None,
+    project_form: dict[str, Any] | None = None,
+    project_detail: dict[str, Any] | None = None,
+    dmaic_project: dict[str, Any] | None = None,
+    editing_delivery: dict[str, Any] | None = None,
+    delivery_form: dict[str, Any] | None = None,
+    editing_sop: dict[str, Any] | None = None,
+    sop_form: dict[str, Any] | None = None,
+    status_filter: str | None = None,
+    tier_filter: str | None = None,
 ) -> dict[str, Any]:
     try:
         workbook_path = _resolve_workbook_path()
@@ -4037,6 +4339,27 @@ def _build_page_context(
             "detail": documents_expiring_soon[0]["name"],
             "link": "/company/documents",
         })
+    projects = _load_projects()
+    active_projects_count = sum(1 for project in projects if project.get("status") == "Active")
+    projects_due_soon = _projects_with_deadline_within(projects, PROJECT_DEADLINE_WARNING_DAYS)
+    for project in projects_due_soon[:3]:
+        upcoming_actions.append({
+            "severity": "warning",
+            "label": f"Project due soon: {project['title']}",
+            "detail": f"Target end {project['target_end_date']}",
+            "link": f"/operations/projects/{project['id']}",
+        })
+    delivery_log = _load_delivery_log()
+    pending_billing = _clarity_partner_pending_billing(delivery_log)
+    for pending in pending_billing[:3]:
+        upcoming_actions.append({
+            "severity": "info",
+            "label": f"Pending billing: {pending['client_name']} ({pending['billing_period']})",
+            "detail": f"{pending['entry_count']} unbilled deliver{'y' if pending['entry_count'] == 1 else 'ies'}",
+            "link": "/operations/delivery",
+        })
+    sops = _load_sops()
+    dmaic_completion_percentage = _dmaic_completion_percentage(dmaic_project["dmaic"]) if dmaic_project else 0
     monthly_net_trend = _build_monthly_net_trend(data)
     return {
         "page_title": page_title,
@@ -4159,6 +4482,30 @@ def _build_page_context(
         "compliance_repeat_frequencies": list(COMPLIANCE_REPEAT_FREQUENCIES),
         "editing_compliance_entry": editing_compliance_entry,
         "compliance_form": compliance_form or {},
+        "projects": projects,
+        "active_projects_count": active_projects_count,
+        "projects_due_soon": projects_due_soon,
+        "project_statuses": list(PROJECT_STATUSES),
+        "project_kanban_statuses": list(PROJECT_KANBAN_STATUSES),
+        "dmaic_phases": list(DMAIC_PHASES),
+        "dmaic_phase_statuses": list(DMAIC_PHASE_STATUSES),
+        "editing_project": editing_project,
+        "project_form": project_form or {},
+        "project_detail": project_detail,
+        "dmaic_project": dmaic_project,
+        "status_filter": status_filter or "",
+        "tier_filter": tier_filter or "",
+        "delivery_log": delivery_log,
+        "delivery_service_types": list(DELIVERY_SERVICE_TYPES),
+        "pending_billing": pending_billing,
+        "editing_delivery": editing_delivery,
+        "delivery_form": delivery_form or {},
+        "sops": sops,
+        "sop_statuses": list(SOP_STATUSES),
+        "sop_status_workflow": list(SOP_STATUS_WORKFLOW),
+        "editing_sop": editing_sop,
+        "sop_form": sop_form or {},
+        "dmaic_completion_percentage": dmaic_completion_percentage,
     }
 
 
@@ -4663,6 +5010,559 @@ def settings_view():
     return redirect(url_for("company_settings_view", **request.args))
 
 
+# --- Operations: Projects ----------------------------------------------------
+
+def _clients_catalog_for_operations(data: dict[str, Any]) -> list[dict[str, Any]]:
+    return [
+        {"name": row.get("Client Name") or "", "tier": row.get("Service Tier") or "None"}
+        for row in data.get("sheets", {}).get("Clients", [])
+        if row.get("Client Name")
+    ]
+
+
+def _client_tier_for_name(data: dict[str, Any], client_name: str) -> str:
+    for client in _clients_catalog_for_operations(data):
+        if client["name"] == client_name:
+            return client["tier"]
+    return "None"
+
+
+@app.route("/operations")
+def operations_view():
+    data = load_finance_data()
+    return render_template(
+        "index.html",
+        **_build_page_context(
+            "Operations",
+            "operations",
+            data,
+            message=request.args.get("message"),
+        ),
+    )
+
+
+@app.route("/operations/projects")
+def operations_projects_view():
+    data = load_finance_data()
+    projects = _load_projects()
+    editing_project = _find_record_by_id(projects, request.args.get("edit_id"))
+    status_filter = str(request.args.get("status_filter") or "")
+    tier_filter = str(request.args.get("tier_filter") or "")
+    return render_template(
+        "index.html",
+        **_build_page_context(
+            "Projects",
+            "operations_projects",
+            data,
+            editing_project=editing_project,
+            status_filter=status_filter,
+            tier_filter=tier_filter,
+            message=request.args.get("message"),
+        ),
+    )
+
+
+@app.route("/operations/projects/<project_id>")
+def operations_project_detail_view(project_id):
+    data = load_finance_data()
+    projects = _load_projects()
+    project = _find_record_by_id(projects, project_id)
+    if project is None:
+        return redirect(url_for("operations_projects_view", message="Project not found"))
+    invoices = data.get("sheets", {}).get("Invoices", [])
+    linked_invoices = [row for row in invoices if str(row.get("Invoice #")) in project.get("linked_invoice_ids", [])]
+    delivery_entries = [entry for entry in _load_delivery_log() if entry.get("project_id") == project_id]
+    sops = [sop for sop in _load_sops() if sop.get("project_id") == project_id]
+    return render_template(
+        "index.html",
+        **_build_page_context(
+            f"Project: {project.get('title') or project.get('project_number')}",
+            "operations_project_detail",
+            data,
+            project_detail={"project": project, "linked_invoices": linked_invoices, "delivery_entries": delivery_entries, "sops": sops},
+            message=request.args.get("message"),
+        ),
+    )
+
+
+def _project_payload_from_form(data: dict[str, Any]) -> dict[str, Any]:
+    client_name = str(request.form.get("client_name") or "").strip()
+    try:
+        raw_line_items = json.loads(request.form.get("line_items_json") or "[]")
+        if not isinstance(raw_line_items, list):
+            raw_line_items = []
+    except (TypeError, ValueError):
+        raw_line_items = []
+    return {
+        "client_id": client_name,
+        "client_name": client_name,
+        "service_tier": _client_tier_for_name(data, client_name),
+        "title": str(request.form.get("title") or "").strip(),
+        "description": str(request.form.get("description") or "").strip(),
+        "status": str(request.form.get("status") or "Enquiry").strip(),
+        "start_date": str(request.form.get("start_date") or "").strip(),
+        "target_end_date": str(request.form.get("target_end_date") or "").strip(),
+        "actual_end_date": str(request.form.get("actual_end_date") or "").strip(),
+        "notes": str(request.form.get("notes") or "").strip(),
+        "line_items": raw_line_items,
+    }
+
+
+def _validate_project_payload(payload: dict[str, Any]) -> dict[str, str]:
+    errors: dict[str, str] = {}
+    _validate_required_text(payload.get("title"), "title", "Project title", errors)
+    _validate_required_text(payload.get("client_name"), "client_name", "Client", errors)
+    if payload.get("status") not in PROJECT_STATUSES:
+        errors["status"] = "Invalid status"
+    for field_name, label in (("start_date", "Start date"), ("target_end_date", "Target end date"), ("actual_end_date", "Actual end date")):
+        value = payload.get(field_name)
+        if value and _parse_transaction_date(value) is None:
+            errors[field_name] = f"{label} must be a valid date"
+    return errors
+
+
+@app.route("/operations/projects/add", methods=["POST"])
+def add_project():
+    data = load_finance_data()
+    payload = _project_payload_from_form(data)
+    errors = _validate_project_payload(payload)
+    if errors:
+        return _redirect_with_form_errors("operations_projects_view", {**payload, "line_items_json": request.form.get("line_items_json", "")}, errors)
+
+    projects = _load_projects()
+    now = datetime.now().isoformat(timespec="seconds")
+    project = _normalize_project({
+        **payload,
+        "id": str(uuid4()),
+        "project_number": _generate_project_number(projects),
+        "linked_invoice_ids": [],
+        "created_at": now,
+        "updated_at": now,
+    })
+    projects.append(project)
+    _save_projects(projects)
+    _record_audit("create", "project", {"project_id": project["id"], "record": project})
+    return redirect(url_for("operations_projects_view", message="Project added"))
+
+
+@app.route("/operations/projects/update", methods=["POST"])
+def update_project():
+    project_id = str(request.form.get("project_id") or "").strip()
+    data = load_finance_data()
+    payload = _project_payload_from_form(data)
+    errors = _validate_project_payload(payload)
+
+    projects = _load_projects()
+    project = _find_record_by_id(projects, project_id)
+    if project is None:
+        return redirect(url_for("operations_projects_view", message="Project not found"))
+
+    if errors:
+        return _redirect_with_form_errors(
+            "operations_projects_view",
+            {**payload, "line_items_json": request.form.get("line_items_json", "")},
+            errors,
+            edit_id=project_id,
+        )
+
+    project.update(payload)
+    project["updated_at"] = datetime.now().isoformat(timespec="seconds")
+    _save_projects(projects)
+    _record_audit("update", "project", {"project_id": project_id, "record": project})
+    return redirect(url_for("operations_projects_view", message="Project updated"))
+
+
+@app.route("/operations/projects/archive", methods=["POST"])
+def archive_project():
+    project_id = str(request.form.get("project_id") or "").strip()
+    projects = _load_projects()
+    project = _find_record_by_id(projects, project_id)
+    if project is not None:
+        project["status"] = "Cancelled"
+        project["updated_at"] = datetime.now().isoformat(timespec="seconds")
+        _save_projects(projects)
+        _record_audit("archive", "project", {"project_id": project_id, "record": project})
+    return redirect(url_for("operations_projects_view", message="Project archived"))
+
+
+@app.route("/operations/projects/status", methods=["POST"])
+def update_project_status():
+    project_id = str(request.form.get("project_id") or "").strip()
+    new_status = str(request.form.get("status") or "").strip()
+    next_page = str(request.args.get("next") or url_for("operations_projects_view"))
+    if new_status not in PROJECT_STATUSES:
+        return redirect(_append_message_to_path(next_page, "Invalid status"))
+
+    projects = _load_projects()
+    project = _find_record_by_id(projects, project_id)
+    if project is not None:
+        project["status"] = new_status
+        project["updated_at"] = datetime.now().isoformat(timespec="seconds")
+        _save_projects(projects)
+        _record_audit("update", "project", {"project_id": project_id, "field": "status", "value": new_status})
+    return redirect(_append_message_to_path(next_page, "Project status updated"))
+
+
+# --- Operations: DMAIC Tracker ------------------------------------------------
+
+@app.route("/operations/dmaic")
+def operations_dmaic_view():
+    data = load_finance_data()
+    projects = _load_projects()
+    project_id = str(request.args.get("project_id") or "")
+    dmaic_project = _find_record_by_id(projects, project_id) if project_id else None
+    return render_template(
+        "index.html",
+        **_build_page_context(
+            "DMAIC Tracker",
+            "operations_dmaic",
+            data,
+            dmaic_project=dmaic_project,
+            message=request.args.get("message"),
+        ),
+    )
+
+
+@app.route("/operations/dmaic/<project_id>")
+def operations_dmaic_project_view(project_id):
+    data = load_finance_data()
+    projects = _load_projects()
+    dmaic_project = _find_record_by_id(projects, project_id)
+    if dmaic_project is None:
+        return redirect(url_for("operations_dmaic_view", message="Project not found"))
+    return render_template(
+        "index.html",
+        **_build_page_context(
+            f"DMAIC Tracker: {dmaic_project.get('title')}",
+            "operations_dmaic",
+            data,
+            dmaic_project=dmaic_project,
+            message=request.args.get("message"),
+        ),
+    )
+
+
+@app.route("/operations/dmaic/update", methods=["POST"])
+def update_dmaic_phase():
+    project_id = str(request.form.get("project_id") or "").strip()
+    phase = str(request.form.get("phase") or "").strip()
+    new_status = str(request.form.get("status") or "").strip()
+
+    projects = _load_projects()
+    project = _find_record_by_id(projects, project_id)
+    if project is None:
+        return redirect(url_for("operations_dmaic_view", message="Project not found"))
+
+    if phase not in DMAIC_PHASES:
+        return redirect(url_for("operations_dmaic_project_view", project_id=project_id, message="Unknown DMAIC phase"))
+
+    transition_error = _validate_dmaic_transition(project["dmaic"], phase, new_status)
+    if transition_error:
+        return redirect(url_for("operations_dmaic_project_view", project_id=project_id, message=transition_error))
+
+    deliverables_raw = request.form.get("deliverables") or ""
+    deliverables = [line.strip() for line in deliverables_raw.splitlines() if line.strip()]
+
+    project["dmaic"][phase] = {
+        "status": new_status if new_status in DMAIC_PHASE_STATUSES else project["dmaic"][phase]["status"],
+        "start_date": str(request.form.get("start_date") or "").strip(),
+        "completion_date": str(request.form.get("completion_date") or "").strip(),
+        "notes": str(request.form.get("notes") or "").strip(),
+        "deliverables": deliverables,
+        "key_findings": str(request.form.get("key_findings") or "").strip(),
+    }
+    project["updated_at"] = datetime.now().isoformat(timespec="seconds")
+    _save_projects(projects)
+    _record_audit("update", "project_dmaic", {"project_id": project_id, "phase": phase, "record": project["dmaic"][phase]})
+    return redirect(url_for("operations_dmaic_project_view", project_id=project_id, message=f"{phase} updated"))
+
+
+# --- Operations: Delivery Log -------------------------------------------------
+
+@app.route("/operations/delivery")
+def operations_delivery_view():
+    data = load_finance_data()
+    entries = _load_delivery_log()
+    client_filter = str(request.args.get("client_filter") or "")
+    project_filter = str(request.args.get("project_filter") or "")
+    billing_period_filter = str(request.args.get("billing_period_filter") or "")
+    if client_filter:
+        entries = [entry for entry in entries if entry.get("client_name") == client_filter]
+    if project_filter:
+        entries = [entry for entry in entries if entry.get("project_id") == project_filter]
+    if billing_period_filter:
+        entries = [entry for entry in entries if entry.get("billing_period") == billing_period_filter]
+    clarity_partner_client_names = [client["name"] for client in _clients_catalog_for_operations(data) if client["tier"] == "Clarity Partner"]
+    return render_template(
+        "index.html",
+        **_build_page_context(
+            "Delivery Log",
+            "operations_delivery",
+            data,
+            delivery_form={"client_filter": client_filter, "project_filter": project_filter, "billing_period_filter": billing_period_filter},
+            message=request.args.get("message"),
+        ),
+        delivery_entries_filtered=entries,
+        clarity_partner_client_names=clarity_partner_client_names,
+    )
+
+
+@app.route("/operations/delivery/add", methods=["POST"])
+def add_delivery_entry():
+    data = load_finance_data()
+    project_id = str(request.form.get("project_id") or "").strip()
+    projects = _load_projects()
+    project = _find_record_by_id(projects, project_id)
+    client_name = project.get("client_name") if project else str(request.form.get("client_name") or "").strip()
+
+    payload = {
+        "date": str(request.form.get("date") or date.today().isoformat()).strip(),
+        "project_id": project_id,
+        "client_id": client_name,
+        "client_name": client_name,
+        "service_type": str(request.form.get("service_type") or "Other").strip(),
+        "description": str(request.form.get("description") or "").strip(),
+        "hours_spent": request.form.get("hours_spent") or None,
+        "billing_period": str(request.form.get("billing_period") or "").strip(),
+    }
+
+    errors: dict[str, str] = {}
+    _validate_required_text(payload.get("description"), "description", "Description", errors)
+    _validate_required_text(client_name, "client_name", "Client", errors)
+    if not _parse_transaction_date(payload.get("date")):
+        errors["date"] = "Date must be valid"
+
+    if errors:
+        return _redirect_with_form_errors("operations_delivery_view", payload, errors)
+
+    stored_filename, upload_error = _save_uploaded_delivery_file(request.files.get("deliverable_file"))
+    if upload_error:
+        return _redirect_with_form_errors("operations_delivery_view", payload, {"deliverable_file": upload_error})
+
+    now = datetime.now().isoformat(timespec="seconds")
+    entry = _normalize_delivery_entry({
+        **payload,
+        "id": str(uuid4()),
+        "deliverable_filename": stored_filename,
+        "invoiced": False,
+        "invoice_id": "",
+        "created_at": now,
+        "last_updated_at": now,
+    })
+    entries = _load_delivery_log()
+    entries.append(entry)
+    _save_delivery_log(entries)
+    _record_audit("create", "delivery_entry", {"entry_id": entry["id"], "record": entry})
+    return redirect(url_for("operations_delivery_view", message="Delivery logged"))
+
+
+@app.route("/operations/delivery/generate-invoice/<client_id>/<period>", methods=["POST"])
+def generate_delivery_invoice(client_id, period):
+    client_name = client_id
+    billing_period = period
+    entries = _load_delivery_log()
+    unbilled = [entry for entry in entries if entry.get("client_name") == client_name and entry.get("billing_period") == billing_period and not entry.get("invoiced")]
+    if not unbilled:
+        return redirect(url_for("operations_delivery_view", message="No unbilled delivery entries found for that client and period"))
+
+    existing_invoices = load_finance_data().get("sheets", {}).get("Invoices", [])
+    issue_date = date.today().isoformat()
+    generated_invoice_number = _next_invoice_number(issue_date, existing_invoices)
+
+    raw_line_items = []
+    for entry in unbilled:
+        hours = entry.get("hours_spent")
+        quantity = hours if hours else 1.0
+        unit_price = 0.0
+        raw_line_items.append({
+            "service_id": "",
+            "name": entry.get("service_type") or "Delivery",
+            "description": entry.get("description") or "",
+            "quantity": quantity,
+            "unit_price": unit_price,
+            "discount_type": "€",
+            "discount_value": 0,
+            "vat_rate": "0%",
+        })
+
+    client_rows = load_finance_data().get("sheets", {}).get("Clients", [])
+    client_row = next((row for row in client_rows if row.get("Client Name") == client_name), {})
+    retainer_amount = _coerce_number(client_row.get("Retainer Amount (€)"))
+    if not retainer_amount:
+        return redirect(url_for("operations_delivery_view", message=f"{client_name} has no retainer amount set — add one on the Client record before generating this invoice"))
+    raw_line_items[0]["unit_price"] = retainer_amount
+    for item in raw_line_items[1:]:
+        item["unit_price"] = 0.0
+
+    payload = {
+        "Invoice #": generated_invoice_number,
+        "Issue Date": issue_date,
+        "Due Date": (date.today() + timedelta(days=14)).isoformat(),
+        "Client Name": client_name,
+        "Client VAT Number": "",
+        "Client Address": "",
+        "Service / Product": "",
+        "VAT Treatment": "standard",
+        "Supply Type": "services",
+        "Balance Due (€)": "",
+        "Status": "Draft",
+        "Payment Method": "",
+        "Payment Date": "",
+        "Bank Reconciliation": "Unreconciled",
+        "Notes": f"Generated from Delivery Log — billing period {billing_period}",
+        "Phase Tag": _resolve_phase_tag(issue_date),
+    }
+    _apply_invoice_line_items(payload, raw_line_items)
+    _apply_vat_classification(payload, vat_rate_key="VAT Rate")
+    _normalize_invoice_balance(payload)
+    validation_errors = _validate_invoice_payload(payload)
+    if validation_errors:
+        return redirect(url_for("operations_delivery_view", message=_build_validation_message(validation_errors)))
+
+    _append_row_to_sheet("Invoices", payload)
+    load_finance_data.cache_clear()
+    _record_audit("create", "invoice", {"record": payload, "source": "delivery_log"})
+
+    for entry in entries:
+        if entry.get("client_name") == client_name and entry.get("billing_period") == billing_period and not entry.get("invoiced"):
+            entry["invoiced"] = True
+            entry["invoice_id"] = generated_invoice_number
+            entry["last_updated_at"] = datetime.now().isoformat(timespec="seconds")
+    _save_delivery_log(entries)
+
+    project_ids = {entry.get("project_id") for entry in unbilled if entry.get("project_id")}
+    if project_ids:
+        projects = _load_projects()
+        for project in projects:
+            if project["id"] in project_ids and generated_invoice_number not in project["linked_invoice_ids"]:
+                project["linked_invoice_ids"].append(generated_invoice_number)
+                project["updated_at"] = datetime.now().isoformat(timespec="seconds")
+        _save_projects(projects)
+
+    return redirect(url_for("operations_delivery_view", message=f"Invoice {generated_invoice_number} generated"))
+
+
+# --- Operations: SOP Library -------------------------------------------------
+
+@app.route("/operations/sops")
+def operations_sops_view():
+    data = load_finance_data()
+    sops = _load_sops()
+    editing_sop = _find_record_by_id(sops, request.args.get("edit_id"))
+    client_filter = str(request.args.get("client_filter") or "")
+    status_filter = str(request.args.get("status_filter") or "")
+    process_area_filter = str(request.args.get("process_area_filter") or "")
+    return render_template(
+        "index.html",
+        **_build_page_context(
+            "SOP Library",
+            "operations_sops",
+            data,
+            editing_sop=editing_sop,
+            sop_form={"client_filter": client_filter, "status_filter": status_filter, "process_area_filter": process_area_filter},
+            message=request.args.get("message"),
+        ),
+    )
+
+
+@app.route("/operations/sops/add", methods=["POST"])
+def add_sop():
+    client_name = str(request.form.get("client_name") or "").strip()
+    title = str(request.form.get("title") or "").strip()
+    supersedes_id = str(request.form.get("supersedes_id") or "").strip()
+
+    errors: dict[str, str] = {}
+    _validate_required_text(title, "title", "SOP title", errors)
+    _validate_required_text(client_name, "client_name", "Client", errors)
+
+    if errors:
+        return _redirect_with_form_errors("operations_sops_view", {"title": title, "client_name": client_name}, errors)
+
+    stored_filename, upload_error = _save_uploaded_sop(request.files.get("sop_file"))
+    if upload_error:
+        return _redirect_with_form_errors("operations_sops_view", {"title": title, "client_name": client_name}, {"sop_file": upload_error})
+
+    sops = _load_sops()
+    version = str(request.form.get("version") or "V1.0").strip()
+    if supersedes_id:
+        previous = _find_record_by_id(sops, supersedes_id)
+        if previous is not None:
+            previous["status"] = "Superseded"
+            previous["last_updated_at"] = datetime.now().isoformat(timespec="seconds")
+
+    now = datetime.now().isoformat(timespec="seconds")
+    sop = _normalize_sop({
+        "id": str(uuid4()),
+        "title": title,
+        "client_id": client_name,
+        "client_name": client_name,
+        "project_id": str(request.form.get("project_id") or "").strip(),
+        "version": version,
+        "status": "Draft",
+        "process_area": str(request.form.get("process_area") or "").strip(),
+        "description": str(request.form.get("description") or "").strip(),
+        "filename": stored_filename,
+        "date_created": date.today().isoformat(),
+        "notes": str(request.form.get("notes") or "").strip(),
+        "created_at": now,
+        "last_updated_at": now,
+    })
+    sops.append(sop)
+    _save_sops(sops)
+    _record_audit("create", "sop", {"sop_id": sop["id"], "record": sop})
+    return redirect(url_for("operations_sops_view", message="SOP added"))
+
+
+@app.route("/operations/sops/update", methods=["POST"])
+def update_sop():
+    sop_id = str(request.form.get("sop_id") or "").strip()
+    new_status = str(request.form.get("status") or "").strip()
+
+    sops = _load_sops()
+    sop = _find_record_by_id(sops, sop_id)
+    if sop is None:
+        return redirect(url_for("operations_sops_view", message="SOP not found"))
+
+    if new_status and new_status != sop["status"]:
+        if new_status not in SOP_STATUSES:
+            return redirect(url_for("operations_sops_view", message="Invalid status"))
+        if new_status in SOP_STATUS_WORKFLOW and sop["status"] in SOP_STATUS_WORKFLOW:
+            current_index = SOP_STATUS_WORKFLOW.index(sop["status"])
+            new_index = SOP_STATUS_WORKFLOW.index(new_status)
+            if new_index != current_index + 1:
+                return redirect(url_for("operations_sops_view", message="SOPs must move through Draft → Review → Approved in order"))
+        sop["status"] = new_status
+        if new_status == "Approved":
+            sop["date_approved"] = date.today().isoformat()
+            sop["approved_by"] = str(request.form.get("approved_by") or "").strip()
+
+    for field_name, form_key in (
+        ("title", "title"),
+        ("process_area", "process_area"),
+        ("description", "description"),
+        ("notes", "notes"),
+    ):
+        if form_key in request.form:
+            sop[field_name] = str(request.form.get(form_key) or "").strip()
+
+    sop["last_updated_at"] = datetime.now().isoformat(timespec="seconds")
+    _save_sops(sops)
+    _record_audit("update", "sop", {"sop_id": sop_id, "record": sop})
+    return redirect(url_for("operations_sops_view", message="SOP updated"))
+
+
+@app.route("/sops/<path:filename>")
+def serve_sop_file(filename):
+    as_attachment = request.args.get("download") == "1"
+    return send_from_directory(SOP_FILES_DIR, filename, as_attachment=as_attachment)
+
+
+@app.route("/delivery-files/<path:filename>")
+def serve_delivery_file(filename):
+    as_attachment = request.args.get("download") == "1"
+    return send_from_directory(DELIVERY_FILES_DIR, filename, as_attachment=as_attachment)
+
+
 def _backup_eligible_files() -> list[Path]:
     return list(SHEET_JSON_PATHS.values()) + [
         SUBSCRIPTIONS_PATH,
@@ -4677,6 +5577,9 @@ def _backup_eligible_files() -> list[Path]:
         SERVICES_PATH,
         COMPANY_DOCUMENTS_PATH,
         COMPLIANCE_CALENDAR_PATH,
+        PROJECTS_PATH,
+        DELIVERY_LOG_PATH,
+        SOPS_PATH,
     ]
 
 

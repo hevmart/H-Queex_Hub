@@ -191,8 +191,6 @@
       }
       .nav-item:hover { color: var(--brand-mid-navy); border-bottom-color: var(--brand-border); }
       .nav-item.active { color: var(--brand-navy); font-weight: 700; border-bottom-color: var(--brand-gold); }
-      .nav-item-disabled { color: var(--brand-border); cursor: not-allowed; }
-      .nav-item-disabled:hover { color: var(--brand-border); border-bottom-color: transparent; }
       .finance-card-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; margin-top: 14px; }
       .finance-card-link { text-decoration: none; color: inherit; display: block; }
       .finance-card {
@@ -605,6 +603,7 @@
 
       {% set finance_tabs = ['finance', 'income', 'expenses', 'invoices', 'subscriptions', 'payroll', 'ledger', 'archive'] %}
       {% set company_tabs = ['company', 'company_documents', 'company_compliance', 'company_profile', 'settings'] %}
+      {% set operations_tabs = ['operations', 'operations_projects', 'operations_project_detail', 'operations_dmaic', 'operations_delivery', 'operations_sops'] %}
       <nav class="main-nav">
         <button type="button" class="nav-hamburger" id="nav_hamburger" aria-label="Toggle menu" aria-expanded="false">☰ Menu</button>
         <div class="nav-menu" id="nav_menu">
@@ -614,7 +613,7 @@
           <a href="/clients" class="nav-item {% if active_tab == 'clients' %}active{% endif %}">Clients</a>
           <a href="/company" class="nav-item {% if active_tab in company_tabs %}active{% endif %}">Company</a>
           <a href="/suppliers" class="nav-item {% if active_tab == 'suppliers' %}active{% endif %}">Suppliers</a>
-          <span class="nav-item nav-item-disabled" tabindex="0" title="Coming soon">Operations</span>
+          <a href="/operations" class="nav-item {% if active_tab in operations_tabs %}active{% endif %}">Operations</a>
         </div>
       </nav>
       <script>
@@ -668,6 +667,22 @@
         {% endfor %}
       </nav>
       <p class="breadcrumb">Company <span class="breadcrumb-sep">›</span> {{ page_title }}</p>
+      <h1 class="finance-page-title">{{ page_title }}</h1>
+      {% endif %}
+
+      {% set operations_nav_items = [
+        ('operations_projects', 'Projects', '/operations/projects'),
+        ('operations_dmaic', 'DMAIC', '/operations/dmaic'),
+        ('operations_delivery', 'Delivery', '/operations/delivery'),
+        ('operations_sops', 'SOPs', '/operations/sops'),
+      ] %}
+      {% if active_tab in operations_tabs and active_tab != 'operations' %}
+      <nav class="finance-subnav">
+        {% for tab_key, tab_label, tab_url in operations_nav_items %}
+        <a href="{{ tab_url }}" class="finance-subnav-tab {% if active_tab == tab_key or (tab_key == 'operations_projects' and active_tab == 'operations_project_detail') %}active{% endif %}">{{ tab_label }}</a>
+        {% endfor %}
+      </nav>
+      <p class="breadcrumb">Operations <span class="breadcrumb-sep">›</span> {% if active_tab == 'operations_project_detail' %}<a href="/operations/projects" style="color:inherit;">Projects</a> <span class="breadcrumb-sep">›</span> {{ page_title }}{% else %}{{ page_title }}{% endif %}</p>
       <h1 class="finance-page-title">{{ page_title }}</h1>
       {% endif %}
 
@@ -1153,6 +1168,728 @@
       </script>
       {% endif %}
 
+      {% macro project_status_pill(status) -%}
+      {% if status in ['Enquiry', 'Proposed'] %}<span class="status-pill pending">{{ status }}</span>
+      {% elif status in ['Active', 'Completed'] %}<span class="status-pill filed">{{ status }}</span>
+      {% elif status == 'On Hold' %}<span class="status-pill partially-paid">{{ status }}</span>
+      {% else %}<span class="status-pill cancelled">{{ status }}</span>
+      {% endif %}
+      {%- endmacro %}
+
+      {% macro sop_status_pill(status) -%}
+      {% if status in ['Draft', 'Review'] %}<span class="status-pill pending">{{ status }}</span>
+      {% elif status == 'Approved' %}<span class="status-pill filed">{{ status }}</span>
+      {% else %}<span class="status-pill cancelled">{{ status }}</span>
+      {% endif %}
+      {%- endmacro %}
+
+      {% if active_tab == 'operations' %}
+      <div class="section">
+        <h2>Operations hub</h2>
+        <p class="mini" style="margin:0 0 14px;">Manage client project delivery, track work done, and connect service delivery to invoicing.</p>
+        <div class="finance-card-grid">
+          <a href="/operations/projects" class="finance-card-link">
+            <div class="finance-card">
+              <h3>Projects</h3>
+              <p>Track every client engagement from enquiry through to completion.</p>
+              <span class="pill">{{ active_projects_count }} active</span>
+            </div>
+          </a>
+          <a href="/operations/dmaic" class="finance-card-link">
+            <div class="finance-card">
+              <h3>DMAIC Tracker</h3>
+              <p>Track Six Sigma Define-Measure-Analyse-Improve-Control phases per project.</p>
+              <span class="pill">Process</span>
+            </div>
+          </a>
+          <a href="/operations/delivery" class="finance-card-link">
+            <div class="finance-card">
+              <h3>Delivery Log</h3>
+              <p>The audit trail of everything delivered to clients — and the source for Clarity Partner billing.</p>
+              <span class="pill">{{ pending_billing|length }} pending billing</span>
+            </div>
+          </a>
+          <a href="/operations/sops" class="finance-card-link">
+            <div class="finance-card">
+              <h3>SOP Library</h3>
+              <p>Every SOP created for clients, with version history and approval workflow.</p>
+              <span class="pill">{{ sops|length }} SOPs</span>
+            </div>
+          </a>
+        </div>
+      </div>
+      {% endif %}
+
+      {% if active_tab == 'operations_projects' %}
+      {% set filtered_projects = projects %}
+      {% if status_filter %}{% set filtered_projects = filtered_projects|selectattr('status', 'equalto', status_filter)|list %}{% endif %}
+      {% if tier_filter %}{% set filtered_projects = filtered_projects|selectattr('service_tier', 'equalto', tier_filter)|list %}{% endif %}
+      <div class="section">
+        <div class="edit-banner">
+          <h2>Projects</h2>
+          <a href="/operations/projects#project-add-modal" class="btn-secondary" id="project_add_btn">+ New Project</a>
+        </div>
+        <form method="get" action="/operations/projects" class="table-actions" style="gap:12px;margin-bottom:14px;">
+          <label class="field optional" style="margin:0;min-width:180px;">
+            <span>Status</span>
+            <select name="status_filter" onchange="this.form.submit()">
+              <option value="">All statuses</option>
+              {% for status in project_statuses %}
+              <option value="{{ status }}" {% if status_filter == status %}selected{% endif %}>{{ status }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <label class="field optional" style="margin:0;min-width:180px;">
+            <span>Service tier</span>
+            <select name="tier_filter" onchange="this.form.submit()">
+              <option value="">All tiers</option>
+              {% for tier in client_service_tiers if tier != 'None' %}
+              <option value="{{ tier }}" {% if tier_filter == tier %}selected{% endif %}>{{ tier }}</option>
+              {% endfor %}
+            </select>
+          </label>
+        </form>
+
+        <h3 style="color:var(--brand-navy);font-size:16px;font-weight:700;margin:8px 0;">Pipeline</h3>
+        <div class="kanban-board" style="display:grid;grid-template-columns:repeat(5,minmax(180px,1fr));gap:12px;overflow-x:auto;margin-bottom:24px;">
+          {% for column_status in project_kanban_statuses %}
+          <div class="kanban-column" data-status="{{ column_status }}" style="background:var(--brand-bg-light);border-radius:8px;padding:10px;min-height:120px;">
+            <h4 style="margin:0 0 8px;font-size:13px;color:var(--brand-navy);">{{ column_status }}</h4>
+            {% for project in filtered_projects if project.status == column_status %}
+            <div class="kanban-card" draggable="true" data-project-id="{{ project.id }}" style="background:var(--brand-white);border:1px solid var(--brand-border);border-radius:6px;padding:8px;margin-bottom:8px;cursor:grab;">
+              <a href="/operations/projects/{{ project.id }}" style="text-decoration:none;color:var(--brand-charcoal);font-weight:700;font-size:13px;">{{ project.title }}</a>
+              <div class="mini" style="margin:2px 0 0;">{{ project.client_name }}</div>
+            </div>
+            {% endfor %}
+          </div>
+          {% endfor %}
+        </div>
+
+        <h3 style="color:var(--brand-navy);font-size:16px;font-weight:700;margin:8px 0;">All projects</h3>
+        <table class="services-table">
+          <tr><th>Project #</th><th class="col-name">Title</th><th>Client</th><th>Tier</th><th>Status</th><th>Value (€)</th><th>Start date</th><th class="col-actions"></th></tr>
+          {% for project in filtered_projects %}
+          <tr>
+            <td>{{ project.project_number }}</td>
+            <td class="col-name"><a href="/operations/projects/{{ project.id }}" style="color:var(--brand-navy);font-weight:700;text-decoration:none;">{{ project.title }}</a></td>
+            <td>{{ project.client_name }}</td>
+            <td>{{ project.service_tier }}</td>
+            <td>{{ project_status_pill(project.status) }}</td>
+            <td>{{ format_currency(project.total_value) }}</td>
+            <td>{{ project.start_date or '—' }}</td>
+            <td class="col-actions">
+              <div class="table-action-stack">
+                {{ edit_button('/operations/projects?edit_id=' ~ project.id ~ '#project-edit-modal') }}
+              </div>
+            </td>
+          </tr>
+          {% endfor %}
+        </table>
+        {% if not filtered_projects %}
+        <p class="mini">No projects match these filters.</p>
+        {% endif %}
+      </div>
+
+      <div class="modal-overlay" id="project_add_modal_overlay">
+        <div class="modal-box compliance-modal-box form-modal-box">
+          <div class="compliance-modal-header"><h3>New Project</h3></div>
+          <div class="compliance-modal-body">
+            <form method="post" action="/operations/projects/add" class="form-shell" novalidate>
+              <div class="form-grid">
+                <div class="field required {% if validation_errors.get('title') %}has-error{% endif %}">
+                  <label for="project_title">Project title</label>
+                  <input id="project_title" type="text" name="title" value="{{ project_form.get('title', '') }}" placeholder="Project title">
+                  {% if validation_errors.get('title') %}<span class="field-error">{{ validation_errors.get('title') }}</span>{% endif %}
+                </div>
+                <div class="field required {% if validation_errors.get('client_name') %}has-error{% endif %}">
+                  <label for="project_client_name">Client</label>
+                  <select id="project_client_name" name="client_name">
+                    <option value="">Select client</option>
+                    {% for client_name in client_names %}
+                    <option value="{{ client_name }}" {% if project_form.get('client_name') == client_name %}selected{% endif %}>{{ client_name }}</option>
+                    {% endfor %}
+                  </select>
+                  {% if validation_errors.get('client_name') %}<span class="field-error">{{ validation_errors.get('client_name') }}</span>{% endif %}
+                </div>
+                <div class="field optional" style="grid-column: 1 / -1;">
+                  <label for="project_description">Description</label>
+                  <textarea id="project_description" name="description" rows="3" placeholder="Description">{{ project_form.get('description', '') }}</textarea>
+                </div>
+                <div class="field required">
+                  <label for="project_status">Status</label>
+                  <select id="project_status" name="status">
+                    {% for status in project_statuses %}
+                    <option value="{{ status }}" {% if project_form.get('status', 'Enquiry') == status %}selected{% endif %}>{{ status }}</option>
+                    {% endfor %}
+                  </select>
+                </div>
+                <div class="field optional {% if validation_errors.get('start_date') %}has-error{% endif %}">
+                  <label for="project_start_date">Start date</label>
+                  <input id="project_start_date" type="date" name="start_date" value="{{ project_form.get('start_date', '') }}">
+                </div>
+                <div class="field optional {% if validation_errors.get('target_end_date') %}has-error{% endif %}">
+                  <label for="project_target_end_date">Target end date</label>
+                  <input id="project_target_end_date" type="date" name="target_end_date" value="{{ project_form.get('target_end_date', '') }}">
+                </div>
+                <div class="field optional" style="grid-column: 1 / -1;">
+                  <label for="project_notes">Notes</label>
+                  <textarea id="project_notes" name="notes" rows="3" placeholder="Notes">{{ project_form.get('notes', '') }}</textarea>
+                </div>
+                <input type="hidden" name="line_items_json" value="{{ project_form.get('line_items_json', '[]') }}">
+              </div>
+              <div class="modal-actions">
+                <a href="/operations/projects" class="btn-go-back">Cancel</a>
+                <button type="submit" class="btn-confirm-save">Save Project</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>
+
+      {% if editing_project %}
+      <div class="modal-overlay" id="project_edit_modal_overlay">
+        <div class="modal-box compliance-modal-box form-modal-box">
+          <div class="compliance-modal-header"><h3>Edit Project</h3></div>
+          <div class="compliance-modal-body">
+            <form method="post" action="/operations/projects/update" class="form-shell" novalidate>
+              <input type="hidden" name="project_id" value="{{ editing_project.id }}">
+              <div class="form-grid">
+                <div class="field required {% if validation_errors.get('title') %}has-error{% endif %}">
+                  <label for="project_edit_title">Project title</label>
+                  <input id="project_edit_title" type="text" name="title" value="{{ project_form.get('title') if project_form else editing_project.title }}" placeholder="Project title">
+                  {% if validation_errors.get('title') %}<span class="field-error">{{ validation_errors.get('title') }}</span>{% endif %}
+                </div>
+                <div class="field required {% if validation_errors.get('client_name') %}has-error{% endif %}">
+                  <label for="project_edit_client_name">Client</label>
+                  <select id="project_edit_client_name" name="client_name">
+                    {% for client_name in client_names %}
+                    <option value="{{ client_name }}" {% if (project_form.get('client_name') if project_form else editing_project.client_name) == client_name %}selected{% endif %}>{{ client_name }}</option>
+                    {% endfor %}
+                  </select>
+                </div>
+                <div class="field optional" style="grid-column: 1 / -1;">
+                  <label for="project_edit_description">Description</label>
+                  <textarea id="project_edit_description" name="description" rows="3" placeholder="Description">{{ project_form.get('description') if project_form else editing_project.description }}</textarea>
+                </div>
+                <div class="field required">
+                  <label for="project_edit_status">Status</label>
+                  <select id="project_edit_status" name="status">
+                    {% for status in project_statuses %}
+                    <option value="{{ status }}" {% if (project_form.get('status') if project_form else editing_project.status) == status %}selected{% endif %}>{{ status }}</option>
+                    {% endfor %}
+                  </select>
+                </div>
+                <div class="field optional">
+                  <label for="project_edit_start_date">Start date</label>
+                  <input id="project_edit_start_date" type="date" name="start_date" value="{{ project_form.get('start_date') if project_form else editing_project.start_date }}">
+                </div>
+                <div class="field optional">
+                  <label for="project_edit_target_end_date">Target end date</label>
+                  <input id="project_edit_target_end_date" type="date" name="target_end_date" value="{{ project_form.get('target_end_date') if project_form else editing_project.target_end_date }}">
+                </div>
+                <div class="field optional">
+                  <label for="project_edit_actual_end_date">Actual end date</label>
+                  <input id="project_edit_actual_end_date" type="date" name="actual_end_date" value="{{ project_form.get('actual_end_date') if project_form else editing_project.actual_end_date }}">
+                </div>
+                <div class="field optional" style="grid-column: 1 / -1;">
+                  <label for="project_edit_notes">Notes</label>
+                  <textarea id="project_edit_notes" name="notes" rows="3" placeholder="Notes">{{ project_form.get('notes') if project_form else editing_project.notes }}</textarea>
+                </div>
+                <input type="hidden" name="line_items_json" value="{{ project_form.get('line_items_json') if project_form else (editing_project.line_items|tojson) }}">
+              </div>
+              {{ archive_in_modal('/operations/projects/archive', 'project_id', editing_project.id, label='Archive this project', confirm_message='Are you sure? This will cancel the project.') }}
+              <div class="modal-actions">
+                <a href="/operations/projects" class="btn-go-back">Cancel</a>
+                <button type="submit" class="btn-confirm-save">Update Project</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>
+      <script>window.PROJECT_EDIT_MODAL_OPEN = true;</script>
+      {% endif %}
+      <script>window.PROJECT_ADD_MODAL_OPEN = {{ 'true' if (validation_errors and not editing_project) else 'false' }};</script>
+      {% endif %}
+
+      {% if active_tab == 'operations_project_detail' and project_detail %}
+      {% set project = project_detail.project %}
+      <div class="section">
+        <div class="edit-banner">
+          <h2>{{ project.title }}</h2>
+          {{ edit_button('/operations/projects?edit_id=' ~ project.id ~ '#project-edit-modal') }}
+        </div>
+        <div class="card" style="display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));margin-bottom:16px;">
+          <div><div class="mini" style="margin:0;">Project number</div><strong>{{ project.project_number }}</strong></div>
+          <div><div class="mini" style="margin:0;">Client</div><strong>{{ project.client_name }}</strong></div>
+          <div><div class="mini" style="margin:0;">Service tier</div><strong>{{ project.service_tier }}</strong></div>
+          <div><div class="mini" style="margin:0;">Status</div>{{ project_status_pill(project.status) }}</div>
+          <div><div class="mini" style="margin:0;">Start date</div><strong>{{ project.start_date or '—' }}</strong></div>
+          <div><div class="mini" style="margin:0;">Target end date</div><strong>{{ project.target_end_date or '—' }}</strong></div>
+          <div><div class="mini" style="margin:0;">Actual end date</div><strong>{{ project.actual_end_date or '—' }}</strong></div>
+          <div><div class="mini" style="margin:0;">Total value</div><strong>{{ format_currency(project.total_value) }}</strong></div>
+        </div>
+        {% if project.description %}<p class="mini" style="margin:0 0 16px;">{{ project.description }}</p>{% endif %}
+        <a href="/operations/dmaic/{{ project.id }}" class="btn-secondary" style="text-decoration:none;">View DMAIC Tracker</a>
+      </div>
+
+      <div class="section">
+        <h3 style="color:var(--brand-navy);font-size:16px;font-weight:700;margin:0 0 8px;">Linked invoices</h3>
+        {% if project_detail.linked_invoices %}
+        <table class="services-table">
+          <tr><th>Invoice #</th><th>Issue date</th><th>Status</th><th>Total (€)</th></tr>
+          {% for invoice in project_detail.linked_invoices %}
+          <tr><td>{{ invoice.get('Invoice #') }}</td><td>{{ invoice.get('Issue Date') }}</td><td>{{ invoice.get('Status') }}</td><td>{{ format_currency(raw_amount(invoice.get('Total (€)'))) }}</td></tr>
+          {% endfor %}
+        </table>
+        {% else %}
+        <p class="mini">No invoices linked yet.</p>
+        {% endif %}
+      </div>
+
+      <div class="section">
+        <h3 style="color:var(--brand-navy);font-size:16px;font-weight:700;margin:0 0 8px;">Delivery log entries</h3>
+        {% if project_detail.delivery_entries %}
+        <table class="services-table">
+          <tr><th>Date</th><th>Type</th><th class="col-name">Description</th><th>Hours</th><th>Invoiced</th></tr>
+          {% for entry in project_detail.delivery_entries %}
+          <tr><td>{{ entry.date }}</td><td>{{ entry.service_type }}</td><td class="col-name">{{ entry.description }}</td><td>{{ entry.hours_spent or '—' }}</td><td>{{ 'Yes' if entry.invoiced else 'No' }}</td></tr>
+          {% endfor %}
+        </table>
+        {% else %}
+        <p class="mini">No delivery logged for this project yet.</p>
+        {% endif %}
+      </div>
+
+      <div class="section">
+        <h3 style="color:var(--brand-navy);font-size:16px;font-weight:700;margin:0 0 8px;">SOPs</h3>
+        {% if project_detail.sops %}
+        <table class="services-table">
+          <tr><th class="col-name">Title</th><th>Version</th><th>Status</th></tr>
+          {% for sop in project_detail.sops %}
+          <tr><td class="col-name">{{ sop.title }}</td><td>{{ sop.version }}</td><td>{{ sop_status_pill(sop.status) }}</td></tr>
+          {% endfor %}
+        </table>
+        {% else %}
+        <p class="mini">No SOPs created for this project yet.</p>
+        {% endif %}
+      </div>
+      {% endif %}
+
+      {% if active_tab == 'operations_dmaic' %}
+      {% if not dmaic_project %}
+      <div class="section">
+        <h2>Select a project</h2>
+        <form method="get" action="/operations/dmaic" class="table-actions" style="margin-bottom:14px;">
+          <label class="field optional" style="margin:0;min-width:260px;">
+            <span>Project</span>
+            <select name="project_id" onchange="this.form.submit()">
+              <option value="">Select project</option>
+              {% for project in projects if project.status not in ['Cancelled'] %}
+              <option value="{{ project.id }}">{{ project.title }} — {{ project.client_name }}</option>
+              {% endfor %}
+            </select>
+          </label>
+        </form>
+        <p class="mini">Choose a project to view or update its DMAIC tracker.</p>
+      </div>
+      {% else %}
+      {% set project = dmaic_project %}
+      <div class="section" id="dmaic_print_area">
+        <div class="edit-banner">
+          <h2>{{ project.title }} — DMAIC Tracker</h2>
+          <div class="table-action-stack">
+            <a href="/operations/dmaic" class="cancel-link">Change project</a>
+            <button type="button" class="btn-secondary" onclick="window.print()">Print / Export PDF</button>
+          </div>
+        </div>
+        <div class="mini" style="margin:0 0 6px;">Overall completion: <strong>{{ dmaic_completion_percentage }}%</strong></div>
+        <div class="bar-track" style="margin-bottom:20px;"><div class="bar-fill net" style="width: {{ dmaic_completion_percentage }}%"></div></div>
+
+        <div class="dmaic-phase-row" style="display:grid;grid-template-columns:repeat(5,minmax(180px,1fr));gap:12px;">
+          {% for phase in dmaic_phases %}
+          {% set phase_data = project.dmaic[phase] %}
+          <div class="card" style="padding:14px;">
+            <h4 style="margin:0 0 6px;color:var(--brand-navy);">{{ phase }}</h4>
+            {% if phase_data.status == 'Complete' %}<span class="status-pill filed">Complete</span>
+            {% elif phase_data.status == 'In Progress' %}<span class="status-pill partially-paid">In Progress</span>
+            {% else %}<span class="status-pill pending">Not Started</span>
+            {% endif %}
+            <div class="mini" style="margin-top:8px;">{% if phase_data.start_date %}Start: {{ phase_data.start_date }}{% endif %}</div>
+            <div class="mini">{% if phase_data.completion_date %}Complete: {{ phase_data.completion_date }}{% endif %}</div>
+            {% if phase_data.deliverables %}
+            <ul style="margin:8px 0 0;padding-left:16px;font-size:12px;color:var(--brand-charcoal);">
+              {% for deliverable in phase_data.deliverables %}<li>{{ deliverable }}</li>{% endfor %}
+            </ul>
+            {% endif %}
+            <button type="button" class="btn-secondary dmaic-phase-toggle" data-phase="{{ phase }}" style="margin-top:10px;width:100%;">Edit phase</button>
+          </div>
+          {% endfor %}
+        </div>
+
+        {% for phase in dmaic_phases %}
+        {% set phase_data = project.dmaic[phase] %}
+        <div class="card dmaic-phase-detail" id="dmaic_detail_{{ phase }}" style="display:none;margin-top:14px;">
+          <h4 style="margin:0 0 10px;color:var(--brand-navy);">{{ phase }} — detail</h4>
+          <form method="post" action="/operations/dmaic/update" class="form-shell" novalidate>
+            <input type="hidden" name="project_id" value="{{ project.id }}">
+            <input type="hidden" name="phase" value="{{ phase }}">
+            <div class="form-grid">
+              <div class="field required">
+                <label for="dmaic_{{ phase }}_status">Status</label>
+                <select id="dmaic_{{ phase }}_status" name="status">
+                  {% for phase_status in dmaic_phase_statuses %}
+                  <option value="{{ phase_status }}" {% if phase_data.status == phase_status %}selected{% endif %}>{{ phase_status }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+              <div class="field optional">
+                <label for="dmaic_{{ phase }}_start_date">Start date</label>
+                <input id="dmaic_{{ phase }}_start_date" type="date" name="start_date" value="{{ phase_data.start_date }}">
+              </div>
+              <div class="field optional">
+                <label for="dmaic_{{ phase }}_completion_date">Completion date</label>
+                <input id="dmaic_{{ phase }}_completion_date" type="date" name="completion_date" value="{{ phase_data.completion_date }}">
+              </div>
+              <div class="field optional" style="grid-column: 1 / -1;">
+                <label for="dmaic_{{ phase }}_deliverables">Deliverables (one per line)</label>
+                <textarea id="dmaic_{{ phase }}_deliverables" name="deliverables" rows="3" placeholder="Deliverables">{{ phase_data.deliverables|join('\n') }}</textarea>
+              </div>
+              <div class="field optional" style="grid-column: 1 / -1;">
+                <label for="dmaic_{{ phase }}_key_findings">Key findings</label>
+                <textarea id="dmaic_{{ phase }}_key_findings" name="key_findings" rows="3" placeholder="Key findings">{{ phase_data.key_findings }}</textarea>
+              </div>
+              <div class="field optional" style="grid-column: 1 / -1;">
+                <label for="dmaic_{{ phase }}_notes">Notes</label>
+                <textarea id="dmaic_{{ phase }}_notes" name="notes" rows="3" placeholder="Notes">{{ phase_data.notes }}</textarea>
+              </div>
+            </div>
+            <div class="form-actions"><button type="submit">Save {{ phase }}</button></div>
+          </form>
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
+      {% endif %}
+
+      {% if active_tab == 'operations_delivery' %}
+      <div class="section">
+        <div class="edit-banner">
+          <h2>Delivery Log</h2>
+          <a href="/operations/delivery#delivery-add-modal" class="btn-secondary" id="delivery_add_btn">+ Log Delivery</a>
+        </div>
+        <form method="get" action="/operations/delivery" class="table-actions" style="gap:12px;margin-bottom:14px;flex-wrap:wrap;">
+          <label class="field optional" style="margin:0;min-width:200px;">
+            <span>Client</span>
+            <select name="client_filter" onchange="this.form.submit()">
+              <option value="">All clients</option>
+              {% for client_name in client_names %}
+              <option value="{{ client_name }}" {% if delivery_form.get('client_filter') == client_name %}selected{% endif %}>{{ client_name }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <label class="field optional" style="margin:0;min-width:200px;">
+            <span>Billing period</span>
+            <input type="text" name="billing_period_filter" value="{{ delivery_form.get('billing_period_filter', '') }}" placeholder="e.g. August 2026" onchange="this.form.submit()">
+          </label>
+        </form>
+
+        {% set partner_pending_entries = delivery_entries_filtered|selectattr('invoiced', 'equalto', false)|rejectattr('billing_period', 'equalto', '')|list %}
+        {% set partner_pending_entries = partner_pending_entries|selectattr('client_name', 'in', clarity_partner_client_names)|list %}
+        {% if partner_pending_entries %}
+        <h3 style="color:var(--brand-navy);font-size:16px;font-weight:700;margin:8px 0;">Clarity Partner — pending billing</h3>
+        {% for client_name, client_entries in partner_pending_entries|groupby('client_name') %}
+        {% for billing_period, period_entries in client_entries|groupby('billing_period') %}
+        <div class="card" style="margin-bottom:12px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
+            <div>
+              <strong>{{ client_name }}</strong> — {{ billing_period }}
+              <div class="mini" style="margin:2px 0 0;">{{ period_entries|length }} unbilled deliver{{ 'y' if period_entries|length == 1 else 'ies' }}</div>
+            </div>
+            <form method="post" action="/operations/delivery/generate-invoice/{{ client_name|urlencode }}/{{ billing_period|urlencode }}">
+              <button type="submit" class="btn-confirm-save">Generate Invoice</button>
+            </form>
+          </div>
+          <table class="services-table" style="margin-top:10px;">
+            <tr><th>Date</th><th>Type</th><th class="col-name">Description</th><th>Hours</th></tr>
+            {% for entry in period_entries %}
+            <tr><td>{{ entry.date }}</td><td>{{ entry.service_type }}</td><td class="col-name">{{ entry.description }}</td><td>{{ entry.hours_spent or '—' }}</td></tr>
+            {% endfor %}
+          </table>
+        </div>
+        {% endfor %}
+        {% endfor %}
+        {% endif %}
+
+        <h3 style="color:var(--brand-navy);font-size:16px;font-weight:700;margin:16px 0 8px;">All delivery entries</h3>
+        <table class="services-table">
+          <tr><th>Date</th><th>Client</th><th>Type</th><th class="col-name">Description</th><th>Hours</th><th>Billing period</th><th>Invoiced</th></tr>
+          {% for entry in delivery_entries_filtered %}
+          <tr>
+            <td>{{ entry.date }}</td>
+            <td>{{ entry.client_name }}</td>
+            <td>{{ entry.service_type }}</td>
+            <td class="col-name">{{ entry.description }}{% if entry.deliverable_filename %}<div class="mini" style="margin-top:2px;"><a href="/delivery-files/{{ entry.deliverable_filename }}" target="_blank" rel="noopener">View file</a></div>{% endif %}</td>
+            <td>{{ entry.hours_spent or '—' }}</td>
+            <td>{{ entry.billing_period or '—' }}</td>
+            <td>{% if entry.invoiced %}<span class="status-pill filed">Invoiced ({{ entry.invoice_id }})</span>{% else %}<span class="status-pill pending">Not invoiced</span>{% endif %}</td>
+          </tr>
+          {% endfor %}
+        </table>
+        {% if not delivery_entries_filtered %}
+        <p class="mini">No delivery entries logged yet.</p>
+        {% endif %}
+      </div>
+
+      <div class="modal-overlay" id="delivery_add_modal_overlay">
+        <div class="modal-box compliance-modal-box form-modal-box">
+          <div class="compliance-modal-header"><h3>Log Delivery</h3></div>
+          <div class="compliance-modal-body">
+            <form method="post" action="/operations/delivery/add" class="form-shell" enctype="multipart/form-data" novalidate>
+              <div class="form-grid">
+                <div class="field required {% if validation_errors.get('date') %}has-error{% endif %}">
+                  <label for="delivery_date">Date</label>
+                  <input id="delivery_date" type="date" name="date" value="{{ delivery_form.get('date', today_iso) }}">
+                  {% if validation_errors.get('date') %}<span class="field-error">{{ validation_errors.get('date') }}</span>{% endif %}
+                </div>
+                <div class="field optional">
+                  <label for="delivery_project_id">Project</label>
+                  <select id="delivery_project_id" name="project_id">
+                    <option value="">No linked project</option>
+                    {% for project in projects if project.status not in ['Cancelled'] %}
+                    <option value="{{ project.id }}" {% if delivery_form.get('project_id') == project.id %}selected{% endif %}>{{ project.title }} — {{ project.client_name }}</option>
+                    {% endfor %}
+                  </select>
+                </div>
+                <div class="field required {% if validation_errors.get('client_name') %}has-error{% endif %}">
+                  <label for="delivery_client_name">Client</label>
+                  <select id="delivery_client_name" name="client_name">
+                    <option value="">Select client (or choose a project above)</option>
+                    {% for client_name in client_names %}
+                    <option value="{{ client_name }}" {% if delivery_form.get('client_name') == client_name %}selected{% endif %}>{{ client_name }}</option>
+                    {% endfor %}
+                  </select>
+                  {% if validation_errors.get('client_name') %}<span class="field-error">{{ validation_errors.get('client_name') }}</span>{% endif %}
+                </div>
+                <div class="field required">
+                  <label for="delivery_service_type">Service type</label>
+                  <select id="delivery_service_type" name="service_type">
+                    {% for service_type in delivery_service_types %}
+                    <option value="{{ service_type }}" {% if delivery_form.get('service_type') == service_type %}selected{% endif %}>{{ service_type }}</option>
+                    {% endfor %}
+                  </select>
+                </div>
+                <div class="field optional">
+                  <label for="delivery_hours_spent">Hours spent</label>
+                  <input id="delivery_hours_spent" type="number" step="0.25" name="hours_spent" value="{{ delivery_form.get('hours_spent', '') }}" placeholder="0.00">
+                </div>
+                <div class="field optional">
+                  <label for="delivery_billing_period">Billing period</label>
+                  <input id="delivery_billing_period" type="text" name="billing_period" value="{{ delivery_form.get('billing_period', '') }}" placeholder="e.g. August 2026">
+                </div>
+                <div class="field required {% if validation_errors.get('description') %}has-error{% endif %}" style="grid-column: 1 / -1;">
+                  <label for="delivery_description">Description</label>
+                  <textarea id="delivery_description" name="description" rows="3" placeholder="Description">{{ delivery_form.get('description', '') }}</textarea>
+                  {% if validation_errors.get('description') %}<span class="field-error">{{ validation_errors.get('description') }}</span>{% endif %}
+                </div>
+                <div class="field optional {% if validation_errors.get('deliverable_file') %}has-error{% endif %}" style="grid-column: 1 / -1;">
+                  <label for="delivery_file">Attachment</label>
+                  <div class="receipt-dropzone" id="delivery_file_dropzone">
+                    <input type="file" id="delivery_file" name="deliverable_file" accept=".pdf,.docx,.png,.jpg,.jpeg,.xlsx,.csv" style="display:none;">
+                    <span class="receipt-dropzone-text">Drag file here or click to upload</span>
+                    <span class="receipt-dropzone-filename" id="delivery_file_filename"></span>
+                  </div>
+                  {% if validation_errors.get('deliverable_file') %}<span class="field-error">{{ validation_errors.get('deliverable_file') }}</span>{% endif %}
+                </div>
+              </div>
+              <div class="modal-actions">
+                <a href="/operations/delivery" class="btn-go-back">Cancel</a>
+                <button type="submit" class="btn-confirm-save">Log Delivery</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>
+      <script>window.DELIVERY_ADD_MODAL_OPEN = {{ 'true' if validation_errors else 'false' }};</script>
+      {% endif %}
+
+      {% if active_tab == 'operations_sops' %}
+      <div class="section">
+        <div class="edit-banner">
+          <h2>SOP Library</h2>
+          <a href="/operations/sops#sop-add-modal" class="btn-secondary" id="sop_add_btn">+ Add SOP</a>
+        </div>
+        <form method="get" action="/operations/sops" class="table-actions" style="gap:12px;margin-bottom:14px;flex-wrap:wrap;">
+          <label class="field optional" style="margin:0;min-width:200px;">
+            <span>Client</span>
+            <select name="client_filter" onchange="this.form.submit()">
+              <option value="">All clients</option>
+              {% for client_name in client_names %}
+              <option value="{{ client_name }}" {% if sop_form.get('client_filter') == client_name %}selected{% endif %}>{{ client_name }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <label class="field optional" style="margin:0;min-width:180px;">
+            <span>Status</span>
+            <select name="status_filter" onchange="this.form.submit()">
+              <option value="">All statuses</option>
+              {% for status in sop_statuses %}
+              <option value="{{ status }}" {% if sop_form.get('status_filter') == status %}selected{% endif %}>{{ status }}</option>
+              {% endfor %}
+            </select>
+          </label>
+        </form>
+
+        {% set visible_sops = sops %}
+        {% if sop_form.get('client_filter') %}{% set visible_sops = visible_sops|selectattr('client_name', 'equalto', sop_form.get('client_filter'))|list %}{% endif %}
+        {% if sop_form.get('status_filter') %}{% set visible_sops = visible_sops|selectattr('status', 'equalto', sop_form.get('status_filter'))|list %}{% endif %}
+
+        {% for client_name, client_sops in visible_sops|groupby('client_name') %}
+        <h3 style="color:var(--brand-navy);font-size:16px;font-weight:700;margin:18px 0 8px;padding-left:10px;border-left:3px solid var(--brand-gold);">{{ client_name }}</h3>
+        <table class="services-table">
+          <tr><th class="col-name">Title</th><th>Version</th><th>Status</th><th>Process area</th><th>Approved</th><th class="col-actions"></th></tr>
+          {% for sop in client_sops %}
+          <tr>
+            <td class="col-name">{{ sop.title }}</td>
+            <td>{{ sop.version }}</td>
+            <td>{{ sop_status_pill(sop.status) }}</td>
+            <td>{{ sop.process_area or '—' }}</td>
+            <td>{{ sop.date_approved or '—' }}</td>
+            <td class="col-actions">
+              <div class="table-action-stack">
+                {% if sop.filename %}<a href="/sops/{{ sop.filename }}?download=1" class="edit-link">Download</a>{% endif %}
+                {{ edit_button('/operations/sops?edit_id=' ~ sop.id ~ '#sop-edit-modal') }}
+              </div>
+            </td>
+          </tr>
+          {% endfor %}
+        </table>
+        {% endfor %}
+        {% if not visible_sops %}
+        <p class="mini">No SOPs match these filters.</p>
+        {% endif %}
+      </div>
+
+      <div class="modal-overlay" id="sop_add_modal_overlay">
+        <div class="modal-box compliance-modal-box form-modal-box">
+          <div class="compliance-modal-header"><h3>Add SOP</h3></div>
+          <div class="compliance-modal-body">
+            <form method="post" action="/operations/sops/add" class="form-shell" enctype="multipart/form-data" novalidate>
+              <div class="form-grid">
+                <div class="field required {% if validation_errors.get('title') %}has-error{% endif %}">
+                  <label for="sop_title">SOP title</label>
+                  <input id="sop_title" type="text" name="title" placeholder="SOP title">
+                  {% if validation_errors.get('title') %}<span class="field-error">{{ validation_errors.get('title') }}</span>{% endif %}
+                </div>
+                <div class="field required {% if validation_errors.get('client_name') %}has-error{% endif %}">
+                  <label for="sop_client_name">Client</label>
+                  <select id="sop_client_name" name="client_name">
+                    <option value="">Select client</option>
+                    {% for client_name in client_names %}
+                    <option value="{{ client_name }}">{{ client_name }}</option>
+                    {% endfor %}
+                  </select>
+                  {% if validation_errors.get('client_name') %}<span class="field-error">{{ validation_errors.get('client_name') }}</span>{% endif %}
+                </div>
+                <div class="field optional">
+                  <label for="sop_project_id">Project</label>
+                  <select id="sop_project_id" name="project_id">
+                    <option value="">No linked project</option>
+                    {% for project in projects if project.status not in ['Cancelled'] %}
+                    <option value="{{ project.id }}">{{ project.title }} — {{ project.client_name }}</option>
+                    {% endfor %}
+                  </select>
+                </div>
+                <div class="field optional">
+                  <label for="sop_process_area">Process area</label>
+                  <input id="sop_process_area" type="text" name="process_area" placeholder="Process area">
+                </div>
+                <div class="field optional">
+                  <label for="sop_version">Version</label>
+                  <input id="sop_version" type="text" name="version" value="V1.0" placeholder="V1.0">
+                </div>
+                <div class="field optional" style="grid-column: 1 / -1;">
+                  <label for="sop_description">Description</label>
+                  <textarea id="sop_description" name="description" rows="3" placeholder="Description"></textarea>
+                </div>
+                <div class="field optional" style="grid-column: 1 / -1;">
+                  <label for="sop_notes">Notes</label>
+                  <textarea id="sop_notes" name="notes" rows="3" placeholder="Notes"></textarea>
+                </div>
+                <div class="field optional {% if validation_errors.get('sop_file') %}has-error{% endif %}" style="grid-column: 1 / -1;">
+                  <label for="sop_file">File</label>
+                  <div class="receipt-dropzone" id="sop_file_dropzone">
+                    <input type="file" id="sop_file" name="sop_file" accept=".pdf,.docx,.png,.jpg,.jpeg" style="display:none;">
+                    <span class="receipt-dropzone-text">Drag file here or click to upload</span>
+                    <span class="receipt-dropzone-filename" id="sop_file_filename"></span>
+                  </div>
+                  {% if validation_errors.get('sop_file') %}<span class="field-error">{{ validation_errors.get('sop_file') }}</span>{% endif %}
+                </div>
+              </div>
+              <div class="modal-actions">
+                <a href="/operations/sops" class="btn-go-back">Cancel</a>
+                <button type="submit" class="btn-confirm-save">Save SOP</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>
+
+      {% if editing_sop %}
+      <div class="modal-overlay" id="sop_edit_modal_overlay">
+        <div class="modal-box compliance-modal-box form-modal-box">
+          <div class="compliance-modal-header"><h3>Edit SOP — {{ editing_sop.title }}</h3></div>
+          <div class="compliance-modal-body">
+            <form method="post" action="/operations/sops/update" class="form-shell" novalidate>
+              <input type="hidden" name="sop_id" value="{{ editing_sop.id }}">
+              <div class="form-grid">
+                <div class="field required">
+                  <label for="sop_edit_title">SOP title</label>
+                  <input id="sop_edit_title" type="text" name="title" value="{{ editing_sop.title }}" placeholder="SOP title">
+                </div>
+                <div class="field optional">
+                  <label for="sop_edit_process_area">Process area</label>
+                  <input id="sop_edit_process_area" type="text" name="process_area" value="{{ editing_sop.process_area }}" placeholder="Process area">
+                </div>
+                <div class="field optional" style="grid-column: 1 / -1;">
+                  <label for="sop_edit_description">Description</label>
+                  <textarea id="sop_edit_description" name="description" rows="3" placeholder="Description">{{ editing_sop.description }}</textarea>
+                </div>
+                <div class="field optional" style="grid-column: 1 / -1;">
+                  <label for="sop_edit_notes">Notes</label>
+                  <textarea id="sop_edit_notes" name="notes" rows="3" placeholder="Notes">{{ editing_sop.notes }}</textarea>
+                </div>
+                {% if editing_sop.status in sop_status_workflow %}
+                {% set current_index = sop_status_workflow.index(editing_sop.status) %}
+                {% if current_index + 1 < sop_status_workflow|length %}
+                <div class="field optional">
+                  <label for="sop_edit_status">Advance status</label>
+                  <select id="sop_edit_status" name="status">
+                    <option value="{{ editing_sop.status }}">Keep as {{ editing_sop.status }}</option>
+                    <option value="{{ sop_status_workflow[current_index + 1] }}">Move to {{ sop_status_workflow[current_index + 1] }}</option>
+                  </select>
+                </div>
+                {% if sop_status_workflow[current_index + 1] == 'Approved' %}
+                <div class="field optional">
+                  <label for="sop_edit_approved_by">Approved by (if approving)</label>
+                  <input id="sop_edit_approved_by" type="text" name="approved_by" placeholder="Approved by">
+                </div>
+                {% endif %}
+                {% endif %}
+                {% endif %}
+              </div>
+              <div class="modal-actions">
+                <a href="/operations/sops" class="btn-go-back">Cancel</a>
+                <button type="submit" class="btn-confirm-save">Update SOP</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>
+      <script>window.SOP_EDIT_MODAL_OPEN = true;</script>
+      {% endif %}
+      <script>window.SOP_ADD_MODAL_OPEN = {{ 'true' if (validation_errors and not editing_sop) else 'false' }};</script>
+      {% endif %}
+
       {% if active_tab == 'settings' and available_backups is not defined %}
       <p class="mini" style="margin:-8px 0 16px;color:var(--brand-steel);">Business structure, phase and VAT settings have moved to <a href="/company/profile">Business Profile</a>.</p>
       <div class="section">
@@ -1275,6 +2012,11 @@
           <h3>Payroll run cost</h3>
           <div class="value">{{ format_currency(payroll_summary.employer_cost_total) }}</div>
           <div class="pill">{{ payroll_summary.count }} runs logged</div>
+        </div>
+        <div class="card">
+          <h3>Active Projects</h3>
+          <div class="value">{{ active_projects_count }}</div>
+          <div class="pill"><a href="/operations/projects" style="color:inherit;">View Operations</a></div>
         </div>
       </div>
 
@@ -2263,6 +3005,34 @@
                 </div>
               </div>
               {% if editing_client %}
+              {% set client_projects = projects|selectattr('client_name', 'equalto', editing_client.get('Client Name'))|list %}
+              {% set client_active_projects = client_projects|rejectattr('status', 'in', ['Completed', 'Cancelled'])|list %}
+              {% set client_delivery_entries = delivery_log|selectattr('client_name', 'equalto', editing_client.get('Client Name'))|list %}
+              {% set client_sops = sops|selectattr('client_name', 'equalto', editing_client.get('Client Name'))|list %}
+              {% set client_total_value = client_projects|sum(attribute='total_value') %}
+              <div class="modal-archive-divider"></div>
+              <h4 style="margin:8px 0 8px;color:var(--brand-navy);">Operations</h4>
+              <div class="mini" style="margin:0 0 10px;">
+                {{ client_active_projects|length }} active project{{ 's' if client_active_projects|length != 1 else '' }} ·
+                {{ client_delivery_entries|length }} delivery log entr{{ 'ies' if client_delivery_entries|length != 1 else 'y' }} ·
+                {{ client_sops|length }} SOP{{ 's' if client_sops|length != 1 else '' }} ·
+                {{ format_currency(client_total_value) }} total value
+              </div>
+              {% if client_active_projects %}
+              <ul style="margin:0 0 10px;padding-left:16px;font-size:13px;">
+                {% for project in client_active_projects %}
+                <li><a href="/operations/projects/{{ project.id }}">{{ project.title }}</a> — {{ project.status }}</li>
+                {% endfor %}
+              </ul>
+              {% endif %}
+              {% if client_delivery_entries %}
+              <div class="mini" style="margin:0 0 4px;color:var(--brand-charcoal);font-weight:700;">Recent delivery:</div>
+              <ul style="margin:0 0 10px;padding-left:16px;font-size:13px;">
+                {% for entry in client_delivery_entries[-5:]|reverse %}
+                <li>{{ entry.date }} — {{ entry.service_type }}: {{ entry.description }}</li>
+                {% endfor %}
+              </ul>
+              {% endif %}
               {{ archive_in_modal('/clients/delete', 'row_number', editing_client.get('__row_number')) }}
               {% endif %}
               <div class="modal-actions">
@@ -3785,6 +4555,11 @@
         initFormModal({ overlayId: "compliance_add_modal_overlay", addBtnId: "compliance_add_btn", basePath: "/company/compliance", hash: "#compliance-add-modal", openFlag: "COMPLIANCE_ADD_MODAL_OPEN" });
         initFormModal({ overlayId: "compliance_edit_modal_overlay", addBtnId: "", basePath: "/company/compliance", hash: "#compliance-edit-modal", openFlag: "COMPLIANCE_EDIT_MODAL_OPEN" });
         initFormModal({ overlayId: "profile_edit_modal_overlay", addBtnId: "profile_edit_btn", basePath: "/company/profile", hash: "#profile-edit-modal", openFlag: "PROFILE_EDIT_MODAL_OPEN" });
+        initFormModal({ overlayId: "project_add_modal_overlay", addBtnId: "project_add_btn", basePath: "/operations/projects", hash: "#project-add-modal", openFlag: "PROJECT_ADD_MODAL_OPEN" });
+        initFormModal({ overlayId: "project_edit_modal_overlay", addBtnId: "", basePath: "/operations/projects", hash: "#project-edit-modal", openFlag: "PROJECT_EDIT_MODAL_OPEN" });
+        initFormModal({ overlayId: "delivery_add_modal_overlay", addBtnId: "delivery_add_btn", basePath: "/operations/delivery", hash: "#delivery-add-modal", openFlag: "DELIVERY_ADD_MODAL_OPEN" });
+        initFormModal({ overlayId: "sop_add_modal_overlay", addBtnId: "sop_add_btn", basePath: "/operations/sops", hash: "#sop-add-modal", openFlag: "SOP_ADD_MODAL_OPEN" });
+        initFormModal({ overlayId: "sop_edit_modal_overlay", addBtnId: "", basePath: "/operations/sops", hash: "#sop-edit-modal", openFlag: "SOP_EDIT_MODAL_OPEN" });
 
         function initDropzone(dropzoneId, fileInputId, filenameId) {
           var dropzone = document.getElementById(dropzoneId);
@@ -3819,6 +4594,50 @@
         }
         initDropzone("document_upload_dropzone", "document_upload_file", "document_upload_filename");
         initDropzone("document_edit_dropzone", "document_edit_file", "document_edit_filename");
+        initDropzone("delivery_file_dropzone", "delivery_file", "delivery_file_filename");
+        initDropzone("sop_file_dropzone", "sop_file", "sop_file_filename");
+
+        document.querySelectorAll(".dmaic-phase-toggle").forEach(function (button) {
+          button.addEventListener("click", function () {
+            var phase = button.getAttribute("data-phase");
+            var detail = document.getElementById("dmaic_detail_" + phase);
+            if (detail) {
+              detail.style.display = detail.style.display === "none" ? "block" : "none";
+            }
+          });
+        });
+
+        var kanbanColumns = document.querySelectorAll(".kanban-column");
+        if (kanbanColumns.length) {
+          var draggedCard = null;
+          document.querySelectorAll(".kanban-card").forEach(function (card) {
+            card.addEventListener("dragstart", function () { draggedCard = card; });
+          });
+          kanbanColumns.forEach(function (column) {
+            column.addEventListener("dragover", function (event) { event.preventDefault(); });
+            column.addEventListener("drop", function (event) {
+              event.preventDefault();
+              if (!draggedCard) { return; }
+              var projectId = draggedCard.getAttribute("data-project-id");
+              var newStatus = column.getAttribute("data-status");
+              var form = document.createElement("form");
+              form.method = "post";
+              form.action = "/operations/projects/status?next=" + encodeURIComponent(window.location.pathname + window.location.search);
+              var projectIdInput = document.createElement("input");
+              projectIdInput.type = "hidden";
+              projectIdInput.name = "project_id";
+              projectIdInput.value = projectId;
+              var statusInput = document.createElement("input");
+              statusInput.type = "hidden";
+              statusInput.name = "status";
+              statusInput.value = newStatus;
+              form.appendChild(projectIdInput);
+              form.appendChild(statusInput);
+              document.body.appendChild(form);
+              form.submit();
+            });
+          });
+        }
       })();
     </script>
     <script>

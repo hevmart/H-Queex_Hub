@@ -67,6 +67,11 @@ def isolated_subscription_file(tmp_path):
     original_company_documents_path = app.COMPANY_DOCUMENTS_PATH
     original_compliance_calendar_path = app.COMPLIANCE_CALENDAR_PATH
     original_company_documents_dir = app.COMPANY_DOCUMENTS_DIR
+    original_projects_path = app.PROJECTS_PATH
+    original_delivery_log_path = app.DELIVERY_LOG_PATH
+    original_sops_path = app.SOPS_PATH
+    original_sop_files_dir = app.SOP_FILES_DIR
+    original_delivery_files_dir = app.DELIVERY_FILES_DIR
     app.BACKUPS_DIR = tmp_path / "backups"
     app.GDRIVE_BACKUP_DIR = tmp_path / "gdrive-backups"
     app.BACKUP_STATUS_PATH = tmp_path / "backup-status.json"
@@ -97,6 +102,13 @@ def isolated_subscription_file(tmp_path):
     app.COMPLIANCE_CALENDAR_PATH = tmp_path / "compliance-calendar.json"
     app.COMPANY_DOCUMENTS_DIR = tmp_path / "documents"
     app.COMPANY_DOCUMENTS_DIR.mkdir(parents=True, exist_ok=True)
+    app.PROJECTS_PATH = tmp_path / "projects.json"
+    app.DELIVERY_LOG_PATH = tmp_path / "delivery-log.json"
+    app.SOPS_PATH = tmp_path / "sops.json"
+    app.SOP_FILES_DIR = tmp_path / "sops"
+    app.SOP_FILES_DIR.mkdir(parents=True, exist_ok=True)
+    app.DELIVERY_FILES_DIR = tmp_path / "delivery-files"
+    app.DELIVERY_FILES_DIR.mkdir(parents=True, exist_ok=True)
     app.load_finance_data.cache_clear()
     yield
     app.SUBSCRIPTIONS_PATH = original_path
@@ -121,6 +133,11 @@ def isolated_subscription_file(tmp_path):
     app.COMPANY_DOCUMENTS_PATH = original_company_documents_path
     app.COMPLIANCE_CALENDAR_PATH = original_compliance_calendar_path
     app.COMPANY_DOCUMENTS_DIR = original_company_documents_dir
+    app.PROJECTS_PATH = original_projects_path
+    app.DELIVERY_LOG_PATH = original_delivery_log_path
+    app.SOPS_PATH = original_sops_path
+    app.SOP_FILES_DIR = original_sop_files_dir
+    app.DELIVERY_FILES_DIR = original_delivery_files_dir
     app.load_finance_data.cache_clear()
 
 
@@ -3324,3 +3341,494 @@ def test_company_landing_page_and_nav_link_render(workbook_copy):
 
     dashboard_response = client.get('/')
     assert b'href="/company"' in dashboard_response.data
+
+
+# --- Operations: Projects ---------------------------------------------------
+
+def test_operations_nav_link_enabled_and_projects_created(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+
+    dashboard_response = client.get('/')
+    assert b'href="/operations"' in dashboard_response.data
+    assert b'nav-item-disabled' not in dashboard_response.data
+
+    response = client.post(
+        '/operations/projects/add',
+        data={
+            "title": "Process improvement rollout",
+            "client_name": "Client A",
+            "status": "Active",
+            "start_date": "2026-08-01",
+            "target_end_date": "2026-09-01",
+            "line_items_json": "[]",
+        },
+        follow_redirects=True,
+    )
+    assert response.status_code == 200
+    assert b'Process improvement rollout' in response.data
+
+    projects = json.loads(app.PROJECTS_PATH.read_text(encoding="utf-8"))
+    assert len(projects) == 1
+    project = projects[0]
+    assert project["project_number"] == "HQ-PRJ-2026-001"
+    assert project["client_name"] == "Client A"
+    assert project["status"] == "Active"
+    assert set(app.DMAIC_PHASES) == set(project["dmaic"].keys())
+
+
+def test_second_project_gets_incrementing_project_number(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+
+    for title in ("First project", "Second project"):
+        client.post(
+            '/operations/projects/add',
+            data={"title": title, "client_name": "Client A", "status": "Enquiry", "line_items_json": "[]"},
+            follow_redirects=True,
+        )
+
+    projects = json.loads(app.PROJECTS_PATH.read_text(encoding="utf-8"))
+    numbers = sorted(p["project_number"] for p in projects)
+    assert numbers == ["HQ-PRJ-2026-001", "HQ-PRJ-2026-002"]
+
+
+def test_project_add_requires_title_and_client(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+
+    client.post('/operations/projects/add', data={"title": "", "client_name": "", "line_items_json": "[]"}, follow_redirects=True)
+
+    projects = json.loads(app.PROJECTS_PATH.read_text(encoding="utf-8")) if app.PROJECTS_PATH.exists() else []
+    assert projects == []
+
+
+def test_project_status_update_route_moves_kanban_card(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+
+    client.post(
+        '/operations/projects/add',
+        data={"title": "Kanban project", "client_name": "Client A", "status": "Enquiry", "line_items_json": "[]"},
+        follow_redirects=True,
+    )
+    projects = json.loads(app.PROJECTS_PATH.read_text(encoding="utf-8"))
+    project_id = projects[0]["id"]
+
+    response = client.post('/operations/projects/status', data={"project_id": project_id, "status": "Proposed"}, follow_redirects=True)
+    assert response.status_code == 200
+
+    projects = json.loads(app.PROJECTS_PATH.read_text(encoding="utf-8"))
+    assert projects[0]["status"] == "Proposed"
+
+
+def test_project_status_update_rejects_invalid_status(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+
+    client.post(
+        '/operations/projects/add',
+        data={"title": "Guard project", "client_name": "Client A", "status": "Enquiry", "line_items_json": "[]"},
+        follow_redirects=True,
+    )
+    projects = json.loads(app.PROJECTS_PATH.read_text(encoding="utf-8"))
+    project_id = projects[0]["id"]
+
+    client.post('/operations/projects/status', data={"project_id": project_id, "status": "Not A Real Status"}, follow_redirects=True)
+
+    projects = json.loads(app.PROJECTS_PATH.read_text(encoding="utf-8"))
+    assert projects[0]["status"] == "Enquiry"
+
+
+def test_project_detail_page_shows_linked_records(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+
+    client.post(
+        '/operations/projects/add',
+        data={"title": "Detail page project", "client_name": "Client A", "status": "Active", "line_items_json": "[]"},
+        follow_redirects=True,
+    )
+    project_id = json.loads(app.PROJECTS_PATH.read_text(encoding="utf-8"))[0]["id"]
+
+    response = client.get(f'/operations/projects/{project_id}')
+    assert response.status_code == 200
+    assert b'Detail page project' in response.data
+
+    missing_response = client.get('/operations/projects/does-not-exist', follow_redirects=True)
+    assert missing_response.status_code == 200
+    assert b'Project not found' in missing_response.data
+
+
+def test_project_archive_sets_status_cancelled(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+
+    client.post(
+        '/operations/projects/add',
+        data={"title": "Archive me", "client_name": "Client A", "status": "Active", "line_items_json": "[]"},
+        follow_redirects=True,
+    )
+    project_id = json.loads(app.PROJECTS_PATH.read_text(encoding="utf-8"))[0]["id"]
+
+    client.post('/operations/projects/archive', data={"project_id": project_id}, follow_redirects=True)
+
+    projects = json.loads(app.PROJECTS_PATH.read_text(encoding="utf-8"))
+    assert projects[0]["status"] == "Cancelled"
+
+
+# --- Operations: DMAIC phase sequencing -------------------------------------
+
+def test_dmaic_completion_percentage_counts_complete_phases():
+    dmaic = app._default_dmaic()
+    assert app._dmaic_completion_percentage(dmaic) == 0
+    dmaic["Define"]["status"] = "Complete"
+    assert app._dmaic_completion_percentage(dmaic) == 20
+    dmaic["Measure"]["status"] = "Complete"
+    assert app._dmaic_completion_percentage(dmaic) == 40
+
+
+def test_dmaic_transition_blocks_completing_phase_out_of_order():
+    dmaic = app._default_dmaic()
+    error = app._validate_dmaic_transition(dmaic, "Measure", "Complete")
+    assert "Define" in error
+
+    dmaic["Define"]["status"] = "Complete"
+    error = app._validate_dmaic_transition(dmaic, "Measure", "Complete")
+    assert error == ""
+
+
+def test_dmaic_transition_allows_in_progress_regardless_of_order():
+    dmaic = app._default_dmaic()
+    assert app._validate_dmaic_transition(dmaic, "Control", "In Progress") == ""
+
+
+def test_dmaic_update_route_enforces_sequencing_server_side(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+
+    client.post(
+        '/operations/projects/add',
+        data={"title": "DMAIC project", "client_name": "Client A", "status": "Active", "line_items_json": "[]"},
+        follow_redirects=True,
+    )
+    project_id = json.loads(app.PROJECTS_PATH.read_text(encoding="utf-8"))[0]["id"]
+
+    # Attempt to complete Analyse before Define/Measure — must be rejected.
+    response = client.post(
+        '/operations/dmaic/update',
+        data={"project_id": project_id, "phase": "Analyse", "status": "Complete"},
+        follow_redirects=True,
+    )
+    assert response.status_code == 200
+    projects = json.loads(app.PROJECTS_PATH.read_text(encoding="utf-8"))
+    assert projects[0]["dmaic"]["Analyse"]["status"] == "Not Started"
+
+    # Complete Define, then Measure — Measure should now be allowed.
+    client.post('/operations/dmaic/update', data={"project_id": project_id, "phase": "Define", "status": "Complete"}, follow_redirects=True)
+    client.post('/operations/dmaic/update', data={"project_id": project_id, "phase": "Measure", "status": "Complete", "deliverables": "Data collected\nBaseline set"}, follow_redirects=True)
+
+    projects = json.loads(app.PROJECTS_PATH.read_text(encoding="utf-8"))
+    dmaic = projects[0]["dmaic"]
+    assert dmaic["Define"]["status"] == "Complete"
+    assert dmaic["Measure"]["status"] == "Complete"
+    assert dmaic["Measure"]["deliverables"] == ["Data collected", "Baseline set"]
+
+
+# --- Operations: Delivery Log ------------------------------------------------
+
+def test_delivery_add_route_persists_entry_with_project_client(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+
+    client.post(
+        '/operations/projects/add',
+        data={"title": "Delivery project", "client_name": "Client A", "status": "Active", "line_items_json": "[]"},
+        follow_redirects=True,
+    )
+    project_id = json.loads(app.PROJECTS_PATH.read_text(encoding="utf-8"))[0]["id"]
+
+    response = client.post(
+        '/operations/delivery/add',
+        data={
+            "date": "2026-08-05",
+            "project_id": project_id,
+            "service_type": "Advisory Call",
+            "description": "Monthly check-in call",
+            "hours_spent": "1.5",
+            "billing_period": "August 2026",
+        },
+        follow_redirects=True,
+    )
+    assert response.status_code == 200
+    assert b'Delivery logged' in response.data
+
+    entries = json.loads(app.DELIVERY_LOG_PATH.read_text(encoding="utf-8"))
+    assert len(entries) == 1
+    entry = entries[0]
+    assert entry["client_name"] == "Client A"
+    assert entry["project_id"] == project_id
+    assert entry["hours_spent"] == 1.5
+    assert entry["invoiced"] is False
+
+
+def test_delivery_add_requires_description_and_client(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+
+    client.post(
+        '/operations/delivery/add',
+        data={"date": "2026-08-05", "description": "", "service_type": "Other"},
+        follow_redirects=True,
+    )
+
+    entries = json.loads(app.DELIVERY_LOG_PATH.read_text(encoding="utf-8")) if app.DELIVERY_LOG_PATH.exists() else []
+    assert entries == []
+
+
+def test_delivery_file_attachment_stores_file(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+
+    data = {
+        "date": "2026-08-05",
+        "client_name": "Client A",
+        "service_type": "Report",
+        "description": "Quarterly report delivered",
+        "deliverable_file": (BytesIO(b'%PDF-1.4 fake report'), 'report.pdf'),
+    }
+    response = client.post('/operations/delivery/add', data=data, content_type='multipart/form-data', follow_redirects=True)
+    assert response.status_code == 200
+
+    entries = json.loads(app.DELIVERY_LOG_PATH.read_text(encoding="utf-8"))
+    filename = entries[0]["deliverable_filename"]
+    assert filename
+    assert (app.DELIVERY_FILES_DIR / filename).exists()
+
+
+# --- Operations: Clarity Partner invoice generation from Delivery Log -------
+
+def _make_clarity_partner_client(name="Partner Client", retainer_amount=500.0):
+    clients = json.loads(app.CLIENTS_PATH.read_text(encoding="utf-8"))
+    clients.append({
+        "Client Name": name,
+        "Contact Person": "",
+        "Email": "",
+        "Phone": "",
+        "Country": "",
+        "Service Tier": "Clarity Partner",
+        "Retainer Frequency": "monthly",
+        "Retainer Amount (€)": retainer_amount,
+    })
+    app.CLIENTS_PATH.write_text(json.dumps(clients), encoding="utf-8")
+    app.load_finance_data.cache_clear()
+
+
+def test_generate_delivery_invoice_creates_invoice_and_marks_entries_invoiced(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+    _make_clarity_partner_client()
+
+    for description in ("KPI review call", "Process documentation"):
+        client.post(
+            '/operations/delivery/add',
+            data={
+                "date": "2026-08-05",
+                "client_name": "Partner Client",
+                "service_type": "KPI Review",
+                "description": description,
+                "hours_spent": "1",
+                "billing_period": "August 2026",
+            },
+            follow_redirects=True,
+        )
+
+    response = client.post(
+        '/operations/delivery/generate-invoice/Partner Client/August 2026',
+        follow_redirects=True,
+    )
+    assert response.status_code == 200
+    assert b'Invoice' in response.data
+    assert b'generated' in response.data
+
+    app.load_finance_data.cache_clear()
+    invoices = app.load_finance_data()["sheets"]["Invoices"]
+    matching = [row for row in invoices if row.get("Client Name") == "Partner Client"]
+    assert len(matching) == 1
+    invoice = matching[0]
+    assert len(invoice["line_items"]) == 2
+    assert app._coerce_number(invoice["Total (€)"]) > 0
+
+    entries = json.loads(app.DELIVERY_LOG_PATH.read_text(encoding="utf-8"))
+    partner_entries = [e for e in entries if e["client_name"] == "Partner Client"]
+    assert all(e["invoiced"] for e in partner_entries)
+    assert all(e["invoice_id"] == invoice["Invoice #"] for e in partner_entries)
+
+
+def test_generate_delivery_invoice_requires_retainer_amount(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+    _make_clarity_partner_client(name="No Retainer Client", retainer_amount=0)
+
+    client.post(
+        '/operations/delivery/add',
+        data={"date": "2026-08-05", "client_name": "No Retainer Client", "service_type": "Other", "description": "Some work", "billing_period": "August 2026"},
+        follow_redirects=True,
+    )
+
+    response = client.post('/operations/delivery/generate-invoice/No Retainer Client/August 2026', follow_redirects=True)
+    assert response.status_code == 200
+    assert b'retainer amount' in response.data
+
+    app.load_finance_data.cache_clear()
+    invoices = app.load_finance_data()["sheets"]["Invoices"]
+    assert not any(row.get("Client Name") == "No Retainer Client" for row in invoices)
+
+
+def test_generate_delivery_invoice_no_unbilled_entries_is_noop(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+    _make_clarity_partner_client()
+
+    response = client.post('/operations/delivery/generate-invoice/Partner Client/August 2026', follow_redirects=True)
+    assert response.status_code == 200
+    assert b'No unbilled delivery entries' in response.data
+
+
+def test_clarity_partner_pending_billing_helper_excludes_invoiced_entries():
+    entries = [
+        {"client_name": "A", "billing_period": "August 2026", "invoiced": False, "hours_spent": 1},
+        {"client_name": "A", "billing_period": "August 2026", "invoiced": True, "hours_spent": 1},
+        {"client_name": "B", "billing_period": "", "invoiced": False, "hours_spent": 1},
+    ]
+    pending = app._clarity_partner_pending_billing(entries)
+    assert len(pending) == 1
+    assert pending[0]["client_name"] == "A"
+    assert pending[0]["entry_count"] == 1
+
+
+# --- Operations: SOP Library version control --------------------------------
+
+def test_sop_add_route_creates_sop_in_draft_status(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+
+    response = client.post(
+        '/operations/sops/add',
+        data={"title": "Client Onboarding SOP", "client_name": "Client A", "version": "V1.0", "process_area": "Onboarding"},
+        follow_redirects=True,
+    )
+    assert response.status_code == 200
+    assert b'SOP added' in response.data
+
+    sops = json.loads(app.SOPS_PATH.read_text(encoding="utf-8"))
+    assert len(sops) == 1
+    assert sops[0]["status"] == "Draft"
+    assert sops[0]["version"] == "V1.0"
+
+
+def test_sop_new_version_supersedes_previous(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+
+    client.post('/operations/sops/add', data={"title": "Expense SOP", "client_name": "Client A", "version": "V1.0"}, follow_redirects=True)
+    sops = json.loads(app.SOPS_PATH.read_text(encoding="utf-8"))
+    original_id = sops[0]["id"]
+
+    client.post(
+        '/operations/sops/add',
+        data={"title": "Expense SOP", "client_name": "Client A", "version": "V1.1", "supersedes_id": original_id},
+        follow_redirects=True,
+    )
+
+    sops = json.loads(app.SOPS_PATH.read_text(encoding="utf-8"))
+    original = next(s for s in sops if s["id"] == original_id)
+    new_version = next(s for s in sops if s["id"] != original_id)
+    assert original["status"] == "Superseded"
+    assert new_version["version"] == "V1.1"
+    assert new_version["status"] == "Draft"
+
+
+def test_sop_status_workflow_enforces_order(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+
+    client.post('/operations/sops/add', data={"title": "Workflow SOP", "client_name": "Client A"}, follow_redirects=True)
+    sop_id = json.loads(app.SOPS_PATH.read_text(encoding="utf-8"))[0]["id"]
+
+    # Skipping straight to Approved from Draft must be rejected.
+    response = client.post('/operations/sops/update', data={"sop_id": sop_id, "status": "Approved"}, follow_redirects=True)
+    assert response.status_code == 200
+    sops = json.loads(app.SOPS_PATH.read_text(encoding="utf-8"))
+    assert sops[0]["status"] == "Draft"
+
+    # Draft -> Review is a valid single-step transition.
+    client.post('/operations/sops/update', data={"sop_id": sop_id, "status": "Review"}, follow_redirects=True)
+    sops = json.loads(app.SOPS_PATH.read_text(encoding="utf-8"))
+    assert sops[0]["status"] == "Review"
+
+    # Review -> Approved is valid and stamps date_approved/approved_by.
+    client.post('/operations/sops/update', data={"sop_id": sop_id, "status": "Approved", "approved_by": "Hevandro"}, follow_redirects=True)
+    sops = json.loads(app.SOPS_PATH.read_text(encoding="utf-8"))
+    assert sops[0]["status"] == "Approved"
+    assert sops[0]["approved_by"] == "Hevandro"
+    assert sops[0]["date_approved"]
+
+
+def test_sop_file_upload_rejects_disallowed_extension(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+
+    data = {
+        "title": "Bad file SOP",
+        "client_name": "Client A",
+        "sop_file": (BytesIO(b'not allowed'), 'malware.exe'),
+    }
+    client.post('/operations/sops/add', data=data, content_type='multipart/form-data', follow_redirects=True)
+
+    sops = json.loads(app.SOPS_PATH.read_text(encoding="utf-8")) if app.SOPS_PATH.exists() else []
+    assert not any(s["title"] == "Bad file SOP" for s in sops)
+
+
+# --- Operations: dashboard integration --------------------------------------
+
+def test_dashboard_shows_active_projects_kpi_and_upcoming_deadline(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+
+    near_due_date = (date.today() + timedelta(days=5)).isoformat()
+    client.post(
+        '/operations/projects/add',
+        data={
+            "title": "Deadline soon project",
+            "client_name": "Client A",
+            "status": "Active",
+            "target_end_date": near_due_date,
+            "line_items_json": "[]",
+        },
+        follow_redirects=True,
+    )
+
+    response = client.get('/')
+    assert response.status_code == 200
+    assert b'Active Projects' in response.data
+    assert b'Deadline soon project' in response.data
