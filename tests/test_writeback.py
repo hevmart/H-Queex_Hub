@@ -5025,3 +5025,165 @@ def test_expense_ocr_audit_fields_saved_on_add(workbook_copy):
     assert saved.get("OCR Processed") == "Yes"
     assert saved.get("OCR Confidence") == "92"
     assert saved.get("OCR Language") == "English"
+
+
+# --- OCR auto-categorisation & subscription matching ---
+
+def test_ocr_route_auto_selects_subscription_category_and_flags_match(workbook_copy, monkeypatch):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+
+    app.SUBSCRIPTIONS_PATH.write_text(json.dumps([
+        {
+            "id": "sub-1",
+            "title": "Adobe Creative Cloud",
+            "supplier": "Adobe Inc",
+            "category": "Software and Subscriptions",
+            "status": "active",
+            "frequency": "monthly",
+            "net_amount": 50.0,
+            "total_amount": 61.50,
+        }
+    ]), encoding="utf-8")
+
+    fake_fields = {
+        "date": "05/08/2026",
+        "supplier_name": "Adobe Inc",
+        "supplier_vat_number": None,
+        "description": "Creative Cloud subscription",
+        "net_amount": 50.0,
+        "vat_amount": 11.5,
+        "vat_rate": 23,
+        "total_amount": 61.5,
+        "currency": "EUR",
+        "receipt_reference": None,
+        "category_suggestion": "Office Supplies",
+        "confidence": 90,
+        "language_detected": "English",
+        "notes": None,
+        "ocr_raw_response": "{}",
+    }
+    monkeypatch.setattr(app, "_run_receipt_ocr", lambda file_bytes, extension, category_options: fake_fields)
+
+    response = client.post(
+        '/expenses/ocr',
+        data={"receipt_file": (BytesIO(b"fake-bytes"), "receipt.jpg")},
+        content_type='multipart/form-data',
+    )
+    assert response.status_code == 200
+    body = response.get_json()
+    assert body["category_suggestion"] == "Software and Subscriptions"
+    assert body["subscription_match"]["title"] == "Adobe Creative Cloud"
+
+
+def test_ocr_route_no_subscription_match_when_supplier_unknown(workbook_copy, monkeypatch):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+
+    app.SUBSCRIPTIONS_PATH.write_text(json.dumps([
+        {"id": "sub-1", "title": "Adobe Creative Cloud", "supplier": "Adobe Inc", "category": "Software and Subscriptions", "status": "active"}
+    ]), encoding="utf-8")
+
+    fake_fields = {
+        "date": "05/08/2026", "supplier_name": "Totally Unrelated Ltd", "supplier_vat_number": None,
+        "description": "Something", "net_amount": 10.0, "vat_amount": 0.0, "vat_rate": 0,
+        "total_amount": 10.0, "currency": "EUR", "receipt_reference": None,
+        "category_suggestion": "Office Supplies", "confidence": 80, "language_detected": "English",
+        "notes": None, "ocr_raw_response": "{}",
+    }
+    monkeypatch.setattr(app, "_run_receipt_ocr", lambda file_bytes, extension, category_options: fake_fields)
+
+    response = client.post(
+        '/expenses/ocr',
+        data={"receipt_file": (BytesIO(b"fake-bytes"), "receipt.jpg")},
+        content_type='multipart/form-data',
+    )
+    body = response.get_json()
+    assert body["subscription_match"] is None
+    assert body["category_suggestion"] == "Office Supplies"
+
+
+def test_ocr_route_flags_duplicate_expense_in_same_period(workbook_copy, monkeypatch):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+
+    client.post('/expenses/add', data={
+        "date": "2026-08-01",
+        "description": "Adobe Creative Cloud — August",
+        "supplier": "Adobe Inc",
+        "supplier_vat_number": "IE1234567A",
+        "category": "Software and Subscriptions",
+        "net_amount": "50.00",
+        "total_amount": "61.50",
+        "input_vat_reclaimable": "Yes",
+        "status": "Paid",
+        "payment_method": "Business Bank",
+    }, follow_redirects=True)
+
+    fake_fields = {
+        "date": "15/08/2026", "supplier_name": "Adobe Inc", "supplier_vat_number": None,
+        "description": "Adobe Creative Cloud subscription", "net_amount": 50.0, "vat_amount": 11.5,
+        "vat_rate": 23, "total_amount": 61.5, "currency": "EUR", "receipt_reference": None,
+        "category_suggestion": "Software and Subscriptions", "confidence": 95, "language_detected": "English",
+        "notes": None, "ocr_raw_response": "{}",
+    }
+    monkeypatch.setattr(app, "_run_receipt_ocr", lambda file_bytes, extension, category_options: fake_fields)
+
+    response = client.post(
+        '/expenses/ocr',
+        data={"receipt_file": (BytesIO(b"fake-bytes"), "receipt.jpg")},
+        content_type='multipart/form-data',
+    )
+    body = response.get_json()
+    assert body["duplicate_warning"] is not None
+    assert "Adobe Inc" in body["duplicate_warning"]
+
+
+def test_ocr_route_no_duplicate_warning_for_different_period(workbook_copy, monkeypatch):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+
+    client.post('/expenses/add', data={
+        "date": "2026-06-01",
+        "description": "Adobe Creative Cloud — June",
+        "supplier": "Adobe Inc",
+        "supplier_vat_number": "IE1234567A",
+        "category": "Software and Subscriptions",
+        "net_amount": "50.00",
+        "total_amount": "61.50",
+        "input_vat_reclaimable": "Yes",
+        "status": "Paid",
+        "payment_method": "Business Bank",
+    }, follow_redirects=True)
+
+    fake_fields = {
+        "date": "15/08/2026", "supplier_name": "Adobe Inc", "supplier_vat_number": None,
+        "description": "Adobe Creative Cloud subscription", "net_amount": 50.0, "vat_amount": 11.5,
+        "vat_rate": 23, "total_amount": 61.5, "currency": "EUR", "receipt_reference": None,
+        "category_suggestion": "Software and Subscriptions", "confidence": 95, "language_detected": "English",
+        "notes": None, "ocr_raw_response": "{}",
+    }
+    monkeypatch.setattr(app, "_run_receipt_ocr", lambda file_bytes, extension, category_options: fake_fields)
+
+    response = client.post(
+        '/expenses/ocr',
+        data={"receipt_file": (BytesIO(b"fake-bytes"), "receipt.jpg")},
+        content_type='multipart/form-data',
+    )
+    body = response.get_json()
+    assert body["duplicate_warning"] is None
+
+
+def test_match_subscription_by_supplier_ignores_inactive(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+
+    app.SUBSCRIPTIONS_PATH.write_text(json.dumps([
+        {"id": "sub-1", "title": "Cancelled Tool", "supplier": "Cancelled Co", "category": "Software and Subscriptions", "status": "cancelled"}
+    ]), encoding="utf-8")
+
+    assert app._match_subscription_by_supplier("Cancelled Co") is None

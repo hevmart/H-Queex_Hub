@@ -1331,9 +1331,12 @@ OCR_SYSTEM_PROMPT = (
     "rates to verify. Also look for the seller or vendor VAT number, tax ID, or "
     "registration number — this belongs to the company issuing the invoice, not the "
     "recipient. Do not return the buyer's VAT number. If no supplier VAT number is "
-    "visible, return null for supplier_vat_number. For category_suggestion choose the "
-    "single most likely category from the provided list based on the supplier and items "
-    "purchased. Be generous with confidence — if you can read the document clearly give a "
+    "visible, return null for supplier_vat_number. Select the most specific matching "
+    "category from the list. Software subscription services should be Software and "
+    "Subscriptions. Travel and transport should be Travel and Subsistence. Professional "
+    "services (accountant, solicitor, consultant) should be Professional Fees. Be "
+    "decisive — always return a category_suggestion, never return null for this field. "
+    "Be generous with confidence — if you can read the document clearly give a "
     "high confidence score. A well-formatted digital PDF invoice should score 85 or above. "
     "The JSON object must contain exactly these keys, spelled exactly this way, with no "
     "other keys: date, supplier_name, supplier_vat_number, description, net_amount, "
@@ -7916,6 +7919,39 @@ def delete_income():
     return redirect(url_for("income_view", message="Income entry archived"))
 
 
+def _match_subscription_by_supplier(supplier_name: str) -> dict[str, Any] | None:
+    normalized = str(supplier_name or "").strip().lower()
+    if not normalized:
+        return None
+    best_match = None
+    for subscription in _load_subscriptions():
+        if subscription.get("status") != "active":
+            continue
+        sub_supplier = str(subscription.get("supplier") or "").strip().lower()
+        if not sub_supplier:
+            continue
+        if sub_supplier == normalized:
+            return subscription
+        if sub_supplier in normalized or normalized in sub_supplier:
+            best_match = best_match or subscription
+    return best_match
+
+
+def _find_duplicate_expense_for_period(supplier_name: str, category: str, iso_date: str) -> dict[str, Any] | None:
+    normalized_supplier = str(supplier_name or "").strip().lower()
+    period = str(iso_date or "")[:7]  # YYYY-MM
+    if not normalized_supplier or not period:
+        return None
+    data = load_finance_data()
+    for row in data.get("sheets", {}).get("Expenses", []):
+        row_supplier = str(row.get("Supplier / Payee") or "").strip().lower()
+        row_category = str(row.get("Category") or "")
+        row_period = str(row.get("Date (Registered)") or "")[:7]
+        if row_supplier == normalized_supplier and row_category == category and row_period == period:
+            return row
+    return None
+
+
 @app.route("/expenses/ocr", methods=["POST"])
 def expense_ocr():
     file_storage = request.files.get("receipt_file")
@@ -7952,6 +7988,28 @@ def expense_ocr():
     for field_name in OCR_FIELDS:
         print(f"[receipt-ocr]   {field_name}: {fields.get(field_name)!r}", flush=True)
     print(f"[receipt-ocr]   ocr_raw_response: {fields.get('ocr_raw_response')!r}", flush=True)
+
+    subscription_match = _match_subscription_by_supplier(fields.get("supplier_name"))
+    if subscription_match:
+        fields["category_suggestion"] = "Software and Subscriptions"
+    fields["subscription_match"] = (
+        {"id": subscription_match["id"], "title": subscription_match["title"] or subscription_match["supplier"]}
+        if subscription_match else None
+    )
+
+    category_for_duplicate_check = fields.get("category_suggestion") or ""
+    # OCR dates are DD/MM/YYYY; convert to ISO for period comparison.
+    ocr_date = fields.get("date")
+    iso_date = ""
+    if ocr_date and isinstance(ocr_date, str) and ocr_date.count("/") == 2:
+        day, month, year = ocr_date.split("/")
+        if len(year) == 4:
+            iso_date = f"{year}-{month.zfill(2)}-{day.zfill(2)}"
+    duplicate = _find_duplicate_expense_for_period(fields.get("supplier_name"), category_for_duplicate_check, iso_date)
+    fields["duplicate_warning"] = (
+        f"A {category_for_duplicate_check} expense for {fields.get('supplier_name')} already exists this period ({iso_date[:7]})."
+        if duplicate else None
+    )
 
     return jsonify(fields)
 
@@ -8777,6 +8835,11 @@ def api_services():
     response = jsonify(payload)
     response.headers["Access-Control-Allow-Origin"] = "*"
     return response
+
+
+@app.route("/api/expenses/phase-tag")
+def api_expense_phase_tag():
+    return jsonify({"phase_tag": _resolve_phase_tag(request.args.get("date", ""))})
 
 
 @app.route("/api/suppliers/search")

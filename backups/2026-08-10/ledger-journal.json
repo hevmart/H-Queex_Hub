@@ -2031,5 +2031,42 @@
     "credit_total": 22.14,
     "entry_balanced": true,
     "phase_tag": "Phase 1"
+  },
+  {
+    "id": "dd77ac5f-756f-4b87-9f40-2c5a8f8a3293",
+    "timestamp": "2026-08-10T15:33:58",
+    "action": "create",
+    "entity_type": "expense",
+    "source": "workbook",
+    "row_number": 5,
+    "transaction_date": "2026-08-01",
+    "description": "Adobe Creative Cloud August",
+    "category": "Software and Subscriptions",
+    "account_code": "5000",
+    "account_name": "Software and Subscriptions",
+    "tax_treatment": "deductible",
+    "vat_rate": "0%",
+    "vat_treatment": "standard",
+    "supply_type": "services",
+    "net_amount_eur": 61.5,
+    "vat_amount_eur": 0.0,
+    "total_amount_eur": 61.5,
+    "amount_eur": 61.5,
+    "journal_lines": [
+      {
+        "account_code": "5000",
+        "debit": 61.5,
+        "credit": 0.0
+      },
+      {
+        "account_code": "1000",
+        "debit": 0.0,
+        "credit": 61.5
+      }
+    ],
+    "debit_total": 61.5,
+    "credit_total": 61.5,
+    "entry_balanced": true,
+    "phase_tag": "Phase 1"
   }
 ]

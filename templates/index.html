@@ -503,6 +503,100 @@
         font-size: 13px; pointer-events: none;
       }
       .currency-field-wrap input { padding-left: 22px; }
+      .receipt-dropzone-large {
+        padding: 56px 24px; max-width: 560px; margin: 0 auto; border-width: 3px;
+      }
+      .receipt-dropzone-large .receipt-dropzone-text { font-size: 16px; }
+      #expense_upload_step { text-align: center; }
+      #expense_upload_step .btn-secondary { display: inline-block; }
+      .expense-upload-manual-link {
+        display: inline-block; margin-top: 16px; color: var(--brand-steel); font-size: 13px; font-weight: 600;
+        text-decoration: underline; cursor: pointer; background: none; border: none;
+      }
+      .expense-upload-manual-link:hover { color: var(--brand-navy); }
+      .expense-type-selector { display: flex; gap: 10px; flex-wrap: wrap; }
+      .expense-type-btn {
+        flex: 1 1 140px; padding: 14px 12px; border: 1px solid var(--brand-border); border-radius: 8px;
+        background: var(--brand-white); color: var(--brand-navy); font-weight: 700; font-size: 13px; cursor: pointer;
+        font-family: 'Segoe UI', sans-serif; text-align: center; transition: border-color 150ms ease, background 150ms ease;
+      }
+      .expense-type-btn:hover { border-color: var(--brand-gold); }
+      .expense-type-btn.active { background: var(--brand-navy); color: var(--brand-white); border-color: var(--brand-navy); }
+      .mileage-calculator { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+      .mileage-calculator input[type="number"] { max-width: 140px; }
+      .mileage-rate-note { font-size: 12px; color: var(--brand-steel); }
+      .mileage-computed { font-weight: 700; color: var(--brand-gold); font-size: 15px; }
+      /* --- OCR review card ---
+         Confidence uses the same semantic palette as everywhere else in the app
+         (gold = positive/ok, steel/amber-tinted gold = caution, red = blocked) rather
+         than introducing an off-brand green, per ui-standards.md's fixed palette. */
+      #expense_review_step .section { padding: 0; background: none; box-shadow: none; }
+      .review-card {
+        background: var(--brand-white); border: 1px solid var(--brand-border); border-left: 4px solid var(--brand-gold);
+        border-radius: 10px; overflow: hidden;
+      }
+      .review-card-header {
+        background: var(--brand-navy); color: var(--brand-white); padding: 16px 22px;
+        display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+      }
+      .review-card-header h3 { margin: 0; font-size: 16px; font-weight: 700; font-family: 'Segoe UI', sans-serif; }
+      .review-card-body { padding: 20px 22px; }
+      .review-card-footer {
+        padding: 16px 22px; border-top: 1px solid var(--brand-border); background: var(--brand-bg-light);
+        display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+      }
+      .review-card-row {
+        display: grid; grid-template-columns: 160px 1fr; align-items: center; gap: 12px; padding: 11px 0;
+        border-bottom: 1px solid var(--brand-border);
+      }
+      .review-card-row:last-child { border-bottom: none; }
+      .review-card-row.review-card-row-group { grid-template-columns: 160px repeat(3, 1fr); }
+      .review-card-label { font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--brand-steel); }
+      .review-card-value { color: var(--brand-charcoal); font-weight: 600; display: flex; align-items: center; gap: 8px; font-family: 'Segoe UI', sans-serif; }
+      .review-card-value select { max-width: 260px; min-height: 40px; }
+      .review-card-value input { min-height: 40px; }
+      .review-card-subvalue { display: flex; flex-direction: column; gap: 2px; }
+      .review-card-subvalue-label { font-size: 10px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: var(--brand-steel); }
+      .review-card-edit-icon {
+        background: none; border: none; cursor: pointer; color: var(--brand-gold); font-size: 13px; padding: 2px 6px;
+        opacity: 0; transition: opacity 120ms ease;
+      }
+      .review-card-row:hover .review-card-edit-icon,
+      .review-card-subvalue:hover .review-card-edit-icon,
+      .review-card-edit-icon:focus { opacity: 1; }
+      .confidence-indicator { font-size: 11px; font-weight: 700; padding: 4px 12px; border-radius: 12px; }
+      .confidence-indicator.high { background: var(--brand-gold); color: var(--brand-white); }
+      .confidence-indicator.medium { background: rgba(176, 141, 87, 0.35); color: var(--brand-navy); }
+      .confidence-indicator.low { background: var(--brand-error); color: var(--brand-white); }
+      .subscription-match-badge {
+        display: inline-flex; align-items: center; font-size: 11px; font-weight: 700; color: var(--brand-navy);
+        background: rgba(176, 141, 87, 0.15); border-radius: 10px; padding: 3px 10px;
+      }
+      .review-card-missing {
+        border: none; border-radius: 12px; padding: 5px 12px; font-size: 12px; font-weight: 700; cursor: pointer;
+        font-family: 'Segoe UI', sans-serif;
+      }
+      .review-card-missing-amber { background: rgba(176, 141, 87, 0.18); color: var(--brand-navy); }
+      .review-card-total-value { color: var(--brand-gold); font-weight: 700; font-size: 24px; }
+      .review-card-pill { display: inline-flex; align-items: center; font-size: 11px; font-weight: 700; padding: 4px 12px; border-radius: 12px; }
+      .review-card-pill-deductible { background: rgba(176, 141, 87, 0.30); color: var(--brand-navy); }
+      .review-card-pill-partial { background: rgba(176, 141, 87, 0.18); color: var(--brand-navy); }
+      .review-card-pill-nondeductible { background: rgba(198, 40, 40, 0.12); color: var(--brand-error); }
+      .review-card-pill-phase { background: rgba(97, 128, 150, 0.15); color: var(--brand-navy); }
+      .review-card-supplier-search { position: relative; flex: 1; }
+      .review-card-supplier-search input {
+        width: 100%; min-height: 40px; padding: 9px 12px; border: 1px solid var(--brand-gold); border-radius: 8px;
+        background: var(--brand-white); font: inherit; box-sizing: border-box;
+      }
+      .review-card-supplier-dropdown {
+        position: absolute; top: 100%; left: 0; right: 0; background: var(--brand-white); border: 1px solid var(--brand-border);
+        border-top: none; border-radius: 0 0 8px 8px; max-height: 180px; overflow-y: auto; z-index: 20; display: none;
+        box-shadow: 0 6px 14px rgba(0,0,0,0.08);
+      }
+      .review-card-supplier-dropdown.open { display: block; }
+      .review-card-supplier-option { padding: 8px 12px; cursor: pointer; font-size: 13px; color: var(--brand-charcoal); }
+      .review-card-supplier-option:hover { background: var(--brand-bg-light); }
+      #expense_review_save_btn:disabled { opacity: 0.5; cursor: not-allowed; }
       .services-table { table-layout: fixed; }
       .services-table .col-name { text-align: left; width: 26%; }
       .services-table th.col-description { text-align: left; }
@@ -3029,8 +3123,76 @@
           <h2>{% if editing_expense %}Edit expense{% else %}Add expense{% endif %}</h2>
           {% if editing_expense %}<a href="/expenses" class="cancel-link">Cancel edit</a>{% endif %}
         </div>
-        <form method="post" action="{% if editing_expense %}/expenses/update{% else %}/expenses/add{% endif %}" class="form-shell" enctype="multipart/form-data" novalidate>
+
+        {% if not editing_expense %}
+        <div class="section" id="expense_upload_step">
+          <div class="form-section-heading">Add expense</div>
+          <div class="receipt-dropzone receipt-dropzone-large" id="expense_upload_step_dropzone">
+            <input type="file" id="expense_upload_step_file" accept="image/*,.pdf" style="display:none;">
+            <input type="file" id="expense_upload_step_camera" accept="image/*" capture="environment" style="display:none;">
+            <span class="receipt-dropzone-text">Drag receipt here or click to upload</span>
+            <span class="receipt-dropzone-filename" id="expense_upload_step_filename"></span>
+          </div>
+          <div><button type="button" class="btn-secondary" id="expense_upload_step_camera_btn" style="display:none; margin-top: 12px;">Take Photo</button></div>
+          <div class="ocr-status" id="expense_upload_step_status" style="display:none; justify-content: center;">
+            <span class="ocr-spinner" aria-hidden="true"></span>
+            <span>Reading receipt...</span>
+          </div>
+          <div class="compliance-panel severity-danger" id="expense_upload_step_error" style="display:none; text-align:left;"></div>
+          <button type="button" class="expense-upload-manual-link" id="expense_upload_step_manual_link">Enter manually instead</button>
+        </div>
+
+        <div class="section" id="expense_review_step" style="display:none;">
+          <div class="review-card">
+            <div class="review-card-header">
+              <h3>Receipt Read — Please Confirm</h3>
+              <span class="confidence-indicator" id="expense_review_confidence_badge"></span>
+            </div>
+            <div class="review-card-body">
+              <div id="expense_review_body"></div>
+              <div class="compliance-panel severity-warning" id="expense_review_duplicate_warning" style="display:none; margin-top: 14px;"></div>
+            </div>
+            <div class="review-card-footer">
+              <button type="button" class="btn-secondary" id="expense_review_edit_full_btn">Edit in full form</button>
+              <button type="button" class="btn-primary" id="expense_review_save_btn">Looks good — Save</button>
+            </div>
+          </div>
+        </div>
+        {% endif %}
+
+        <form method="post" action="{% if editing_expense %}/expenses/update{% else %}/expenses/add{% endif %}" class="form-shell" enctype="multipart/form-data" novalidate id="expense_manual_form" {% if not editing_expense %}style="display:none;"{% endif %}>
           {% if editing_expense %}<input type="hidden" name="row_number" value="{{ editing_expense.get('__row_number') }}">{% endif %}
+          {% if not editing_expense %}
+          <div class="form-section-heading">Expense type</div>
+          <div class="form-row form-row-1">
+            <div class="field optional">
+              <div class="expense-type-selector" id="expense_type_selector">
+                <button type="button" class="expense-type-btn" data-expense-type="subscription">Subscription</button>
+                <button type="button" class="expense-type-btn active" data-expense-type="receipt">Receipt or Invoice</button>
+                <button type="button" class="expense-type-btn" data-expense-type="travel">Travel and Subsistence</button>
+                <button type="button" class="expense-type-btn" data-expense-type="other">Other</button>
+              </div>
+            </div>
+          </div>
+          <div class="form-row form-row-1" id="expense_mileage_block" style="display:none;">
+            <div class="field optional">
+              <label>Mileage</label>
+              <div class="mileage-calculator">
+                <input type="number" step="0.1" min="0" id="expense_mileage_km" placeholder="Distance (km)">
+                <span class="mileage-rate-note">× €0.43/km (Revenue civil service rate)</span>
+                <span class="mileage-computed" id="expense_mileage_computed">€0.00</span>
+              </div>
+              <label class="toggle-switch-inline" style="display:flex; align-items:center; gap:6px; margin-top:8px; font-size:12px; color: var(--brand-steel); font-weight:600;">
+                <input type="checkbox" id="expense_mileage_actual_costs"> Use actual costs instead of mileage rate
+              </label>
+            </div>
+            <div class="field optional">
+              <label for="expense_journey_log">Journey log</label>
+              <textarea id="expense_journey_log" rows="2" placeholder="e.g. Dublin to Cork client meeting, 15 Aug"></textarea>
+              <span class="mini">No receipt required for mileage claims — keep a journey log instead.</span>
+            </div>
+          </div>
+          {% endif %}
           <div class="form-section-heading">Basic details</div>
           <div class="form-row form-row-1">
             <div class="field required {% if validation_errors.get('date') %}has-error{% endif %}"><label for="expense_date">Date</label><input id="expense_date" type="date" name="date" value="{{ expense_form.get('date') if expense_form else (editing_expense.get('Date (Registered)') if editing_expense else '') }}">{% if validation_errors.get('date') %}<span class="field-error">{{ validation_errors.get('date') }}</span>{% endif %}</div>
@@ -5033,6 +5195,7 @@
           updateExpenseVatPanel();
           updateExpenseLockedFields();
         }
+        window.refreshAllExpensePanels = refreshAllExpensePanels;
 
         [
           "expense_base_net", "expense_delivery", "expense_fees", "expense_other_charges",
@@ -5085,6 +5248,9 @@
             .map(function (key) { return complianceState[formKey][key]; })
             .filter(function (flag) { return flag.severity === "danger"; });
         }
+        window.collectComplianceFlags = function (formKey) {
+          return Object.keys(complianceState[formKey] || {}).map(function (key) { return complianceState[formKey][key]; });
+        };
 
         function openComplianceModal(flags) {
           var list = document.getElementById("compliance_modal_list");
@@ -5471,21 +5637,74 @@
           var input = document.getElementById("expense_supplier");
           var recordIdField = document.getElementById("expense_supplier_record_id");
           if (!input) { return; }
+          // Set the value synchronously first — the record-id lookup below is async and
+          // must never be the only place the visible field gets populated, otherwise
+          // anything that reads the field immediately after this call (e.g. the OCR
+          // review card, rendered synchronously right after) sees it still empty.
+          input.value = supplierName;
+          input.dispatchEvent(new Event("input"));
+          input.dispatchEvent(new Event("change"));
+          markOcrFilled("expense_supplier");
           fetch("/api/suppliers/search?q=" + encodeURIComponent(supplierName))
             .then(function (response) { return response.json(); })
             .then(function (matches) {
               var exact = (matches || []).find(function (match) {
                 return match.name && match.name.toLowerCase() === supplierName.toLowerCase();
               });
-              input.value = supplierName;
               if (recordIdField) { recordIdField.value = exact ? (exact.id || "") : ""; }
-              input.dispatchEvent(new Event("change"));
-              markOcrFilled("expense_supplier");
             })
-            .catch(function () {
-              input.value = supplierName;
-              markOcrFilled("expense_supplier");
-            });
+            .catch(function () {});
+        }
+
+        function applyOcrFieldsToForm(fields) {
+          var isoDate = convertDateToIso(fields.date);
+          if (isoDate) { setFieldValue("expense_date", isoDate); }
+          applyOcrSupplier(fields.supplier_name);
+          if (fields.supplier_vat_number) { setFieldValue("expense_supplier_vat", fields.supplier_vat_number); }
+          if (fields.description) { setFieldValue("expense_description", fields.description); }
+
+          // When the business isn't VAT-registered, the VAT rate/amount fields don't
+          // render at all — there's nowhere to record VAT separately, so the full
+          // amount actually paid (VAT-inclusive) must go into base net, otherwise the
+          // calculated total silently drops the VAT portion.
+          var vatRateFieldExists = !!document.getElementById("expense_vat_rate");
+          if (vatRateFieldExists) {
+            if (fields.net_amount !== null && fields.net_amount !== undefined) { setFieldValue("expense_base_net", fields.net_amount); }
+            var vatOption = matchVatRateOption(fields.vat_rate);
+            if (vatOption) { setFieldValue("expense_vat_rate", vatOption); }
+            if (fields.vat_amount !== null && fields.vat_amount !== undefined) { markOcrFilled("expense_vat_amount"); }
+          } else if (fields.total_amount !== null && fields.total_amount !== undefined) {
+            setFieldValue("expense_base_net", fields.total_amount);
+          } else if (fields.net_amount !== null && fields.net_amount !== undefined) {
+            setFieldValue("expense_base_net", fields.net_amount);
+          }
+          if (fields.total_amount !== null && fields.total_amount !== undefined) { markOcrFilled("expense_total"); }
+          if (fields.receipt_reference) { setFieldValue("expense_receipt_reference", fields.receipt_reference); }
+          var categoryOption = matchCategoryOption(fields.category_suggestion);
+          if (categoryOption) { setFieldValue("expense_category", categoryOption); }
+
+          if (window.recalculateExpenseAmounts) { window.recalculateExpenseAmounts(); }
+
+          if (ocrProcessedField) { ocrProcessedField.value = "Yes"; }
+          if (ocrConfidenceField) { ocrConfidenceField.value = fields.confidence != null ? fields.confidence : ""; }
+          if (ocrLanguageField) { ocrLanguageField.value = fields.language_detected || ""; }
+          if (ocrRawResponseField) { ocrRawResponseField.value = fields.ocr_raw_response || ""; }
+        }
+
+        function applyOcrBanners(fields) {
+          var confidence = Number(fields.confidence);
+          if (Number.isFinite(confidence) && confidence < 40) {
+            if (ocrBannerRed) { ocrBannerRed.style.display = "block"; }
+          } else if (Number.isFinite(confidence) && confidence < 70) {
+            if (ocrBannerAmber) { ocrBannerAmber.style.display = "block"; }
+          }
+
+          if (fields.currency && fields.currency.toUpperCase() !== "EUR") {
+            if (ocrBannerCurrency) {
+              ocrBannerCurrency.textContent = "Receipt currency detected as " + fields.currency + " — amounts have been entered as-is, please convert to EUR before saving";
+              ocrBannerCurrency.style.display = "block";
+            }
+          }
         }
 
         function runReceiptOcr(file) {
@@ -5531,53 +5750,8 @@
                 return;
               }
               var fields = result.data;
-
-              var isoDate = convertDateToIso(fields.date);
-              if (isoDate) { setFieldValue("expense_date", isoDate); }
-              applyOcrSupplier(fields.supplier_name);
-              if (fields.supplier_vat_number) { setFieldValue("expense_supplier_vat", fields.supplier_vat_number); }
-              if (fields.description) { setFieldValue("expense_description", fields.description); }
-
-              // When the business isn't VAT-registered, the VAT rate/amount fields don't
-              // render at all — there's nowhere to record VAT separately, so the full
-              // amount actually paid (VAT-inclusive) must go into base net, otherwise the
-              // calculated total silently drops the VAT portion.
-              var vatRateFieldExists = !!document.getElementById("expense_vat_rate");
-              if (vatRateFieldExists) {
-                if (fields.net_amount !== null && fields.net_amount !== undefined) { setFieldValue("expense_base_net", fields.net_amount); }
-                var vatOption = matchVatRateOption(fields.vat_rate);
-                if (vatOption) { setFieldValue("expense_vat_rate", vatOption); }
-                if (fields.vat_amount !== null && fields.vat_amount !== undefined) { markOcrFilled("expense_vat_amount"); }
-              } else if (fields.total_amount !== null && fields.total_amount !== undefined) {
-                setFieldValue("expense_base_net", fields.total_amount);
-              } else if (fields.net_amount !== null && fields.net_amount !== undefined) {
-                setFieldValue("expense_base_net", fields.net_amount);
-              }
-              if (fields.total_amount !== null && fields.total_amount !== undefined) { markOcrFilled("expense_total"); }
-              if (fields.receipt_reference) { setFieldValue("expense_receipt_reference", fields.receipt_reference); }
-              var categoryOption = matchCategoryOption(fields.category_suggestion);
-              if (categoryOption) { setFieldValue("expense_category", categoryOption); }
-
-              if (window.recalculateExpenseAmounts) { window.recalculateExpenseAmounts(); }
-
-              if (ocrProcessedField) { ocrProcessedField.value = "Yes"; }
-              if (ocrConfidenceField) { ocrConfidenceField.value = fields.confidence != null ? fields.confidence : ""; }
-              if (ocrLanguageField) { ocrLanguageField.value = fields.language_detected || ""; }
-              if (ocrRawResponseField) { ocrRawResponseField.value = fields.ocr_raw_response || ""; }
-
-              var confidence = Number(fields.confidence);
-              if (Number.isFinite(confidence) && confidence < 40) {
-                if (ocrBannerRed) { ocrBannerRed.style.display = "block"; }
-              } else if (Number.isFinite(confidence) && confidence < 70) {
-                if (ocrBannerAmber) { ocrBannerAmber.style.display = "block"; }
-              }
-
-              if (fields.currency && fields.currency.toUpperCase() !== "EUR") {
-                if (ocrBannerCurrency) {
-                  ocrBannerCurrency.textContent = "Receipt currency detected as " + fields.currency + " — amounts have been entered as-is, please convert to EUR before saving";
-                  ocrBannerCurrency.style.display = "block";
-                }
-              }
+              applyOcrFieldsToForm(fields);
+              applyOcrBanners(fields);
             })
             .catch(function (error) {
               clearTimeout(timeoutId);
@@ -5619,6 +5793,559 @@
               runReceiptOcr(files[0]);
             }
           });
+        }
+
+        // --- Receipt-first Add Expense flow: Step 1 (upload) / Step 2a (OCR review) / Step 2b (full form) ---
+        var uploadStep = document.getElementById("expense_upload_step");
+        var reviewStep = document.getElementById("expense_review_step");
+        var manualForm = document.getElementById("expense_manual_form");
+
+        if (uploadStep && reviewStep && manualForm) {
+          var uploadDropzone = document.getElementById("expense_upload_step_dropzone");
+          var uploadFileInput = document.getElementById("expense_upload_step_file");
+          var uploadCameraInput = document.getElementById("expense_upload_step_camera");
+          var uploadCameraBtn = document.getElementById("expense_upload_step_camera_btn");
+          var uploadFilenameLabel = document.getElementById("expense_upload_step_filename");
+          var uploadStatus = document.getElementById("expense_upload_step_status");
+          var uploadError = document.getElementById("expense_upload_step_error");
+          var manualLink = document.getElementById("expense_upload_step_manual_link");
+          var reviewBody = document.getElementById("expense_review_body");
+          var reviewDuplicateWarning = document.getElementById("expense_review_duplicate_warning");
+          var reviewEditFullBtn = document.getElementById("expense_review_edit_full_btn");
+          var reviewSaveBtn = document.getElementById("expense_review_save_btn");
+
+          function showExpenseStep(step) {
+            uploadStep.style.display = step === "upload" ? "" : "none";
+            reviewStep.style.display = step === "review" ? "" : "none";
+            manualForm.style.display = step === "form" ? "" : "none";
+          }
+
+          if (uploadCameraBtn && ("ontouchstart" in window || navigator.maxTouchPoints > 0)) {
+            uploadCameraBtn.style.display = "inline-block";
+          }
+          if (uploadCameraBtn && uploadCameraInput) {
+            uploadCameraBtn.addEventListener("click", function () { uploadCameraInput.click(); });
+            uploadCameraInput.addEventListener("change", function () {
+              if (uploadCameraInput.files && uploadCameraInput.files[0]) { runUploadStepOcr(uploadCameraInput.files[0]); }
+            });
+          }
+          if (uploadDropzone && uploadFileInput) {
+            uploadDropzone.addEventListener("click", function () { uploadFileInput.click(); });
+            uploadFileInput.addEventListener("change", function () {
+              if (uploadFileInput.files && uploadFileInput.files[0]) { runUploadStepOcr(uploadFileInput.files[0]); }
+            });
+            ["dragenter", "dragover"].forEach(function (evtName) {
+              uploadDropzone.addEventListener(evtName, function (event) { event.preventDefault(); uploadDropzone.classList.add("drag-over"); });
+            });
+            ["dragleave", "drop"].forEach(function (evtName) {
+              uploadDropzone.addEventListener(evtName, function (event) { event.preventDefault(); uploadDropzone.classList.remove("drag-over"); });
+            });
+            uploadDropzone.addEventListener("drop", function (event) {
+              var files = event.dataTransfer && event.dataTransfer.files;
+              if (files && files[0]) { runUploadStepOcr(files[0]); }
+            });
+          }
+          if (manualLink) {
+            manualLink.addEventListener("click", function () { showExpenseStep("form"); });
+          }
+
+          function confidenceClass(confidence) {
+            if (!Number.isFinite(confidence)) { return "medium"; }
+            if (confidence > 80) { return "high"; }
+            if (confidence >= 60) { return "medium"; }
+            return "low";
+          }
+
+          function formatDisplayDate(isoValue) {
+            if (!isoValue || isoValue.indexOf("-") === -1) { return ""; }
+            var parts = isoValue.split("-");
+            if (parts.length !== 3) { return isoValue; }
+            return parts[2] + "/" + parts[1] + "/" + parts[0];
+          }
+
+          function buildEditableValue(fieldId, kind, onCommit) {
+            var realField = document.getElementById(fieldId);
+            var valueWrap = document.createElement("span");
+            valueWrap.className = "review-card-value";
+
+            var displaySpan = document.createElement("span");
+            displaySpan.textContent = kind === "date" ? formatDisplayDate(realField ? realField.value : "") : (realField ? realField.value : "");
+            var editBtn = document.createElement("button");
+            editBtn.type = "button";
+            editBtn.className = "review-card-edit-icon";
+            editBtn.title = "Edit";
+            editBtn.textContent = "✎";
+            editBtn.addEventListener("click", function () {
+              if (valueWrap.querySelector("input")) { return; }
+              var input = document.createElement("input");
+              input.type = kind === "amount" ? "number" : (kind === "date" ? "date" : "text");
+              if (kind === "amount") { input.step = "0.01"; }
+              input.value = realField ? realField.value : "";
+              input.addEventListener("input", function () {
+                displaySpan.textContent = kind === "date" ? formatDisplayDate(input.value) : input.value;
+                if (realField) {
+                  realField.value = input.value;
+                  realField.dispatchEvent(new Event("input"));
+                  realField.dispatchEvent(new Event("change"));
+                }
+                if (onCommit) { onCommit(); }
+              });
+              input.addEventListener("blur", function () {
+                if (kind === "date") { displaySpan.textContent = formatDisplayDate(input.value); }
+                valueWrap.replaceChild(displaySpan, input);
+              });
+              valueWrap.replaceChild(input, displaySpan);
+              input.focus();
+            });
+            valueWrap.appendChild(displaySpan);
+            valueWrap.appendChild(editBtn);
+            return valueWrap;
+          }
+
+          function buildStyledSelectValue(fieldId, onCommit) {
+            var realField = document.getElementById(fieldId);
+            var valueWrap = document.createElement("span");
+            valueWrap.className = "review-card-value";
+            var fieldWrap = document.createElement("div");
+            fieldWrap.className = "field optional";
+            fieldWrap.style.margin = "0";
+            var select = document.createElement("select");
+            if (realField) {
+              Array.prototype.forEach.call(realField.options, function (option) {
+                var clonedOption = document.createElement("option");
+                clonedOption.value = option.value;
+                clonedOption.textContent = option.textContent;
+                clonedOption.selected = option.selected;
+                select.appendChild(clonedOption);
+              });
+              select.addEventListener("change", function () {
+                realField.value = select.value;
+                realField.dispatchEvent(new Event("input"));
+                realField.dispatchEvent(new Event("change"));
+                if (onCommit) { onCommit(); }
+              });
+            }
+            fieldWrap.appendChild(select);
+            valueWrap.appendChild(fieldWrap);
+            return valueWrap;
+          }
+
+          function buildReviewRow(labelText, fieldId, kind, options) {
+            options = options || {};
+            var row = document.createElement("div");
+            row.className = "review-card-row";
+            var label = document.createElement("span");
+            label.className = "review-card-label";
+            label.textContent = labelText;
+            row.appendChild(label);
+
+            var realField = document.getElementById(fieldId);
+            var isEmpty = !realField || !String(realField.value || "").trim();
+
+            if (kind === "select") {
+              row.appendChild(buildStyledSelectValue(fieldId, options.onCommit));
+            } else if (isEmpty && options.missingText) {
+              var missingWrap = document.createElement("span");
+              missingWrap.className = "review-card-value";
+              var missingBtn = document.createElement("button");
+              missingBtn.type = "button";
+              missingBtn.className = "review-card-missing review-card-missing-amber";
+              missingBtn.textContent = options.missingText;
+              missingBtn.addEventListener("click", function () {
+                var editableValue = options.buildMissingEditor
+                  ? options.buildMissingEditor()
+                  : buildEditableValue(fieldId, kind, options.onCommit);
+                row.replaceChild(editableValue, missingWrap);
+                var newInput = editableValue.querySelector("button.review-card-edit-icon");
+                if (newInput) { newInput.click(); }
+              });
+              missingWrap.appendChild(missingBtn);
+              row.appendChild(missingWrap);
+            } else {
+              row.appendChild(buildEditableValue(fieldId, kind, options.onCommit));
+            }
+            return row;
+          }
+
+          function buildSupplierRow(onCommit) {
+            var row = document.createElement("div");
+            row.className = "review-card-row";
+            var label = document.createElement("span");
+            label.className = "review-card-label";
+            label.textContent = "Supplier";
+            row.appendChild(label);
+
+            var realField = document.getElementById("expense_supplier");
+            var recordIdField = document.getElementById("expense_supplier_record_id");
+            var isEmpty = !realField || !String(realField.value || "").trim();
+
+            if (!isEmpty) {
+              row.appendChild(buildEditableValue("expense_supplier", "text", onCommit));
+              return row;
+            }
+
+            var valueWrap = document.createElement("span");
+            valueWrap.className = "review-card-value";
+            var addBtn = document.createElement("button");
+            addBtn.type = "button";
+            addBtn.className = "review-card-missing review-card-missing-amber";
+            addBtn.textContent = "Add supplier";
+            valueWrap.appendChild(addBtn);
+            row.appendChild(valueWrap);
+
+            addBtn.addEventListener("click", function () {
+              var searchWrap = document.createElement("span");
+              searchWrap.className = "review-card-supplier-search";
+              var input = document.createElement("input");
+              input.type = "text";
+              input.placeholder = "Search or add supplier...";
+              var dropdown = document.createElement("div");
+              dropdown.className = "review-card-supplier-dropdown";
+              searchWrap.appendChild(input);
+              searchWrap.appendChild(dropdown);
+              valueWrap.replaceChild(searchWrap, addBtn);
+              input.focus();
+
+              function commitSupplier(name, id) {
+                realField.value = name;
+                if (recordIdField) { recordIdField.value = id || ""; }
+                realField.dispatchEvent(new Event("input"));
+                realField.dispatchEvent(new Event("change"));
+                dropdown.classList.remove("open");
+                var editable = buildEditableValue("expense_supplier", "text", onCommit);
+                row.replaceChild(editable, searchWrap);
+                if (onCommit) { onCommit(); }
+              }
+
+              var searchTimer = null;
+              input.addEventListener("input", function () {
+                var query = input.value.trim();
+                if (searchTimer) { clearTimeout(searchTimer); }
+                if (query.length < 2) { dropdown.classList.remove("open"); return; }
+                searchTimer = setTimeout(function () {
+                  fetch("/api/suppliers/search?q=" + encodeURIComponent(query))
+                    .then(function (response) { return response.json(); })
+                    .then(function (matches) {
+                      dropdown.innerHTML = "";
+                      (matches || []).forEach(function (match) {
+                        var option = document.createElement("div");
+                        option.className = "review-card-supplier-option";
+                        option.textContent = match.name;
+                        option.addEventListener("click", function () { commitSupplier(match.name, match.id); });
+                        dropdown.appendChild(option);
+                      });
+                      var addOption = document.createElement("div");
+                      addOption.className = "review-card-supplier-option";
+                      addOption.style.color = "var(--brand-gold)";
+                      addOption.style.fontWeight = "700";
+                      addOption.textContent = "+ Add \"" + query + "\" as new supplier";
+                      addOption.addEventListener("click", function () {
+                        fetch("/api/suppliers/quick-add", {
+                          method: "POST",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ name: query })
+                        })
+                          .then(function (response) { return response.json(); })
+                          .then(function (result) { commitSupplier(result.name || query, result.id || ""); })
+                          .catch(function () { commitSupplier(query, ""); });
+                      });
+                      dropdown.appendChild(addOption);
+                      dropdown.classList.add("open");
+                    })
+                    .catch(function () { dropdown.classList.remove("open"); });
+                }, 200);
+              });
+              input.addEventListener("keydown", function (event) {
+                if (event.key === "Enter" && input.value.trim()) {
+                  event.preventDefault();
+                  commitSupplier(input.value.trim(), "");
+                }
+              });
+            });
+            return row;
+          }
+
+          function buildDeductibilityPill() {
+            var badgeEl = document.getElementById("expense_deductibility_badge");
+            var selectEl = document.getElementById("expense_deductibility_status");
+            var text = (badgeEl && badgeEl.style.display !== "none" && badgeEl.textContent)
+              ? badgeEl.textContent
+              : (selectEl && selectEl.options[selectEl.selectedIndex] ? selectEl.options[selectEl.selectedIndex].textContent : "");
+            text = text || "Not set";
+            var pillClass = "review-card-pill-partial";
+            if (text.indexOf("Non-Deductible") !== -1) { pillClass = "review-card-pill-nondeductible"; }
+            else if (text.indexOf("Fully") !== -1) { pillClass = "review-card-pill-deductible"; }
+            else if (text.indexOf("Partial") !== -1) { pillClass = "review-card-pill-partial"; }
+
+            var row = document.createElement("div");
+            row.className = "review-card-row";
+            var label = document.createElement("span");
+            label.className = "review-card-label";
+            label.textContent = "Deductibility";
+            row.appendChild(label);
+            var valueWrap = document.createElement("span");
+            valueWrap.className = "review-card-value";
+            var pill = document.createElement("span");
+            pill.className = "review-card-pill " + pillClass;
+            pill.textContent = text;
+            valueWrap.appendChild(pill);
+            row.appendChild(valueWrap);
+            return row;
+          }
+
+          function updateReviewSaveButtonState() {
+            if (!reviewSaveBtn) { return; }
+            var paymentField = document.getElementById("expense_payment_method");
+            var paymentSelected = !!(paymentField && paymentField.value);
+            var redFlags = window.collectComplianceFlags ? window.collectComplianceFlags("expense").filter(function (f) { return f.severity === "danger"; }) : [];
+            var flagsAcknowledged = document.getElementById("expense_flags_acknowledged");
+            var acknowledged = !!(flagsAcknowledged && flagsAcknowledged.value === "1");
+            var blocked = !paymentSelected || (redFlags.length > 0 && !acknowledged);
+            reviewSaveBtn.disabled = blocked;
+            reviewSaveBtn.title = blocked
+              ? (!paymentSelected ? "Select a payment method before saving" : "Resolve the compliance flag before saving")
+              : "";
+          }
+
+          function renderReviewCard(fields) {
+            reviewBody.innerHTML = "";
+            if (window.refreshAllExpensePanels) { window.refreshAllExpensePanels(); }
+
+            var confidence = Number(fields.confidence);
+            var confBadge = document.getElementById("expense_review_confidence_badge");
+            if (confBadge) {
+              confBadge.className = "confidence-indicator " + confidenceClass(confidence);
+              confBadge.textContent = Number.isFinite(confidence) ? confidence + "% confidence" : "Confidence unknown";
+            }
+            if (fields.subscription_match) {
+              var subBadge = document.createElement("span");
+              subBadge.className = "subscription-match-badge";
+              subBadge.textContent = "Matches your " + fields.subscription_match.title + " subscription";
+              subBadge.style.marginBottom = "14px";
+              subBadge.style.display = "inline-flex";
+              reviewBody.appendChild(subBadge);
+            }
+
+            reviewBody.appendChild(buildReviewRow("Date", "expense_date", "date", { missingText: "Not found — please add", onCommit: updateReviewSaveButtonState }));
+            reviewBody.appendChild(buildSupplierRow(updateReviewSaveButtonState));
+            reviewBody.appendChild(buildReviewRow("Description", "expense_description", "text", { missingText: "Not found — please add", onCommit: updateReviewSaveButtonState }));
+            reviewBody.appendChild(buildReviewRow("Category", "expense_category", "select", { onCommit: function () { if (window.refreshAllExpensePanels) { window.refreshAllExpensePanels(); } updateReviewSaveButtonState(); } }));
+
+            var amountsRow = document.createElement("div");
+            amountsRow.className = "review-card-row review-card-row-group";
+            var amountsLabel = document.createElement("span");
+            amountsLabel.className = "review-card-label";
+            amountsLabel.textContent = "Amounts";
+            amountsRow.appendChild(amountsLabel);
+            [
+              ["Net", "expense_base_net", "amount"],
+              ["VAT Rate", "expense_vat_rate", "select"],
+              ["VAT Amount", "expense_vat_amount", "amount"],
+            ].forEach(function (triple) {
+              var subvalue = document.createElement("span");
+              subvalue.className = "review-card-subvalue";
+              var subLabel = document.createElement("span");
+              subLabel.className = "review-card-subvalue-label";
+              subLabel.textContent = triple[0];
+              subvalue.appendChild(subLabel);
+              var inner = triple[2] === "select" ? buildStyledSelectValue(triple[1], updateReviewSaveButtonState) : buildEditableValue(triple[1], triple[2], updateReviewSaveButtonState);
+              inner.style.margin = "0";
+              subvalue.appendChild(inner);
+              amountsRow.appendChild(subvalue);
+            });
+            reviewBody.appendChild(amountsRow);
+
+            var totalRow = document.createElement("div");
+            totalRow.className = "review-card-row";
+            var totalLabel = document.createElement("span");
+            totalLabel.className = "review-card-label";
+            totalLabel.textContent = "Total amount";
+            var totalValue = document.createElement("span");
+            totalValue.className = "review-card-value";
+            var totalField = document.getElementById("expense_total");
+            var totalBig = document.createElement("span");
+            totalBig.className = "review-card-total-value";
+            totalBig.textContent = "€" + (totalField ? totalField.value : "0.00");
+            totalValue.appendChild(totalBig);
+            totalRow.appendChild(totalLabel);
+            totalRow.appendChild(totalValue);
+            reviewBody.appendChild(totalRow);
+
+            reviewBody.appendChild(buildReviewRow("Receipt / invoice ref", "expense_receipt_reference", "text", { missingText: "Not found — please add", onCommit: updateReviewSaveButtonState }));
+            reviewBody.appendChild(buildDeductibilityPill());
+            reviewBody.appendChild(buildReviewRow("Payment method", "expense_payment_method", "select", { onCommit: updateReviewSaveButtonState }));
+
+            var phaseRow = document.createElement("div");
+            phaseRow.className = "review-card-row";
+            var phaseLabel = document.createElement("span");
+            phaseLabel.className = "review-card-label";
+            phaseLabel.textContent = "Phase";
+            var phaseValue = document.createElement("span");
+            phaseValue.className = "review-card-value";
+            var phasePill = document.createElement("span");
+            phasePill.className = "review-card-pill review-card-pill-phase";
+            phasePill.textContent = "…";
+            phaseValue.appendChild(phasePill);
+            phaseRow.appendChild(phaseLabel);
+            phaseRow.appendChild(phaseValue);
+            reviewBody.appendChild(phaseRow);
+            var dateField = document.getElementById("expense_date");
+            if (dateField && dateField.value) {
+              fetch("/api/expenses/phase-tag?date=" + encodeURIComponent(dateField.value))
+                .then(function (response) { return response.json(); })
+                .then(function (data) { phasePill.textContent = data.phase_tag || "Phase 1"; })
+                .catch(function () { phasePill.textContent = "Phase 1"; });
+            } else {
+              phasePill.textContent = "Phase 1";
+            }
+
+            if (fields.duplicate_warning) {
+              reviewDuplicateWarning.textContent = fields.duplicate_warning;
+              reviewDuplicateWarning.style.display = "block";
+            } else {
+              reviewDuplicateWarning.style.display = "none";
+            }
+
+            var complianceRow = document.createElement("div");
+            complianceRow.id = "expense_review_compliance_flags";
+            reviewBody.appendChild(complianceRow);
+            function renderComplianceFlags() {
+              complianceRow.innerHTML = "";
+              var flags = window.collectComplianceFlags ? window.collectComplianceFlags("expense") : [];
+              flags.forEach(function (flag) {
+                var panel = document.createElement("div");
+                panel.className = "compliance-panel severity-" + flag.severity;
+                panel.style.display = "flex";
+                panel.style.marginTop = "14px";
+                panel.textContent = flag.message;
+                complianceRow.appendChild(panel);
+              });
+              updateReviewSaveButtonState();
+            }
+            renderComplianceFlags();
+            window.setTimeout(renderComplianceFlags, 300);
+
+            updateReviewSaveButtonState();
+          }
+
+          function runUploadStepOcr(file) {
+            if (!file) { return; }
+            if (uploadFilenameLabel) { uploadFilenameLabel.textContent = "Selected: " + file.name; }
+            uploadError.style.display = "none";
+            if (file.size > 10 * 1024 * 1024) {
+              uploadError.textContent = "File too large — receipts must be under 10MB";
+              uploadError.style.display = "block";
+              return;
+            }
+
+            // Keep the real form's file input in sync so the receipt is actually
+            // submitted with the expense record, whichever step the user ends on.
+            if (window.DataTransfer && fileInput) {
+              var dataTransfer = new DataTransfer();
+              dataTransfer.items.add(file);
+              fileInput.files = dataTransfer.files;
+              if (filenameLabel) { filenameLabel.textContent = "Selected: " + file.name; }
+            }
+
+            clearExpenseFieldsForOcr();
+            uploadStatus.style.display = "flex";
+
+            var controller = ("AbortController" in window) ? new AbortController() : null;
+            var timeoutId = setTimeout(function () { if (controller) { controller.abort(); } }, 30000);
+
+            var formData = new FormData();
+            formData.append("receipt_file", file);
+
+            fetch("/expenses/ocr", { method: "POST", body: formData, signal: controller ? controller.signal : undefined })
+              .then(function (response) {
+                clearTimeout(timeoutId);
+                return response.json().then(function (data) { return { ok: response.ok, data: data }; });
+              })
+              .then(function (result) {
+                uploadStatus.style.display = "none";
+                if (!result.ok || result.data.error) {
+                  uploadError.textContent = result.data && result.data.error ? result.data.error : "Receipt could not be read — please fill in fields manually";
+                  uploadError.style.display = "block";
+                  return;
+                }
+                var fields = result.data;
+                applyOcrFieldsToForm(fields);
+                renderReviewCard(fields);
+                showExpenseStep("review");
+              })
+              .catch(function (error) {
+                clearTimeout(timeoutId);
+                uploadStatus.style.display = "none";
+                uploadError.textContent = (error && error.name === "AbortError")
+                  ? "Receipt reading timed out — please fill in fields manually or try again"
+                  : "Receipt could not be read — please fill in fields manually";
+                uploadError.style.display = "block";
+              });
+          }
+
+          if (reviewEditFullBtn) {
+            reviewEditFullBtn.addEventListener("click", function () { showExpenseStep("form"); });
+          }
+          if (reviewSaveBtn) {
+            reviewSaveBtn.addEventListener("click", function () {
+              if (reviewSaveBtn.disabled) { return; }
+              if (manualForm.requestSubmit) { manualForm.requestSubmit(); } else { manualForm.submit(); }
+            });
+          }
+
+          // --- Expense type selector (manual entry) ---
+          var typeButtons = document.querySelectorAll(".expense-type-btn");
+          var mileageBlock = document.getElementById("expense_mileage_block");
+          var mileageKmInput = document.getElementById("expense_mileage_km");
+          var mileageComputed = document.getElementById("expense_mileage_computed");
+          var mileageActualCosts = document.getElementById("expense_mileage_actual_costs");
+          var journeyLogField = document.getElementById("expense_journey_log");
+          var MILEAGE_RATE = 0.43;
+
+          function selectExpenseType(type) {
+            typeButtons.forEach(function (btn) {
+              btn.classList.toggle("active", btn.getAttribute("data-expense-type") === type);
+            });
+            if (mileageBlock) { mileageBlock.style.display = type === "travel" ? "" : "none"; }
+            var categoryField = document.getElementById("expense_category");
+            if (!categoryField) { return; }
+            if (type === "subscription") { categoryField.value = "Software and Subscriptions"; }
+            else if (type === "travel") { categoryField.value = "Travel and Subsistence"; }
+            categoryField.dispatchEvent(new Event("change"));
+          }
+
+          typeButtons.forEach(function (btn) {
+            btn.addEventListener("click", function () { selectExpenseType(btn.getAttribute("data-expense-type")); });
+          });
+
+          function updateMileageComputed() {
+            if (!mileageKmInput || !mileageComputed) { return; }
+            var km = parseFloat(mileageKmInput.value);
+            var amount = Number.isFinite(km) ? km * MILEAGE_RATE : 0;
+            mileageComputed.textContent = "€" + amount.toFixed(2);
+            if (mileageActualCosts && mileageActualCosts.checked) { return; }
+            var baseNetField = document.getElementById("expense_base_net");
+            if (baseNetField) {
+              baseNetField.value = amount.toFixed(2);
+              baseNetField.dispatchEvent(new Event("input"));
+              baseNetField.dispatchEvent(new Event("change"));
+            }
+          }
+          if (mileageKmInput) { mileageKmInput.addEventListener("input", updateMileageComputed); }
+          if (mileageActualCosts) {
+            mileageActualCosts.addEventListener("change", function () {
+              if (mileageKmInput) { mileageKmInput.disabled = mileageActualCosts.checked; }
+            });
+          }
+          if (journeyLogField) {
+            journeyLogField.addEventListener("blur", function () {
+              if (!journeyLogField.value.trim()) { return; }
+              var notesField = document.getElementById("expense_notes");
+              if (notesField && notesField.value.indexOf("Journey log:") === -1) {
+                notesField.value = (notesField.value ? notesField.value + "\n" : "") + "Journey log: " + journeyLogField.value.trim();
+              }
+            });
+          }
         }
       })();
     </script>
