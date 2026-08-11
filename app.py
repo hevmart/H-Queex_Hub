@@ -235,6 +235,7 @@ PROPOSAL_DEFAULT_VALIDITY_DAYS = 30
 LEAD_FOLLOWUP_WINDOW_DAYS = 7
 RECENTLY_WON_WINDOW_DAYS = 30
 GDRIVE_BACKUP_DIR = Path("G:/My Drive/H-Queex — Working Documents/H-Queex Hub/Backups")
+GDRIVE_MOUNT_ROOT = Path("G:/")
 BACKUP_STATUS_PATH = BASE_DIR / "backup-status.json"
 FILING_LOG_PATH = BASE_DIR / "filing-log.json"
 USERS_PATH = BASE_DIR / "users.json"
@@ -2319,6 +2320,12 @@ def _backup_json_file(path: Path) -> None:
         status["error"] = f"Local backup failed: {exc}"
 
     try:
+        # Never mkdir the mount root itself — on a machine with no G: drive (e.g. Linux),
+        # Path("G:/...") is just a relative path and mkdir(parents=True) would happily
+        # create a literal "G:" folder on local disk, making a missing mount look
+        # identical to a successful backup. Require the root to already exist.
+        if not GDRIVE_MOUNT_ROOT.is_dir():
+            raise OSError(f"Google Drive is not mounted at {GDRIVE_MOUNT_ROOT} on this machine — not configured here")
         gdrive_dir = GDRIVE_BACKUP_DIR / today_str
         gdrive_dir.mkdir(parents=True, exist_ok=True)
         shutil.copy2(path, gdrive_dir / path.name)

@@ -63,6 +63,7 @@ def isolated_subscription_file(tmp_path):
     original_sheet_json_paths = dict(app.SHEET_JSON_PATHS)
     original_backups_dir = app.BACKUPS_DIR
     original_gdrive_backup_dir = app.GDRIVE_BACKUP_DIR
+    original_gdrive_mount_root = app.GDRIVE_MOUNT_ROOT
     original_backup_status_path = app.BACKUP_STATUS_PATH
     original_receipts_dir = app.RECEIPTS_DIR
     original_company_documents_path = app.COMPANY_DOCUMENTS_PATH
@@ -82,6 +83,7 @@ def isolated_subscription_file(tmp_path):
     original_login_disabled = app.app.config.get("LOGIN_DISABLED")
     app.BACKUPS_DIR = tmp_path / "backups"
     app.GDRIVE_BACKUP_DIR = tmp_path / "gdrive-backups"
+    app.GDRIVE_MOUNT_ROOT = tmp_path
     app.BACKUP_STATUS_PATH = tmp_path / "backup-status.json"
     app.RECEIPTS_DIR = tmp_path / "receipts"
     app.RECEIPTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -143,6 +145,7 @@ def isolated_subscription_file(tmp_path):
     app.SHEET_JSON_PATHS = original_sheet_json_paths
     app.BACKUPS_DIR = original_backups_dir
     app.GDRIVE_BACKUP_DIR = original_gdrive_backup_dir
+    app.GDRIVE_MOUNT_ROOT = original_gdrive_mount_root
     app.BACKUP_STATUS_PATH = original_backup_status_path
     app.RECEIPTS_DIR = original_receipts_dir
     app.COMPANY_DOCUMENTS_PATH = original_company_documents_path
