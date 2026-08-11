@@ -3,6 +3,16 @@
 Last updated: 2026-08-11. Use this to brief a new chat session cold — it should not
 need to re-derive any of this from git history.
 
+**Start of session: read this file, `docs/ui-standards.md`, and `docs/systems-map.md`.**
+The systems map is the plain-language reference for every tool, account, and access
+path in the business (Hub, website, Hetzner server, GitHub, DNS, backups, etc.) —
+written for the user, not just for an agent, so it's also where they look things up
+themselves. It replaces any need to manage this information as an uploaded Document
+inside the Hub app. Keep it current: whenever a session changes something meaningful
+about the infrastructure (a new server, a changed deploy process, a new backup layer,
+a credential location), update `docs/systems-map.md` directly as part of that work —
+don't let it drift out of date the way a wiki page nobody remembers to touch would.
+
 ## What H-Queex Hub is
 
 A Flask + JSON-file business management app for H-Queex, an Irish sole-trader/limited
