@@ -1,3 +1,3 @@
 @echo off
 set "SCRIPT_DIR=%~dp0"
-powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%Launch-Finance-App.ps1"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%Launch-HQueex-Hub.ps1"
