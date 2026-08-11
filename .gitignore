@@ -5,3 +5,6 @@ __pycache__/
 vendor/
 backup-status.json
 launch-runtime-err.log
+launch-log.txt
+users.json
+backups/
