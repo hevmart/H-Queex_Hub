@@ -12,8 +12,17 @@ Flask-Login authentication** (Owner/Accountant/Employee roles — see Modules be
 locally via `Launch-HQueex-Hub.ps1` on `http://127.0.0.1:5000`.
 
 **Test suite: 229 tests passing** (`tests/test_writeback.py`, run via
-`.venv/Scripts/python.exe -m pytest -q`), latest commit `c530033`. Every feature session
+`.venv/Scripts/python.exe -m pytest -q`), latest commit `fc942e1`. Every feature session
 so far has ended with the full suite green before committing — keep that bar.
+
+**CORS allowlist fixed (`fc942e1`)**: the previous allowlist had a typo —
+`hqueex.com` instead of `h-queex.com` — so it never matched the real domain.
+Now correctly lists `h-queex.com`, `www.h-queex.com`, `h-queex.ie`,
+`www.h-queex.ie`, plus a regex pattern for Netlify preview/branch subdomains
+via `HQ_NETLIFY_SITE_SLUG` (defaults to `"h-queex"`, matching
+`h-queex.netlify.app` and preview URLs like
+`<hash>--h-queex.netlify.app`). Override via env var if the Netlify site is
+ever renamed.
 
 **First run after pulling this state needs `/setup`** — there is no committed
 `users.json` (it's real per-deployment credential data, never committed). Visiting any

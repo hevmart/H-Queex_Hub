@@ -4,6 +4,7 @@ import base64
 import csv
 import json
 import os
+import re
 import secrets
 import shutil
 import time
@@ -48,16 +49,38 @@ login_manager.init_app(app)
 limiter = Limiter(get_remote_address, app=app, default_limits=[], storage_uri="memory://")
 
 # Cross-origin allowlist for the public lead-intake API — configurable via env
-# since the real marketing site's domain (hqueex.com, or a Netlify preview
-# domain) isn't known at deploy time. Comma-separated list of full origins.
+# since Netlify preview URLs are generated per-deploy and aren't known ahead of
+# time. Comma-separated list of exact origins via HQ_ALLOWED_API_ORIGINS, plus a
+# regex pattern for Netlify preview/branch subdomains of the production site via
+# HQ_NETLIFY_SITE_SLUG (e.g. "h-queex-website" -> matches
+# https://<anything>--h-queex-website.netlify.app).
 ALLOWED_API_ORIGINS = [
     origin.strip()
     for origin in os.environ.get(
         "HQ_ALLOWED_API_ORIGINS",
-        "https://hqueex.com,https://www.hqueex.com,https://h-queex.netlify.app",
+        "https://h-queex.com,https://www.h-queex.com,https://h-queex.ie,https://www.h-queex.ie",
     ).split(",")
     if origin.strip()
 ]
+
+_NETLIFY_SITE_SLUG = os.environ.get("HQ_NETLIFY_SITE_SLUG", "h-queex").strip()
+ALLOWED_API_ORIGIN_PATTERN = (
+    re.compile(
+        r"^https://[a-z0-9-]+--" + re.escape(_NETLIFY_SITE_SLUG) + r"\.netlify\.app$"
+    )
+    if _NETLIFY_SITE_SLUG
+    else None
+)
+
+
+def _origin_is_allowed(origin: str) -> bool:
+    if not origin:
+        return False
+    if origin in ALLOWED_API_ORIGINS:
+        return True
+    if ALLOWED_API_ORIGIN_PATTERN and ALLOWED_API_ORIGIN_PATTERN.match(origin):
+        return True
+    return False
 
 
 def _format_date_display(value: Any) -> str:
@@ -7899,7 +7922,7 @@ def _cors_response(payload: dict[str, Any], status_code: int = 200):
     response = jsonify(payload)
     response.status_code = status_code
     origin = request.headers.get("Origin", "")
-    if origin in ALLOWED_API_ORIGINS:
+    if _origin_is_allowed(origin):
         response.headers["Access-Control-Allow-Origin"] = origin
         response.headers["Vary"] = "Origin"
     response.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
