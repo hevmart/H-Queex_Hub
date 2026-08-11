@@ -2,7 +2,12 @@
   "permissions": {
     "allow": [
       "Bash(python -c ' *)",
-      "PowerShell(Get-Process | Where-Object { $_.ProcessName -match \"EXCEL|OneDrive|python\" } | Select-Object Id, ProcessName, Path | Format-Table -AutoSize)"
+      "PowerShell(Get-Process | Where-Object { $_.ProcessName -match \"EXCEL|OneDrive|python\" } | Select-Object Id, ProcessName, Path | Format-Table -AutoSize)",
+      "Bash(.venv/Scripts/python.exe -m pytest -q)",
+      "Bash(HQ_FINANCE_DEBUG=0 .venv/Scripts/python.exe app.py)",
+      "Bash(echo \"started $!\")",
+      "Bash(curl -s http://127.0.0.1:5000/crm/leads)",
+      "Read(//tmp/**)"
     ]
   }
 }
