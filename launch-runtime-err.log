@@ -14,3 +14,9 @@ Press CTRL+C to quit
 127.0.0.1 - - [11/Aug/2026 13:35:16] "POST /logout HTTP/1.1" 302 -
 127.0.0.1 - - [11/Aug/2026 13:35:16] "GET /login HTTP/1.1" 200 -
 127.0.0.1 - - [11/Aug/2026 13:35:16] "GET /login HTTP/1.1" 200 -
+
+(process:10140): GLib-GIO-WARNING **: 13:51:44.481: Unexpectedly, UWP app `Microsoft.ScreenSketch_11.2602.49.0_x64__8wekyb3d8bbwe' (AUMId `Microsoft.ScreenSketch_8wekyb3d8bbwe!App') supports 29 extensions but has no verbs
+
+(process:10140): GLib-GIO-WARNING **: 13:51:44.674: Unexpectedly, UWP app `Clipchamp.Clipchamp_4.5.10920.0_x64__yxz26nhyzhsrt' (AUMId `Clipchamp.Clipchamp_yxz26nhyzhsrt!App') supports 41 extensions but has no verbs
+
+(process:10140): GLib-GIO-WARNING **: 13:51:44.886: Unexpectedly, UWP app `Microsoft.OutlookForWindows_1.2026.728.100_x64__8wekyb3d8bbwe' (AUMId `Microsoft.OutlookForWindows_8wekyb3d8bbwe!Microsoft.OutlookforWindows') supports 5 extensions but has no verbs
