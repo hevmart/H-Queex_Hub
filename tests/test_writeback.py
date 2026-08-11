@@ -5752,3 +5752,26 @@ def test_year_end_pack_uses_pdfs_when_weasyprint_available(workbook_copy, monkey
         "all-transactions.csv",
     }
     assert archive.read("profit-and-loss.pdf") == b"%PDF-1.4 fake report pdf"
+
+
+def test_https_warning_hidden_on_localhost(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+
+    response = client.get('/', base_url='http://localhost:5000')
+    assert response.status_code == 200
+    assert b'Running on HTTP' not in response.data
+
+    response_ip = client.get('/', base_url='http://127.0.0.1:5000')
+    assert b'Running on HTTP' not in response_ip.data
+
+
+def test_https_warning_shown_on_external_host(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+
+    response = client.get('/', base_url='http://hq-hub.example.com')
+    assert response.status_code == 200
+    assert b'Running on HTTP' in response.data

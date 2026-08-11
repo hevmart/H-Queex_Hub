@@ -77,6 +77,19 @@ def _format_date_display(value: Any) -> str:
 
 app.jinja_env.filters["fmt_date"] = _format_date_display
 
+LOCAL_HOSTNAMES = {"localhost", "127.0.0.1", "::1"}
+
+
+def _is_local_request() -> bool:
+    """True when the request arrived via localhost/127.0.0.1 — used to hide the
+    HTTP-insecurity warning when it can't actually apply (nothing external can
+    reach a localhost-only server, so the warning would just be noise)."""
+    host = request.host.rsplit(":", 1)[0] if request.host else ""
+    return host in LOCAL_HOSTNAMES
+
+
+app.jinja_env.globals["is_local_request"] = _is_local_request
+
 
 class WorkbookWriteError(RuntimeError):
     """Raised when the workbook cannot be updated because it is locked or busy."""

@@ -864,7 +864,7 @@
           </div>
         </div>
       </div>
-      {% if not request.is_secure %}
+      {% if not request.is_secure and not is_local_request() %}
       <div class="https-warning-banner">Running on HTTP — not secure for remote access. Switch to HTTPS before sharing access.</div>
       {% endif %}
 
