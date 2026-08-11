@@ -78,6 +78,8 @@ def isolated_subscription_file(tmp_path):
     original_proposals_path = app.PROPOSALS_PATH
     original_terms_path = app.TERMS_PATH
     original_filing_log_path = app.FILING_LOG_PATH
+    original_users_path = app.USERS_PATH
+    original_login_disabled = app.app.config.get("LOGIN_DISABLED")
     app.BACKUPS_DIR = tmp_path / "backups"
     app.GDRIVE_BACKUP_DIR = tmp_path / "gdrive-backups"
     app.BACKUP_STATUS_PATH = tmp_path / "backup-status.json"
@@ -120,6 +122,8 @@ def isolated_subscription_file(tmp_path):
     app.TERMS_PATH = tmp_path / "terms.json"
     app.SERVICES_PATH = tmp_path / "services.json"
     app.FILING_LOG_PATH = tmp_path / "filing-log.json"
+    app.USERS_PATH = tmp_path / "users.json"
+    app.app.config["LOGIN_DISABLED"] = True
     app.load_finance_data.cache_clear()
     yield
     app.SUBSCRIPTIONS_PATH = original_path
@@ -154,6 +158,11 @@ def isolated_subscription_file(tmp_path):
     app.TERMS_PATH = original_terms_path
     app.SERVICES_PATH = original_services_path
     app.FILING_LOG_PATH = original_filing_log_path
+    app.USERS_PATH = original_users_path
+    if original_login_disabled is None:
+        app.app.config.pop("LOGIN_DISABLED", None)
+    else:
+        app.app.config["LOGIN_DISABLED"] = original_login_disabled
     app.load_finance_data.cache_clear()
 
 
@@ -5393,3 +5402,281 @@ def test_expense_bulk_archive_removes_selected_rows(workbook_copy):
     app.load_finance_data.cache_clear()
     rows_after = app.load_finance_data()["sheets"]["Expenses"]
     assert all(row.get("Description") != "Bulk test expense" for row in rows_after)
+
+
+def _create_test_user(name, email, password, role, status="active"):
+    users = app._load_users()
+    now = "2026-08-11T09:00:00"
+    users.append({
+        "id": f"user-{email}",
+        "name": name,
+        "email": email,
+        "password_hash": app._hash_password(password),
+        "role": role,
+        "status": status,
+        "created_at": now,
+        "last_login": "",
+    })
+    app._save_users(users)
+    return users[-1]
+
+
+def test_login_success_redirects_to_dashboard(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    app.app.config["LOGIN_DISABLED"] = False
+    _create_test_user("Owner Person", "owner@hqueex.test", "correct-password-1", "Owner")
+
+    client = app.app.test_client()
+    response = client.post('/login', data={"email": "owner@hqueex.test", "password": "correct-password-1"}, follow_redirects=True)
+    assert response.status_code == 200
+    assert b'Log out' in response.data
+
+
+def test_login_failure_shows_error(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    app.app.config["LOGIN_DISABLED"] = False
+    _create_test_user("Owner Person", "owner2@hqueex.test", "correct-password-1", "Owner")
+
+    client = app.app.test_client()
+    response = client.post('/login', data={"email": "owner2@hqueex.test", "password": "wrong-password"}, follow_redirects=True)
+    assert response.status_code == 200
+    assert b'Incorrect email or password' in response.data
+
+    unauth_response = client.get('/expenses', follow_redirects=True)
+    assert b'Sign in' in unauth_response.data or b'login' in unauth_response.data.lower()
+
+
+def test_unauthenticated_request_redirects_to_login(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    app.app.config["LOGIN_DISABLED"] = False
+    _create_test_user("Owner Person", "owner3@hqueex.test", "correct-password-1", "Owner")
+
+    client = app.app.test_client()
+    response = client.get('/expenses', follow_redirects=False)
+    assert response.status_code == 302
+    assert '/login' in response.headers.get('Location', '')
+
+
+def test_employee_role_denied_finance_access(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    app.app.config["LOGIN_DISABLED"] = False
+    _create_test_user("Employee Person", "employee@hqueex.test", "correct-password-1", "Employee")
+
+    client = app.app.test_client()
+    client.post('/login', data={"email": "employee@hqueex.test", "password": "correct-password-1"})
+
+    response = client.get('/expenses')
+    assert response.status_code == 403
+
+    ops_response = client.get('/operations/projects')
+    assert ops_response.status_code == 200
+
+
+def test_accountant_role_readonly_blocks_post(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    app.app.config["LOGIN_DISABLED"] = False
+    _create_test_user("Accountant Person", "accountant@hqueex.test", "correct-password-1", "Accountant")
+
+    client = app.app.test_client()
+    client.post('/login', data={"email": "accountant@hqueex.test", "password": "correct-password-1"})
+
+    read_response = client.get('/expenses')
+    assert read_response.status_code == 200
+
+    write_response = client.post('/expenses/add', data={"description": "Should be blocked"})
+    assert write_response.status_code == 403
+
+    payroll_response = client.get('/payroll')
+    assert payroll_response.status_code == 403
+
+
+def test_accountant_role_can_generate_year_end_pack(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    app.app.config["LOGIN_DISABLED"] = False
+    _create_test_user("Accountant Person", "accountant2@hqueex.test", "correct-password-1", "Accountant")
+
+    client = app.app.test_client()
+    client.post('/login', data={"email": "accountant2@hqueex.test", "password": "correct-password-1"})
+
+    response = client.post('/finance/year-end-pack/generate', data={"year": "2026"})
+    assert response.status_code == 200
+    assert response.mimetype == "application/zip"
+
+
+def test_inactive_user_cannot_log_in(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    app.app.config["LOGIN_DISABLED"] = False
+    _create_test_user("Inactive Person", "inactive@hqueex.test", "correct-password-1", "Employee", status="inactive")
+
+    client = app.app.test_client()
+    response = client.post('/login', data={"email": "inactive@hqueex.test", "password": "correct-password-1"}, follow_redirects=True)
+    assert b'inactive' in response.data.lower()
+
+
+def test_session_timeout_configured_at_two_hours(workbook_copy):
+    """Session lifetime is enforced by Flask's signed, permanent session cookie
+    (PERMANENT_SESSION_LIFETIME); verifying the config directly is the reliable
+    way to assert the 2-hour policy without mocking wall-clock time end to end."""
+    from datetime import timedelta
+    assert app.app.config["PERMANENT_SESSION_LIFETIME"] == timedelta(hours=2)
+    assert app.app.config["SESSION_REFRESH_EACH_REQUEST"] is True
+
+
+def test_logout_invalidates_session(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    app.app.config["LOGIN_DISABLED"] = False
+    _create_test_user("Owner Person", "owner4@hqueex.test", "correct-password-1", "Owner")
+
+    client = app.app.test_client()
+    client.post('/login', data={"email": "owner4@hqueex.test", "password": "correct-password-1"})
+    assert client.get('/expenses').status_code == 200
+
+    client.post('/logout')
+    response = client.get('/expenses', follow_redirects=False)
+    assert response.status_code == 302
+    assert '/login' in response.headers.get('Location', '')
+
+
+def test_first_run_with_no_users_redirects_to_setup(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    app.app.config["LOGIN_DISABLED"] = False
+    app._save_users([])
+
+    client = app.app.test_client()
+    response = client.get('/', follow_redirects=False)
+    assert response.status_code == 302
+    assert '/setup' in response.headers.get('Location', '')
+
+
+def test_setup_creates_owner_and_logs_in(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    app.app.config["LOGIN_DISABLED"] = False
+    app._save_users([])
+
+    client = app.app.test_client()
+    response = client.post('/setup', data={
+        "name": "First Owner",
+        "email": "first-owner@hqueex.test",
+        "password": "a-strong-password",
+        "confirm_password": "a-strong-password",
+    }, follow_redirects=True)
+    assert response.status_code == 200
+    assert b'Log out' in response.data
+
+    users = app._load_users()
+    assert len(users) == 1
+    assert users[0]["role"] == "Owner"
+    assert users[0]["password_hash"] != "a-strong-password"
+
+
+def test_passwords_are_bcrypt_hashed_not_plaintext(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    user = _create_test_user("Hash Check", "hashcheck@hqueex.test", "super-secret-pw", "Owner")
+    assert user["password_hash"] != "super-secret-pw"
+    assert user["password_hash"].startswith("$2b$")
+    assert app._verify_password("super-secret-pw", user["password_hash"]) is True
+    assert app._verify_password("wrong-pw", user["password_hash"]) is False
+
+
+def test_invoice_pdf_download_with_mocked_weasyprint(workbook_copy, monkeypatch):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    monkeypatch.setattr(app, "_generate_pdf_bytes", lambda html: b"%PDF-1.4 fake pdf bytes")
+
+    client = app.app.test_client()
+    response = client.post('/invoices/pdf/1')
+    assert response.status_code == 200
+    assert response.mimetype == "application/pdf"
+    assert response.data == b"%PDF-1.4 fake pdf bytes"
+    assert "attachment" in response.headers.get("Content-Disposition", "")
+
+
+def test_invoice_pdf_falls_back_gracefully_without_weasyprint(workbook_copy, monkeypatch):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    monkeypatch.setattr(app, "_generate_pdf_bytes", lambda html: None)
+
+    client = app.app.test_client()
+    response = client.post('/invoices/pdf/1', follow_redirects=True)
+    assert response.status_code == 200
+    assert b"PDF generation isn" in response.data
+
+
+def test_proposal_pdf_download_with_mocked_weasyprint(workbook_copy, monkeypatch):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    monkeypatch.setattr(app, "_generate_pdf_bytes", lambda html: b"%PDF-1.4 fake proposal pdf")
+
+    client = app.app.test_client()
+    add_response = client.post('/crm/proposals/add', data={
+        "title": "PDF Test Proposal",
+        "contact_name": "Test Contact",
+        "line_items_json": json.dumps([{"name": "Service", "description": "Service", "quantity": 1, "unit_price": 100, "discount_type": "€", "discount_value": 0, "vat_rate": "23%"}]),
+    }, follow_redirects=True)
+    assert add_response.status_code == 200
+
+    proposals = app._load_proposals()
+    proposal_id = proposals[-1]["id"]
+
+    response = client.post(f'/crm/proposals/pdf/{proposal_id}')
+    assert response.status_code == 200
+    assert response.mimetype == "application/pdf"
+    assert response.data == b"%PDF-1.4 fake proposal pdf"
+
+
+def test_dmaic_pdf_download_with_mocked_weasyprint(workbook_copy, monkeypatch):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    monkeypatch.setattr(app, "_generate_pdf_bytes", lambda html: b"%PDF-1.4 fake dmaic pdf")
+
+    client = app.app.test_client()
+    client_a_id = _client_id_by_name("Client A")
+    add_response = client.post('/operations/projects/add', data={
+        "title": "DMAIC PDF Project",
+        "client_id": client_a_id,
+        "status": "Active",
+        "start_date": "2026-08-01",
+        "target_end_date": "2026-09-01",
+        "line_items_json": "[]",
+    }, follow_redirects=True)
+    assert add_response.status_code == 200
+
+    projects = app._load_projects()
+    project_id = projects[-1]["id"]
+
+    response = client.post(f'/operations/dmaic/pdf/{project_id}')
+    assert response.status_code == 200
+    assert response.mimetype == "application/pdf"
+    assert response.data == b"%PDF-1.4 fake dmaic pdf"
+
+
+def test_year_end_pack_uses_pdfs_when_weasyprint_available(workbook_copy, monkeypatch):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    monkeypatch.setattr(app, "_generate_pdf_bytes", lambda html: b"%PDF-1.4 fake report pdf")
+
+    client = app.app.test_client()
+    response = client.post('/finance/year-end-pack/generate', data={"year": "2026"})
+    assert response.status_code == 200
+
+    archive = zipfile.ZipFile(BytesIO(response.data))
+    names = set(archive.namelist())
+    assert names == {
+        "profit-and-loss.pdf",
+        "vat-summary.pdf",
+        "pre-trading-expenses.pdf",
+        "capital-allowances.pdf",
+        "all-transactions.csv",
+    }
+    assert archive.read("profit-and-loss.pdf") == b"%PDF-1.4 fake report pdf"

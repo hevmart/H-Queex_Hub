@@ -244,6 +244,12 @@
       .brand-mark img { max-height: 70px; width: auto; display: block; }
       .app-name { font-family: 'Segoe UI', sans-serif; font-size: 13px; font-weight: 700; color: var(--brand-steel); letter-spacing: 0.12em; text-transform: uppercase; }
       .header-right { display: flex; align-items: center; gap: 12px; }
+      .current-user-name { font-size: 13px; font-weight: 700; color: var(--brand-navy); }
+      .current-user-role { font-weight: 600; color: var(--brand-steel); font-size: 12px; }
+      .https-warning-banner {
+        background: rgba(198, 40, 40, 0.06); border: 1px solid var(--brand-error); color: var(--brand-error);
+        font-size: 12px; font-weight: 600; text-align: center; padding: 6px 12px; margin: 0 0 12px;
+      }
       .phase-badge { font-family: 'Segoe UI', sans-serif; font-size: 12px; font-weight: 600; color: var(--brand-steel); background: var(--brand-bg-deep); padding: 5px 12px; border-radius: 999px; white-space: nowrap; }
       .settings-link { color: var(--brand-steel); font-size: 22px; text-decoration: none; padding: 8px; border-radius: 8px; line-height: 1; display: inline-flex; align-items: center; justify-content: center; }
       .settings-link:hover, .settings-link.active { color: var(--brand-navy); background: var(--brand-bg-deep); }
@@ -850,13 +856,20 @@
           </div>
           <div class="header-right">
             <span class="phase-badge">{% if business_structure == 'limited_company' %}Phase 2 — Limited Company{% else %}Phase 1 — Sole Trader{% endif %}</span>
+            {% if current_user and current_user.is_authenticated %}
+            <span class="current-user-name">{{ current_user.name }} <span class="current-user-role">({{ current_user.role }})</span></span>
+            <a href="/logout" class="settings-link" title="Log out" aria-label="Log out">Log out</a>
+            {% endif %}
             <a href="/company/settings" class="settings-link {% if active_tab == 'settings' %}active{% endif %}" title="Settings" aria-label="Settings">⚙</a>
           </div>
         </div>
       </div>
+      {% if not request.is_secure %}
+      <div class="https-warning-banner">Running on HTTP — not secure for remote access. Switch to HTTPS before sharing access.</div>
+      {% endif %}
 
       {% set finance_tabs = ['finance', 'income', 'expenses', 'invoices', 'subscriptions', 'payroll', 'ledger', 'archive'] %}
-      {% set company_tabs = ['company', 'company_documents', 'company_compliance', 'company_profile', 'settings'] %}
+      {% set company_tabs = ['company', 'company_documents', 'company_compliance', 'company_profile', 'settings', 'company_users'] %}
       {% set operations_tabs = ['operations', 'operations_projects', 'operations_project_detail', 'operations_dmaic', 'operations_delivery', 'operations_sops'] %}
       {% set crm_tabs = ['crm', 'crm_leads', 'crm_lead_detail', 'crm_proposals', 'crm_proposal_detail'] %}
       <nav class="main-nav">
@@ -1053,6 +1066,15 @@
               <span class="pill">Admin</span>
             </div>
           </a>
+          {% if current_user and current_user.is_authenticated and current_user.role == 'Owner' %}
+          <a href="/company/settings/users" class="finance-card-link">
+            <div class="finance-card">
+              <h3>Users</h3>
+              <p>Manage who can sign in — Owner, Accountant and Employee accounts.</p>
+              <span class="pill">Admin</span>
+            </div>
+          </a>
+          {% endif %}
         </div>
       </div>
       {% endif %}
@@ -1791,7 +1813,10 @@
           <h2>{{ project.title }} — DMAIC Tracker</h2>
           <div class="table-action-stack">
             <a href="/operations/dmaic" class="cancel-link">Change project</a>
-            <button type="button" class="btn-secondary" onclick="window.print()">Print / Export PDF</button>
+            <form method="post" action="/operations/dmaic/pdf/{{ project.id }}" style="display:inline;">
+              <button type="submit" class="btn-secondary">Download PDF</button>
+            </form>
+            <button type="button" class="btn-secondary" onclick="window.print()">Print</button>
           </div>
         </div>
         <div class="mini" style="margin:0 0 6px;">Overall completion: <strong>{{ dmaic_completion_percentage }}%</strong></div>
@@ -2901,7 +2926,12 @@
         <p class="mini" style="white-space:pre-line;">{{ proposal.terms }}</p>
         {% endif %}
         <p class="mini">This proposal is valid until {{ proposal.expiry_date | fmt_date or 'the date stated above' }}.</p>
-        <button type="button" class="btn-secondary no-print" onclick="window.print()" style="margin-top:16px;">Print / Save as PDF</button>
+        <div class="no-print" style="margin-top:16px;display:flex;gap:10px;">
+          <form method="post" action="/crm/proposals/pdf/{{ proposal.id }}">
+            <button type="submit" class="btn-confirm-save">Download PDF</button>
+          </form>
+          <button type="button" class="btn-secondary" onclick="window.print()">Print / Save as PDF</button>
+        </div>
       </div>
       {% endif %}
 
@@ -2953,9 +2983,132 @@
         <p class="mini">Payment due by {{ invoice.get('Due Date') | fmt_date }}. Please reference invoice number {{ invoice.get('Invoice #') }} when paying.</p>
         <div class="no-print" style="margin-top:16px;display:flex;gap:10px;">
           <a href="/invoices" class="btn-secondary">Back to invoices</a>
+          <form method="post" action="/invoices/pdf/{{ invoice.get('__row_number') }}">
+            <button type="submit" class="btn-confirm-save">Download PDF</button>
+          </form>
           <button type="button" class="btn-secondary" onclick="window.print()">Print / Save as PDF</button>
         </div>
       </div>
+      {% endif %}
+
+      {% if active_tab == 'company_users' %}
+      <div class="section">
+        <div class="edit-banner">
+          <h2>User management</h2>
+          <a href="#user-add-modal" class="btn-secondary" id="user_add_btn">+ New User</a>
+        </div>
+        {% if users %}
+        <table>
+          <tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th class="col-date">Last login</th><th></th></tr>
+          {% for user in users %}
+          <tr>
+            <td>{{ user.name }}</td>
+            <td>{{ user.email }}</td>
+            <td>{{ user.role }}</td>
+            <td><span class="status-pill {% if user.status == 'active' %}approved{% else %}cancelled{% endif %}">{{ user.status|capitalize }}</span></td>
+            <td>{{ user.last_login | fmt_date or 'Never' }}</td>
+            <td>{{ edit_button('/company/settings/users?edit_id=' ~ user.id ~ '#user-edit-modal') }}</td>
+          </tr>
+          {% endfor %}
+        </table>
+        {% else %}
+        <p class="mini">No users yet.</p>
+        {% endif %}
+      </div>
+
+      <div class="modal-overlay" id="user_add_modal_overlay">
+        <div class="modal-box compliance-modal-box form-modal-box">
+          <div class="compliance-modal-header"><h3>New User</h3></div>
+          <div class="compliance-modal-body">
+            <form method="post" action="/company/settings/users/add" class="form-shell" novalidate>
+              <div class="form-grid">
+                <div class="field required {% if user_form_errors.get('name') %}has-error{% endif %}">
+                  <label for="user_add_name">Name</label>
+                  <input id="user_add_name" type="text" name="name" placeholder="Full name">
+                  {% if user_form_errors.get('name') %}<span class="field-error">{{ user_form_errors.get('name') }}</span>{% endif %}
+                </div>
+                <div class="field required {% if user_form_errors.get('email') %}has-error{% endif %}">
+                  <label for="user_add_email">Email</label>
+                  <input id="user_add_email" type="email" name="email" placeholder="Email">
+                  {% if user_form_errors.get('email') %}<span class="field-error">{{ user_form_errors.get('email') }}</span>{% endif %}
+                </div>
+                <div class="field required {% if user_form_errors.get('role') %}has-error{% endif %}">
+                  <label for="user_add_role">Role</label>
+                  <select id="user_add_role" name="role">
+                    {% for role in user_roles %}
+                    <option value="{{ role }}">{{ role }}</option>
+                    {% endfor %}
+                  </select>
+                  {% if user_form_errors.get('role') %}<span class="field-error">{{ user_form_errors.get('role') }}</span>{% endif %}
+                </div>
+                <div class="field required {% if user_form_errors.get('password') %}has-error{% endif %}">
+                  <label for="user_add_password">Password</label>
+                  <input id="user_add_password" type="password" name="password" minlength="8" placeholder="At least 8 characters">
+                  {% if user_form_errors.get('password') %}<span class="field-error">{{ user_form_errors.get('password') }}</span>{% endif %}
+                </div>
+              </div>
+              <div class="modal-actions">
+                <a href="/company/settings/users" class="btn-go-back">Cancel</a>
+                <button type="submit" class="btn-confirm-save">Save User</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>
+      <script>window.USER_ADD_MODAL_OPEN = {{ 'true' if (user_form_errors and not editing_user) else 'false' }};</script>
+
+      {% if editing_user %}
+      <div class="modal-overlay" id="user_edit_modal_overlay">
+        <div class="modal-box compliance-modal-box form-modal-box">
+          <div class="compliance-modal-header"><h3>Edit User</h3></div>
+          <div class="compliance-modal-body">
+            <form method="post" action="/company/settings/users/update" class="form-shell" novalidate>
+              <input type="hidden" name="user_id" value="{{ editing_user.id }}">
+              <div class="form-grid">
+                <div class="field required {% if user_form_errors.get('name') %}has-error{% endif %}">
+                  <label for="user_edit_name">Name</label>
+                  <input id="user_edit_name" type="text" name="name" value="{{ editing_user.name }}">
+                  {% if user_form_errors.get('name') %}<span class="field-error">{{ user_form_errors.get('name') }}</span>{% endif %}
+                </div>
+                <div class="field optional">
+                  <label>Email</label>
+                  <input type="email" value="{{ editing_user.email }}" readonly>
+                </div>
+                <div class="field required {% if user_form_errors.get('role') %}has-error{% endif %}">
+                  <label for="user_edit_role">Role</label>
+                  <select id="user_edit_role" name="role">
+                    {% for role in user_roles %}
+                    <option value="{{ role }}" {% if editing_user.role == role %}selected{% endif %}>{{ role }}</option>
+                    {% endfor %}
+                  </select>
+                  {% if user_form_errors.get('role') %}<span class="field-error">{{ user_form_errors.get('role') }}</span>{% endif %}
+                </div>
+                <div class="field required">
+                  <label>Status</label>
+                  <div style="display:flex;align-items:center;gap:8px;min-height:46px;">
+                    <label class="toggle-switch">
+                      <input type="checkbox" name="status" value="active" {% if editing_user.status == 'active' %}checked{% endif %}>
+                      <span class="toggle-track"><span class="toggle-knob"></span></span>
+                    </label>
+                    <span style="font-size:13px;">Active</span>
+                  </div>
+                </div>
+                <div class="field optional {% if user_form_errors.get('password') %}has-error{% endif %}" style="grid-column: 1 / -1;">
+                  <label for="user_edit_password">New password</label>
+                  <input id="user_edit_password" type="password" name="password" minlength="8" placeholder="Leave blank to keep current password">
+                  {% if user_form_errors.get('password') %}<span class="field-error">{{ user_form_errors.get('password') }}</span>{% endif %}
+                </div>
+              </div>
+              <div class="modal-actions">
+                <a href="/company/settings/users" class="btn-go-back">Cancel</a>
+                <button type="submit" class="btn-confirm-save">Update User</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>
+      <script>window.USER_EDIT_MODAL_OPEN = true;</script>
+      {% endif %}
       {% endif %}
 
       {% if active_tab == 'settings' and available_backups is not defined %}
@@ -6942,6 +7095,8 @@
           });
         }
 
+        initFormModal({ overlayId: "user_add_modal_overlay", addBtnId: "user_add_btn", basePath: "/company/settings/users", hash: "#user-add-modal", openFlag: "USER_ADD_MODAL_OPEN" });
+        initFormModal({ overlayId: "user_edit_modal_overlay", addBtnId: "", basePath: "/company/settings/users", hash: "#user-edit-modal", openFlag: "USER_EDIT_MODAL_OPEN" });
         initFormModal({ overlayId: "service_modal_overlay", addBtnId: "service_add_btn", basePath: "/services", hash: "#service-modal", openFlag: "SERVICE_MODAL_OPEN" });
         initFormModal({ overlayId: "client_modal_overlay", addBtnId: "client_add_btn", basePath: "/clients", hash: "#client-modal", openFlag: "CLIENT_MODAL_OPEN" });
         initFormModal({ overlayId: "supplier_modal_overlay", addBtnId: "supplier_add_btn", basePath: "/suppliers", hash: "#supplier-modal", openFlag: "SUPPLIER_MODAL_OPEN" });

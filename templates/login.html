@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Sign in — H-Queex Hub</title>
+    <style>
+      :root {
+        --brand-navy: #16294A; --brand-gold: #B08D57; --brand-steel: #618096;
+        --brand-charcoal: #37373A; --brand-border: #E2E2E3; --brand-bg-light: #F7F7F7;
+        --brand-white: #FFFFFF; --brand-error: #C62828;
+      }
+      * { box-sizing: border-box; }
+      body {
+        font-family: 'Segoe UI', Arial, sans-serif; background: var(--brand-bg-light); color: var(--brand-charcoal);
+        margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+      }
+      .login-card {
+        background: var(--brand-white); border-top: 3px solid var(--brand-gold); border-radius: 12px;
+        padding: 40px 36px; width: 92%; max-width: 380px; box-shadow: 0 12px 32px rgba(22, 41, 74, 0.15);
+      }
+      .login-logo { display: block; max-width: 220px; margin: 0 auto 8px; }
+      .login-tagline { text-align: center; color: var(--brand-steel); font-size: 13px; font-style: italic; margin: 0 0 28px; }
+      .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 16px; }
+      .field label { font-size: 12px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--brand-navy); }
+      .field input {
+        width: 100%; min-height: 46px; padding: 11px 13px; border: 1px solid var(--brand-border); border-radius: 8px;
+        background: var(--brand-bg-light); color: var(--brand-charcoal); font: inherit; box-sizing: border-box;
+      }
+      .field input:focus { outline: none; border-color: var(--brand-gold); box-shadow: 0 0 0 3px rgba(176, 141, 87, 0.18); }
+      .field-error { font-size: 12px; color: var(--brand-error); font-weight: 600; margin-top: 2px; }
+      .login-error {
+        background: rgba(198, 40, 40, 0.06); border: 1px solid var(--brand-error); border-radius: 8px;
+        padding: 10px 12px; font-size: 13px; color: var(--brand-error); margin-bottom: 16px;
+      }
+      .login-message {
+        background: var(--brand-bg-light); border: 1px solid var(--brand-gold); border-radius: 8px;
+        padding: 10px 12px; font-size: 13px; color: var(--brand-navy); margin-bottom: 16px;
+      }
+      .btn-login {
+        width: 100%; background: var(--brand-navy); color: var(--brand-white); border: 0; border-bottom: 3px solid var(--brand-gold);
+        border-radius: 8px; padding: 12px; font-weight: 700; font-size: 14px; cursor: pointer; font-family: inherit;
+      }
+      .btn-login:hover { background: #1B3A5C; }
+      .http-warning {
+        max-width: 380px; width: 92%; margin: 0 auto 12px; background: rgba(198, 40, 40, 0.06); border: 1px solid var(--brand-error);
+        border-radius: 8px; padding: 10px 12px; font-size: 12px; color: var(--brand-error); text-align: center;
+      }
+      .login-wrap { display: flex; flex-direction: column; align-items: center; }
+    </style>
+  </head>
+  <body>
+    <div class="login-wrap">
+      {% if not request.is_secure %}
+      <div class="http-warning">Running on HTTP — not secure for remote access. Switch to HTTPS before sharing access.</div>
+      {% endif %}
+      <div class="login-card">
+        <img class="login-logo" src="{{ url_for('static', filename='H-Queex Logo Blue and Gold with Tagline V4.0.png') }}" alt="H-Queex">
+        <p class="login-tagline">Value from every process.</p>
+        {% if error %}<div class="login-error">{{ error }}</div>{% endif %}
+        {% if request.args.get('message') %}<div class="login-message">{{ request.args.get('message') }}</div>{% endif %}
+        <form method="post" action="/login{% if request.args.get('next') %}?next={{ request.args.get('next') }}{% endif %}" novalidate>
+          <div class="field">
+            <label for="login_email">Email</label>
+            <input id="login_email" type="email" name="email" value="{{ email }}" autofocus required>
+          </div>
+          <div class="field">
+            <label for="login_password">Password</label>
+            <input id="login_password" type="password" name="password" required>
+          </div>
+          <button type="submit" class="btn-login">Sign in</button>
+        </form>
+      </div>
+    </div>
+  </body>
+</html>

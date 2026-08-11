@@ -1,4 +1,8 @@
 flask
+flask-login
+flask-limiter
+bcrypt
+weasyprint
 openpyxl
 anthropic
 python-dotenv

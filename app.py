@@ -4,27 +4,44 @@ import base64
 import csv
 import json
 import os
+import secrets
 import shutil
 import time
 import threading
 import zipfile
 from calendar import monthrange
 from datetime import date, datetime, timedelta
-from functools import lru_cache
+from functools import lru_cache, wraps
 from io import BytesIO, StringIO
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 from uuid import uuid4
 
+import bcrypt
 from dotenv import load_dotenv
-from flask import Flask, Response, jsonify, redirect, render_template, request, send_from_directory, url_for
+from flask import Flask, Response, jsonify, redirect, render_template, request, send_from_directory, session, url_for
+from flask_login import (
+    LoginManager,
+    UserMixin,
+    current_user,
+    login_required,
+    login_user,
+    logout_user,
+)
 from openpyxl import load_workbook
 from werkzeug.utils import secure_filename
 
 load_dotenv()
 
 app = Flask(__name__)
+app.secret_key = os.environ.get("HQ_SECRET_KEY") or secrets.token_hex(32)
+app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(hours=2)
+app.config["SESSION_REFRESH_EACH_REQUEST"] = True
+
+login_manager = LoginManager()
+login_manager.login_view = "login"
+login_manager.init_app(app)
 
 
 def _format_date_display(value: Any) -> str:
@@ -168,6 +185,9 @@ RECENTLY_WON_WINDOW_DAYS = 30
 GDRIVE_BACKUP_DIR = Path("G:/My Drive/H-Queex — Working Documents/H-Queex Hub/Backups")
 BACKUP_STATUS_PATH = BASE_DIR / "backup-status.json"
 FILING_LOG_PATH = BASE_DIR / "filing-log.json"
+USERS_PATH = BASE_DIR / "users.json"
+USER_ROLES = ("Owner", "Accountant", "Employee")
+USER_STATUSES = ("active", "inactive")
 BACKUP_RETENTION_DAYS = 30
 SHEET_JSON_PATHS = {
     "Income": INCOME_PATH,
@@ -2283,6 +2303,373 @@ def _save_json_records(path: Path, records: list[dict[str, Any]]) -> None:
     _backup_json_file(path)
 
 
+# --- Authentication -----------------------------------------------------------
+
+class AppUser(UserMixin):
+    def __init__(self, record: dict[str, Any]):
+        self.id = record["id"]
+        self.name = record.get("name", "")
+        self.email = record.get("email", "")
+        self.role = record.get("role", "Employee")
+        self.status = record.get("status", "active")
+
+    @property
+    def is_active(self) -> bool:  # overrides UserMixin default
+        return self.status == "active"
+
+
+def _load_users() -> list[dict[str, Any]]:
+    return _load_json_records(USERS_PATH)
+
+
+def _save_users(users: list[dict[str, Any]]) -> None:
+    _save_json_records(USERS_PATH, users)
+
+
+def _find_user_by_id(users: list[dict[str, Any]], user_id: str) -> dict[str, Any] | None:
+    return _find_record_by_id(users, user_id)
+
+
+def _find_user_by_email(users: list[dict[str, Any]], email: str) -> dict[str, Any] | None:
+    target = str(email or "").strip().lower()
+    for user in users:
+        if str(user.get("email") or "").strip().lower() == target:
+            return user
+    return None
+
+
+def _hash_password(plain_password: str) -> str:
+    return bcrypt.hashpw(plain_password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+
+
+def _verify_password(plain_password: str, password_hash: str) -> bool:
+    if not password_hash:
+        return False
+    try:
+        return bcrypt.checkpw(plain_password.encode("utf-8"), password_hash.encode("utf-8"))
+    except ValueError:
+        return False
+
+
+@login_manager.user_loader
+def load_user(user_id: str) -> AppUser | None:
+    users = _load_users()
+    record = _find_user_by_id(users, user_id)
+    if record is None:
+        return None
+    return AppUser(record)
+
+
+# URL-prefix allowlists per role. Owner is implicitly unrestricted. Paths not
+# matched by any prefix for a restricted role are denied (403).
+EMPLOYEE_ALLOWED_PREFIXES = (
+    "/operations",
+    "/crm",
+    "/api/clients",
+    "/api/services",
+    "/api/suppliers",
+    "/logout",
+    "/static",
+)
+ACCOUNTANT_ALLOWED_PREFIXES = (
+    "/finance",
+    "/income",
+    "/expenses",
+    "/invoices",
+    "/subscriptions",
+    "/ledger",
+    "/archive",
+    "/export/xlsm",
+    "/reconciliation",
+    "/capital-allowances",
+    "/vat3",
+    "/audit",
+    "/company",
+    "/documents",
+    "/refresh",
+    "/logout",
+    "/static",
+)
+# Explicitly blocked for Accountant even though it falls under an allowed prefix.
+ACCOUNTANT_BLOCKED_PREFIXES = ("/payroll", "/company/settings/users")
+# Routes an Accountant (otherwise read-only / GET-only) is allowed to POST to.
+ACCOUNTANT_POST_ALLOWLIST = ("/finance/year-end-pack/generate",)
+# Always accessible regardless of role, once authenticated.
+UNIVERSALLY_ALLOWED_PREFIXES = ("/", "/logout", "/static", "/healthz")
+
+OWNER_ONLY_PREFIXES = ("/company/settings/users",)
+
+
+def _path_matches_prefix(path: str, prefixes: tuple[str, ...]) -> bool:
+    for prefix in prefixes:
+        if prefix == "/" and path == "/":
+            return True
+        if prefix != "/" and (path == prefix or path.startswith(prefix.rstrip("/") + "/") or path == prefix.rstrip("/")):
+            return True
+    return False
+
+
+def _enforce_role_access() -> Any:
+    """Returns a Flask response to short-circuit the request, or None to allow it."""
+    if app.config.get("LOGIN_DISABLED"):
+        return None
+
+    path = request.path
+
+    if path in ("/login", "/setup") or path.startswith("/static/") or path == "/healthz" or path.startswith("/api/leads") or path == "/api/health":
+        return None
+
+    if not _load_users():
+        if path != "/setup":
+            return redirect(url_for("setup_owner"))
+        return None
+
+    if not current_user.is_authenticated:
+        if path == "/setup":
+            return redirect(url_for("login"))
+        return redirect(url_for("login", next=request.path))
+
+    if path == "/setup":
+        return redirect(url_for("index"))
+
+    role = getattr(current_user, "role", "Employee")
+    if role == "Owner":
+        return None
+
+    if _path_matches_prefix(path, OWNER_ONLY_PREFIXES):
+        return _forbidden_response("This page is only available to the Owner.")
+
+    if role == "Employee":
+        if path == "/":
+            return redirect(url_for("operations_view"))
+        if _path_matches_prefix(path, EMPLOYEE_ALLOWED_PREFIXES):
+            return None
+        return _forbidden_response("Your account doesn't have access to this area. Employees can access Operations and CRM.")
+
+    if role == "Accountant":
+        if _path_matches_prefix(path, ACCOUNTANT_BLOCKED_PREFIXES):
+            return _forbidden_response("Payroll details aren't available to Accountant accounts.")
+        if not _path_matches_prefix(path, ACCOUNTANT_ALLOWED_PREFIXES) and path != "/":
+            return _forbidden_response("Your account doesn't have access to this area. Accountants can access Finance, Company and Reports.")
+        if request.method != "GET" and path not in ACCOUNTANT_POST_ALLOWLIST:
+            return _forbidden_response("Accountant accounts have read-only access — changes can't be saved.")
+        return None
+
+    return _forbidden_response("Your account role doesn't have access to this area.")
+
+
+def _forbidden_response(message: str) -> Response:
+    html = f"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Access denied — H-Queex Hub</title>
+<style>
+  body {{ font-family: 'Segoe UI', Arial, sans-serif; background: #F7F7F7; color: #37373A; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; }}
+  .denied-card {{ background: #FFFFFF; border-top: 3px solid #C62828; border-radius: 12px; padding: 32px; max-width: 420px; box-shadow: 0 12px 32px rgba(22,41,74,0.15); text-align: center; }}
+  h1 {{ color: #16294A; font-size: 18px; margin: 0 0 8px; }}
+  p {{ color: #535356; font-size: 14px; line-height: 1.5; }}
+  a {{ display: inline-block; margin-top: 16px; background: #16294A; color: #FFFFFF; border-bottom: 3px solid #B08D57; border-radius: 8px; padding: 10px 20px; text-decoration: none; font-weight: 700; }}
+</style></head>
+<body>
+  <div class="denied-card">
+    <h1>Access denied</h1>
+    <p>{message}</p>
+    <a href="/">Go to dashboard</a>
+  </div>
+</body></html>"""
+    return Response(html, status=403, mimetype="text/html")
+
+
+@app.before_request
+def _session_and_role_gate():
+    if session.get("_permanent_set") is None:
+        session.permanent = True
+        session["_permanent_set"] = True
+    return _enforce_role_access()
+
+
+@app.route("/setup", methods=["GET", "POST"])
+def setup_owner():
+    if _load_users():
+        return redirect(url_for("login"))
+
+    errors: dict[str, str] = {}
+    name = ""
+    email = ""
+    if request.method == "POST":
+        name = str(request.form.get("name") or "").strip()
+        email = str(request.form.get("email") or "").strip()
+        password = str(request.form.get("password") or "")
+        confirm_password = str(request.form.get("confirm_password") or "")
+
+        if not name:
+            errors["name"] = "Name is required"
+        if not email or "@" not in email:
+            errors["email"] = "A valid email is required"
+        if len(password) < 8:
+            errors["password"] = "Password must be at least 8 characters"
+        if password != confirm_password:
+            errors["confirm_password"] = "Passwords do not match"
+
+        if not errors:
+            now = datetime.now().isoformat(timespec="seconds")
+            owner = {
+                "id": str(uuid4()),
+                "name": name,
+                "email": email,
+                "password_hash": _hash_password(password),
+                "role": "Owner",
+                "status": "active",
+                "created_at": now,
+                "last_login": "",
+            }
+            _save_users([owner])
+            login_user(AppUser(owner))
+            return redirect(url_for("index", message="Owner account created"))
+
+    return render_template("setup.html", errors=errors, name=name, email=email)
+
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if not _load_users():
+        return redirect(url_for("setup_owner"))
+    if current_user.is_authenticated:
+        return redirect(url_for("index"))
+
+    error = None
+    email = ""
+    if request.method == "POST":
+        email = str(request.form.get("email") or "").strip()
+        password = str(request.form.get("password") or "")
+        users = _load_users()
+        record = _find_user_by_email(users, email)
+        if record is None or not _verify_password(password, record.get("password_hash", "")):
+            error = "Incorrect email or password."
+        elif record.get("status") != "active":
+            error = "This account is inactive. Contact the account Owner."
+        else:
+            record["last_login"] = datetime.now().isoformat(timespec="seconds")
+            _save_users(users)
+            login_user(AppUser(record))
+            session.permanent = True
+            next_url = request.args.get("next") or url_for("index")
+            return redirect(next_url)
+
+    return render_template("login.html", error=error, email=email)
+
+
+@app.route("/logout", methods=["GET", "POST"])
+@login_required
+def logout():
+    logout_user()
+    return redirect(url_for("login", message="You have been logged out"))
+
+
+@app.route("/company/settings/users")
+@login_required
+def user_management_view():
+    users = _load_users()
+    editing_user = _find_user_by_id(users, request.args.get("edit_id"))
+    return render_template(
+        "index.html",
+        **_build_page_context(
+            "User Management",
+            "company_users",
+            load_finance_data(),
+            message=request.args.get("message"),
+        ),
+        users=users,
+        editing_user=editing_user,
+        user_roles=list(USER_ROLES),
+        user_form_errors=session.pop("user_form_errors", {}),
+    )
+
+
+@app.route("/company/settings/users/add", methods=["POST"])
+@login_required
+def add_user():
+    name = str(request.form.get("name") or "").strip()
+    email = str(request.form.get("email") or "").strip()
+    role = str(request.form.get("role") or "").strip()
+    password = str(request.form.get("password") or "")
+
+    errors: dict[str, str] = {}
+    if not name:
+        errors["name"] = "Name is required"
+    users = _load_users()
+    if not email or "@" not in email:
+        errors["email"] = "A valid email is required"
+    elif _find_user_by_email(users, email):
+        errors["email"] = "A user with that email already exists"
+    if role not in USER_ROLES:
+        errors["role"] = "Choose a valid role"
+    if len(password) < 8:
+        errors["password"] = "Password must be at least 8 characters"
+
+    if errors:
+        session["user_form_errors"] = errors
+        return redirect(url_for("user_management_view"))
+
+    now = datetime.now().isoformat(timespec="seconds")
+    users.append(
+        {
+            "id": str(uuid4()),
+            "name": name,
+            "email": email,
+            "password_hash": _hash_password(password),
+            "role": role,
+            "status": "active",
+            "created_at": now,
+            "last_login": "",
+        }
+    )
+    _save_users(users)
+    _record_audit("create", "user", {"email": email, "role": role})
+    return redirect(url_for("user_management_view", message="User added"))
+
+
+@app.route("/company/settings/users/update", methods=["POST"])
+@login_required
+def update_user():
+    user_id = str(request.form.get("user_id") or "").strip()
+    users = _load_users()
+    target = _find_user_by_id(users, user_id)
+    if target is None:
+        return redirect(url_for("user_management_view", message="User not found"))
+
+    name = str(request.form.get("name") or "").strip()
+    role = str(request.form.get("role") or "").strip()
+    status = "active" if request.form.get("status") == "active" else "inactive"
+    new_password = str(request.form.get("password") or "")
+
+    errors: dict[str, str] = {}
+    if not name:
+        errors["name"] = "Name is required"
+    if role not in USER_ROLES:
+        errors["role"] = "Choose a valid role"
+    if status not in USER_STATUSES:
+        errors["status"] = "Choose a valid status"
+    if target["role"] == "Owner" and role != "Owner":
+        other_owners = [u for u in users if u["id"] != user_id and u.get("role") == "Owner" and u.get("status") == "active"]
+        if not other_owners:
+            errors["role"] = "At least one active Owner account must remain"
+
+    if errors:
+        session["user_form_errors"] = errors
+        return redirect(url_for("user_management_view", edit_id=user_id))
+
+    target["name"] = name
+    target["role"] = role
+    target["status"] = status
+    if new_password:
+        if len(new_password) < 8:
+            session["user_form_errors"] = {"password": "Password must be at least 8 characters"}
+            return redirect(url_for("user_management_view", edit_id=user_id))
+        target["password_hash"] = _hash_password(new_password)
+    _save_users(users)
+    _record_audit("update", "user", {"user_id": user_id, "role": role, "status": status})
+    return redirect(url_for("user_management_view", message="User updated"))
+
+
 def _append_json_record(path: Path, record: dict[str, Any]) -> None:
     records = _load_json_records(path)
     records.append(record)
@@ -3194,43 +3581,77 @@ def _report_logo_data_uri() -> str:
         return ""
 
 
-def _render_branded_report_html(title: str, subtitle: str, body_html: str) -> str:
+# --- PDF generation (WeasyPrint) ----------------------------------------------
+# WeasyPrint's Python package has no Windows-native dependency issues of its own,
+# but it dynamically loads Pango/GObject/Cairo via cffi at import time, which on
+# Windows requires the separate "GTK3 Runtime for Windows" to be installed
+# machine-wide (this is a documented WeasyPrint limitation, not fixable via pip —
+# see https://doc.courtbouillon.org/weasyprint/stable/first_steps.html#windows).
+# Every PDF-producing route below degrades gracefully to the existing HTML/
+# browser-print view when this import fails, rather than 500ing.
+try:
+    from weasyprint import HTML as _WeasyHTML  # noqa: N811
+
+    WEASYPRINT_AVAILABLE = True
+except (ImportError, OSError):
+    _WeasyHTML = None
+    WEASYPRINT_AVAILABLE = False
+
+
+def _pdf_page_css() -> str:
+    return """
+      @page {
+        size: A4; margin: 2cm 1.5cm 2.5cm;
+        @bottom-center {
+          content: "H-Queex Hub — hevandro@h-queex.com — Page " counter(page) " of " counter(pages);
+          font-size: 9px; color: #618096; font-family: Arial, sans-serif;
+        }
+      }
+      body { font-family: Arial, sans-serif; color: #37373A; }
+    """
+
+
+def _render_branded_pdf_html(title: str, subtitle: str, body_html: str) -> str:
     logo_uri = _report_logo_data_uri()
-    logo_html = f'<img src="{logo_uri}" alt="H-Queex" style="max-height:48px;">' if logo_uri else "<strong>H-QUEEX</strong>"
+    logo_html = f'<img src="{logo_uri}" alt="H-Queex" style="max-height:44px;">' if logo_uri else "<strong>H-QUEEX</strong>"
     return f"""<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>{title} — H-Queex Hub</title>
+<title>{title}</title>
 <style>
-  body {{ font-family: 'Segoe UI', Arial, sans-serif; color: #37373A; margin: 0; background: #F7F7F7; }}
-  .report-header {{ background: #16294A; color: #FFFFFF; padding: 24px 32px; display: flex; justify-content: space-between; align-items: center; border-bottom: 4px solid #B08D57; }}
-  .report-header h1 {{ margin: 0; font-size: 20px; }}
-  .report-header p {{ margin: 4px 0 0; font-size: 13px; opacity: 0.85; }}
-  .report-body {{ padding: 28px 32px; background: #FFFFFF; max-width: 900px; margin: 0 auto; }}
-  table {{ width: 100%; border-collapse: collapse; margin-bottom: 24px; }}
-  th {{ background: #16294A; color: #FFFFFF; text-align: left; padding: 8px 12px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }}
-  td {{ padding: 8px 12px; border-bottom: 1px solid #E2E2E3; font-size: 13px; }}
-  tr:nth-child(even) td {{ background: #F7F7F7; }}
-  .report-section-title {{ color: #16294A; font-size: 15px; font-weight: 700; margin: 24px 0 8px; border-left: 3px solid #B08D57; padding-left: 10px; }}
-  .report-total-row td {{ font-weight: 700; color: #16294A; border-top: 2px solid #16294A; }}
-  .report-footer {{ text-align: center; font-size: 11px; color: #618096; padding: 16px; }}
+  {_pdf_page_css()}
+  .pdf-header {{ background: #16294A; color: #FFFFFF; padding: 16px 20px; display: flex; justify-content: space-between; align-items: center; border-bottom: 3px solid #B08D57; margin: -2cm -1.5cm 20px; }}
+  .pdf-header h1 {{ margin: 0; font-size: 17px; }}
+  .pdf-header p {{ margin: 3px 0 0; font-size: 11px; opacity: 0.85; }}
+  table {{ width: 100%; border-collapse: collapse; margin-bottom: 18px; }}
+  th {{ background: #16294A; color: #FFFFFF; text-align: left; padding: 6px 10px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; }}
+  td {{ padding: 6px 10px; border-bottom: 1px solid #E2E2E3; font-size: 11px; }}
+  .pdf-section-title, .report-section-title {{ color: #16294A; font-size: 13px; font-weight: 700; margin: 20px 0 8px; border-left: 3px solid #B08D57; padding-left: 8px; }}
+  .pdf-total-row td, .report-total-row td {{ font-weight: 700; color: #16294A; border-top: 2px solid #16294A; }}
 </style>
 </head>
 <body>
-  <div class="report-header">
+  <div class="pdf-header">
     {logo_html}
     <div style="text-align:right;">
       <h1>{title}</h1>
       <p>{subtitle}</p>
     </div>
   </div>
-  <div class="report-body">
-    {body_html}
-  </div>
-  <div class="report-footer">Generated by H-Queex Hub — {datetime.now().strftime('%d %B %Y')}</div>
+  {body_html}
 </body>
 </html>"""
+
+
+def _generate_pdf_bytes(html: str) -> bytes | None:
+    """Returns PDF bytes, or None if WeasyPrint's native libraries aren't available."""
+    if not WEASYPRINT_AVAILABLE:
+        return None
+    try:
+        return _WeasyHTML(string=html).write_pdf()
+    except Exception:
+        return None
 
 
 def _load_filing_log() -> list[dict[str, Any]]:
@@ -6371,6 +6792,52 @@ def operations_dmaic_project_view(project_id):
     )
 
 
+def _build_dmaic_pdf_body(project: dict[str, Any]) -> str:
+    dmaic = project.get("dmaic") or {}
+    sections = []
+    for phase in DMAIC_PHASES:
+        phase_data = dmaic.get(phase, {})
+        deliverables = phase_data.get("deliverables") or []
+        deliverables_html = "".join(f"<li>{item}</li>" for item in deliverables) or "<li>None recorded</li>"
+        sections.append(f"""
+        <div class="pdf-section-title">{phase} — {phase_data.get('status', 'Not Started')}</div>
+        <table>
+          <tr><td style="width:20%;"><strong>Start date</strong></td><td>{_format_date_display(phase_data.get('start_date', ''))}</td></tr>
+          <tr><td><strong>Completion date</strong></td><td>{_format_date_display(phase_data.get('completion_date', ''))}</td></tr>
+          <tr><td><strong>Key findings</strong></td><td>{phase_data.get('key_findings', '') or '—'}</td></tr>
+          <tr><td><strong>Notes</strong></td><td>{phase_data.get('notes', '') or '—'}</td></tr>
+        </table>
+        <p><strong>Deliverables:</strong></p>
+        <ul>{deliverables_html}</ul>
+        """)
+    completion_pct = _dmaic_completion_percentage(dmaic)
+    return f"""
+    <p><strong>Client:</strong> {project.get('client_name', '')} &middot; <strong>Overall completion:</strong> {completion_pct}%</p>
+    {''.join(sections)}
+    """
+
+
+@app.route("/operations/dmaic/pdf/<project_id>", methods=["POST"])
+def dmaic_pdf(project_id):
+    projects = _load_projects()
+    project = _find_record_by_id(projects, project_id)
+    if project is None:
+        return redirect(url_for("operations_dmaic_view", message="Project not found"))
+
+    body_html = _build_dmaic_pdf_body(project)
+    html = _render_branded_pdf_html(
+        f"DMAIC Tracker — {project.get('title', '')}",
+        f"Project {project.get('project_number', '')}",
+        body_html,
+    )
+    pdf_bytes = _generate_pdf_bytes(html)
+    if pdf_bytes is None:
+        return redirect(url_for("operations_dmaic_project_view", project_id=project_id, message="PDF generation isn't available on this machine — no native GTK runtime installed."))
+
+    filename = f"dmaic-{project.get('project_number', project_id)}.pdf"
+    return Response(pdf_bytes, mimetype="application/pdf", headers={"Content-Disposition": f"attachment; filename={filename}"})
+
+
 @app.route("/operations/dmaic/update", methods=["POST"])
 def update_dmaic_phase():
     project_id = str(request.form.get("project_id") or "").strip()
@@ -7307,8 +7774,80 @@ def export_proposal_pdf(proposal_id):
             "crm_proposal_pdf",
             data,
             proposal_detail={"proposal": proposal},
+            message=request.args.get("message"),
         ),
     )
+
+
+def _build_proposal_pdf_html(proposal: dict[str, Any]) -> str:
+    logo_uri = _report_logo_data_uri()
+    logo_html = f'<img src="{logo_uri}" alt="H-Queex" style="max-width:220px;">' if logo_uri else "<strong>H-QUEEX</strong>"
+    line_item_rows = "".join(
+        f"<tr><td>{item.get('description') or item.get('name', '')}</td><td>{item.get('quantity', '')}</td>"
+        f"<td>{_format_currency(item.get('unit_price', 0))}</td><td>{_format_currency(item.get('total', 0))}</td></tr>"
+        for item in (proposal.get("line_items") or [])
+    )
+    cover_letter = str(proposal.get("cover_letter") or "").replace("\n", "<br>")
+    terms = str(proposal.get("terms") or "").replace("\n", "<br>")
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Proposal — {proposal.get('title', '')}</title>
+<style>
+  {_pdf_page_css()}
+  .cover-page {{ page-break-after: always; text-align: center; padding-top: 20%; }}
+  .cover-page img {{ margin-bottom: 32px; }}
+  .cover-page h1 {{ color: #16294A; font-size: 26px; margin: 0 0 12px; }}
+  .cover-page .cover-client {{ font-size: 16px; color: #37373A; margin-bottom: 6px; }}
+  .cover-page .cover-date {{ font-size: 12px; color: #618096; }}
+  .content-page {{ padding-top: 8px; }}
+  .pdf-section-title {{ color: #16294A; font-size: 13px; font-weight: 700; margin: 20px 0 8px; border-left: 3px solid #B08D57; padding-left: 8px; }}
+  table {{ width: 100%; border-collapse: collapse; margin-bottom: 18px; }}
+  th {{ background: #16294A; color: #FFFFFF; text-align: left; padding: 6px 10px; font-size: 10px; text-transform: uppercase; }}
+  td {{ padding: 6px 10px; border-bottom: 1px solid #E2E2E3; font-size: 11px; }}
+</style>
+</head>
+<body>
+  <div class="cover-page">
+    {logo_html}
+    <h1>{proposal.get('title', '')}</h1>
+    <p class="cover-client">Prepared for {proposal.get('company_name') or proposal.get('contact_name', '')}</p>
+    <p class="cover-date">Proposal {proposal.get('proposal_number', '')} &middot; {_format_date_display(proposal.get('created_at', '')[:10] if proposal.get('created_at') else '')}</p>
+  </div>
+  <div class="content-page">
+    {f'<div class="pdf-section-title">Introduction</div><p>{cover_letter}</p>' if cover_letter else ''}
+    <div class="pdf-section-title">Services and pricing</div>
+    <table>
+      <tr><th>Description</th><th>Qty</th><th>Unit price</th><th>Total</th></tr>
+      {line_item_rows}
+    </table>
+    <p style="text-align:right;">
+      Net: {_format_currency(proposal.get('subtotal', 0))}<br>
+      VAT: {_format_currency(proposal.get('vat_amount', 0))}<br>
+      <strong style="color:#16294A;font-size:13px;">Total: {_format_currency(proposal.get('total', 0))}</strong>
+    </p>
+    {f'<div class="pdf-section-title">Terms</div><p>{terms}</p>' if terms else ''}
+    <p style="color:#618096;font-size:10px;">This proposal is valid until {_format_date_display(proposal.get('expiry_date', '')) or 'the date stated above'}.</p>
+  </div>
+</body>
+</html>"""
+
+
+@app.route("/crm/proposals/pdf/<proposal_id>", methods=["POST"])
+def proposal_pdf(proposal_id):
+    proposals = _load_proposals()
+    proposal = _find_record_by_id(proposals, proposal_id)
+    if proposal is None:
+        return redirect(url_for("crm_proposals_view", message="Proposal not found"))
+
+    html = _build_proposal_pdf_html(proposal)
+    pdf_bytes = _generate_pdf_bytes(html)
+    if pdf_bytes is None:
+        return redirect(url_for("export_proposal_pdf", proposal_id=proposal_id, message="PDF generation isn't available on this machine — showing the printable page instead. Use your browser's Print / Save as PDF."))
+
+    filename = f"proposal-{proposal.get('proposal_number', proposal_id)}.pdf"
+    return Response(pdf_bytes, mimetype="application/pdf", headers={"Content-Disposition": f"attachment; filename={filename}"})
 
 
 # --- CRM: Public lead intake API (website integration) -----------------------
@@ -7523,8 +8062,64 @@ def invoice_preview(row_number):
             "invoice_pdf",
             data,
             invoice_detail=invoice,
+            message=request.args.get("message"),
         ),
     )
+
+
+def _build_invoice_pdf_body(invoice: dict[str, Any], business_profile: dict[str, Any]) -> str:
+    line_item_rows = "".join(
+        f"<tr><td>{item.get('description') or item.get('name', '')}</td><td>{item.get('quantity', '')}</td>"
+        f"<td>{_format_currency(item.get('unit_price', 0))}</td><td>{item.get('vat_rate', '')}</td>"
+        f"<td>{_format_currency(item.get('total', 0))}</td></tr>"
+        for item in (invoice.get("line_items") or [])
+    )
+    net = _format_currency(_coerce_number(invoice.get("Base Net Amount (€)", invoice.get("Net (€)", 0))))
+    vat = _format_currency(_coerce_number(invoice.get("VAT Amount (€)")))
+    total = _format_currency(_coerce_number(invoice.get("Total (€)")))
+    balance = _coerce_number(invoice.get("Balance Due (€)"))
+    balance_html = (
+        f'<p style="color:#C62828;font-weight:700;">Balance due: {_format_currency(balance)}</p>' if balance else ""
+    )
+    return f"""
+    <div class="pdf-section-title">Bill to</div>
+    <p><strong>{invoice.get('Client Name', '')}</strong><br>
+    {invoice.get('Client Address', '') or ''}<br>
+    {('VAT: ' + invoice.get('Client VAT Number', '')) if invoice.get('Client VAT Number') else ''}</p>
+    <table>
+      <tr><th>Description</th><th>Qty</th><th>Unit price</th><th>VAT rate</th><th>Total</th></tr>
+      {line_item_rows}
+    </table>
+    <p style="text-align:right;">Net: {net}<br>VAT: {vat}<br>
+    <strong style="color:#16294A;font-size:13px;">Total: {total}</strong></p>
+    {balance_html}
+    <div class="pdf-section-title">Payment terms</div>
+    <p>Payment due by {_format_date_display(invoice.get('Due Date'))}. Please reference invoice number
+    {invoice.get('Invoice #', '')} when paying.</p>
+    """
+
+
+@app.route("/invoices/pdf/<int:row_number>", methods=["POST"])
+def invoice_pdf(row_number):
+    data = load_finance_data()
+    rows = data["sheets"].get("Invoices", [])
+    invoice = _find_row_by_number(rows, row_number)
+    if invoice is None:
+        return redirect(url_for("invoices_view", message="Invoice not found"))
+
+    business_profile = _load_business_profile()
+    body_html = _build_invoice_pdf_body(invoice, business_profile)
+    html = _render_branded_pdf_html(
+        f"Invoice {invoice.get('Invoice #')}",
+        f"Issue date {_format_date_display(invoice.get('Issue Date'))} · Due {_format_date_display(invoice.get('Due Date'))}",
+        body_html,
+    )
+    pdf_bytes = _generate_pdf_bytes(html)
+    if pdf_bytes is None:
+        return redirect(url_for("invoice_preview", row_number=row_number, message="PDF generation isn't available on this machine — showing the printable page instead. Use your browser's Print / Save as PDF."))
+
+    filename = f"{invoice.get('Invoice #', 'invoice')}.pdf"
+    return Response(pdf_bytes, mimetype="application/pdf", headers={"Content-Disposition": f"attachment; filename={filename}"})
 
 
 @app.route("/services")
@@ -7719,7 +8314,7 @@ def generate_year_end_pack():
         f"<tr><td>{category}</td><td style='text-align:right;'>{_format_currency(amount)}</td></tr>"
         for category, amount in pnl["expense_by_category"].items()
     )
-    pnl_html = _render_branded_report_html(
+    pnl_html = _render_branded_pdf_html(
         f"Profit &amp; Loss Statement — {year}",
         f"Tax year {year} · {PHASE_POLICY.get(structure, PHASE_POLICY['sole_trader'])['tax_regime']}",
         f"""
@@ -7743,7 +8338,7 @@ def generate_year_end_pack():
         f"<td style='text-align:right;'>{_format_currency(period['t3_net_vat'])}</td></tr>"
         for period in vat_periods
     )
-    vat_html = _render_branded_report_html(
+    vat_html = _render_branded_pdf_html(
         f"VAT Summary — {year}",
         f"Bi-monthly VAT 3 return periods for {year}",
         f"""
@@ -7755,7 +8350,7 @@ def generate_year_end_pack():
         f"<tr><td>{category}</td><td style='text-align:right;'>{_format_currency(amount)}</td></tr>"
         for category, amount in pretrading["by_category"].items()
     )
-    pretrading_html = _render_branded_report_html(
+    pretrading_html = _render_branded_pdf_html(
         "Pre-Trading Expenses Schedule",
         "Expenses incurred before trading commenced, grouped by category",
         f"""
@@ -7771,7 +8366,7 @@ def generate_year_end_pack():
         for asset in capital_assets
         if bool(asset.get("active", True))
     )
-    capital_html = _render_branded_report_html(
+    capital_html = _render_branded_pdf_html(
         "Capital Allowances Schedule",
         "Wear and tear allowances at 12.5% per year (8-year write-down)",
         f"""
@@ -7785,21 +8380,26 @@ def generate_year_end_pack():
     )
 
     now_iso = datetime.now().isoformat(timespec="seconds")
-    file_list = [
-        "profit-and-loss.html",
-        "vat-summary.html",
-        "pre-trading-expenses.html",
-        "capital-allowances.html",
-        "all-transactions.csv",
+    reports = [
+        ("profit-and-loss", pnl_html),
+        ("vat-summary", vat_html),
+        ("pre-trading-expenses", pretrading_html),
+        ("capital-allowances", capital_html),
     ]
 
     buffer = BytesIO()
+    file_list = []
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
-        zip_file.writestr("profit-and-loss.html", pnl_html)
-        zip_file.writestr("vat-summary.html", vat_html)
-        zip_file.writestr("pre-trading-expenses.html", pretrading_html)
-        zip_file.writestr("capital-allowances.html", capital_html)
+        for base_name, report_html in reports:
+            pdf_bytes = _generate_pdf_bytes(report_html)
+            if pdf_bytes is not None:
+                zip_file.writestr(f"{base_name}.pdf", pdf_bytes)
+                file_list.append(f"{base_name}.pdf")
+            else:
+                zip_file.writestr(f"{base_name}.html", report_html)
+                file_list.append(f"{base_name}.html")
         zip_file.writestr("all-transactions.csv", all_transactions_csv)
+        file_list.append("all-transactions.csv")
     buffer.seek(0)
 
     filing_log = _load_filing_log()
