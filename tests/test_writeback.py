@@ -4243,17 +4243,85 @@ def test_public_api_requires_email(workbook_copy):
 
 
 def test_public_api_cors_headers_present(workbook_copy):
+    """CORS is restricted to the H-Queex website's allowlisted origins (not a
+    wildcard) since this endpoint writes real lead data — the allowed origin is
+    reflected back only when the request's Origin header matches the allowlist."""
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+    allowed_origin = app.ALLOWED_API_ORIGINS[0]
+
+    options_response = client.options('/api/leads', headers={"Origin": allowed_origin})
+    assert options_response.status_code == 204
+    assert options_response.headers["Access-Control-Allow-Origin"] == allowed_origin
+    assert "POST" in options_response.headers["Access-Control-Allow-Methods"]
+
+    post_response = client.post(
+        '/api/leads',
+        json={"contact_name": "CORS Test", "email": "cors@test.com"},
+        headers={"Origin": allowed_origin},
+    )
+    assert post_response.headers["Access-Control-Allow-Origin"] == allowed_origin
+
+    disallowed_response = client.options('/api/leads', headers={"Origin": "https://evil.example.com"})
+    assert "Access-Control-Allow-Origin" not in disallowed_response.headers
+
+
+def test_public_api_honeypot_silently_rejects_bots(workbook_copy):
     app.WORKBOOK_PATH = workbook_copy
     app.load_finance_data.cache_clear()
     client = app.app.test_client()
 
-    options_response = client.options('/api/leads')
-    assert options_response.status_code == 204
-    assert options_response.headers["Access-Control-Allow-Origin"] == "*"
-    assert "POST" in options_response.headers["Access-Control-Allow-Methods"]
+    response = client.post('/api/leads', json={
+        "contact_name": "Bot Submission",
+        "email": "bot@example.com",
+        "website_url": "http://spam.example.com",
+    })
+    assert response.status_code == 201
+    assert response.get_json()["success"] is True
 
-    post_response = client.post('/api/leads', json={"contact_name": "CORS Test", "email": "cors@test.com"})
-    assert post_response.headers["Access-Control-Allow-Origin"] == "*"
+    leads = app._load_leads()
+    assert all(lead.get("contact_name") != "Bot Submission" for lead in leads)
+
+
+def test_public_api_rate_limit_enforced(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    app.limiter.reset()
+    client = app.app.test_client()
+
+    for i in range(10):
+        response = client.post('/api/leads', json={"contact_name": f"Lead {i}", "email": f"lead{i}@test.com"})
+        assert response.status_code == 201
+
+    blocked_response = client.post('/api/leads', json={"contact_name": "Lead 11", "email": "lead11@test.com"})
+    assert blocked_response.status_code == 429
+    app.limiter.reset()
+
+
+def test_website_lead_flagged_on_dashboard_upcoming_actions(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+
+    client.post('/api/leads', json={"contact_name": "Dashboard Flag Test", "email": "flag@test.com"})
+
+    response = client.get('/')
+    assert response.status_code == 200
+    assert b'New website enquiry \xe2\x80\x94 Dashboard Flag Test' in response.data
+
+
+def test_api_health_endpoint(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+
+    response = client.get('/api/health')
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["status"] == "ok"
+    assert payload["service"] == "H-Queex Hub"
+    assert payload["data_files_readable"] is True
 
 
 # --- CRM: dashboard integration ----------------------------------------------

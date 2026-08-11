@@ -1,0 +1,106 @@
+<!--
+  H-Queex website contact form — reference implementation
+  =========================================================
+  Drop this markup/JS into the H-Queex website (hqueex.com or its Netlify
+  deploy) wherever the contact/enquiry form lives. It POSTs directly to
+  H-Queex Hub's public lead-intake API and creates a new CRM lead.
+
+  Endpoint:      POST https://<your-hub-host>/api/leads
+  Content-Type:  application/json (fetch) or standard form POST — both work,
+                 the API reads request.get_json() first, falling back to
+                 request.form.
+  CORS:          The Hub only returns Access-Control-Allow-Origin for origins
+                 in its HQ_ALLOWED_API_ORIGINS allowlist (defaults to
+                 https://hqueex.com, https://www.hqueex.com,
+                 https://h-queex.netlify.app — set the env var on the Hub
+                 host if the real domain differs).
+  Rate limit:    10 requests/hour per IP — a real visitor will never hit
+                 this; it exists to blunt scripted spam.
+  Honeypot:      The hidden "website_url" field below must stay empty.
+                 Real visitors never see or fill it (CSS-hidden + no label);
+                 bots that fill every field trip it and the API silently
+                 returns a fake-success response without creating a lead.
+                 Never remove the CSS that hides it, and never give it a
+                 visible label or placeholder.
+
+  Replace HUB_API_URL below with the real, deployed H-Queex Hub URL before
+  going live (this is currently set to the local dev instance).
+-->
+
+<form id="hqueex-contact-form" novalidate>
+  <div class="field">
+    <label for="hq_contact_name">Name</label>
+    <input id="hq_contact_name" name="contact_name" type="text" required>
+  </div>
+
+  <div class="field">
+    <label for="hq_company_name">Company</label>
+    <input id="hq_company_name" name="company_name" type="text">
+  </div>
+
+  <div class="field">
+    <label for="hq_email">Email</label>
+    <input id="hq_email" name="email" type="email" required>
+  </div>
+
+  <div class="field">
+    <label for="hq_phone">Phone</label>
+    <input id="hq_phone" name="phone" type="tel">
+  </div>
+
+  <div class="field">
+    <label for="hq_message">How can we help?</label>
+    <textarea id="hq_message" name="message" rows="4"></textarea>
+  </div>
+
+  <!-- Honeypot — must stay hidden and unlabelled. Real visitors never fill this. -->
+  <div style="position:absolute; left:-9999px; top:-9999px;" aria-hidden="true">
+    <label for="hq_website_url">Leave this field blank</label>
+    <input id="hq_website_url" name="website_url" type="text" tabindex="-1" autocomplete="off">
+  </div>
+
+  <button type="submit">Send enquiry</button>
+  <p id="hqueex-contact-status" role="status" aria-live="polite"></p>
+</form>
+
+<script>
+  (function () {
+    // Replace with the real deployed H-Queex Hub URL before going live.
+    var HUB_API_URL = "http://127.0.0.1:5000/api/leads";
+
+    var form = document.getElementById("hqueex-contact-form");
+    var status = document.getElementById("hqueex-contact-status");
+
+    form.addEventListener("submit", function (event) {
+      event.preventDefault();
+      status.textContent = "Sending...";
+
+      var payload = {
+        contact_name: form.contact_name.value.trim(),
+        company_name: form.company_name.value.trim(),
+        email: form.email.value.trim(),
+        phone: form.phone.value.trim(),
+        message: form.message.value.trim(),
+        website_url: form.website_url.value, // honeypot — must stay empty
+      };
+
+      fetch(HUB_API_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      })
+        .then(function (response) { return response.json().then(function (data) { return { ok: response.ok, data: data }; }); })
+        .then(function (result) {
+          if (result.ok && result.data.success) {
+            status.textContent = "Thanks — we'll be in touch shortly.";
+            form.reset();
+          } else {
+            status.textContent = result.data.error || "Something went wrong — please try again or email us directly.";
+          }
+        })
+        .catch(function () {
+          status.textContent = "Something went wrong — please try again or email us directly.";
+        });
+    });
+  })();
+</script>

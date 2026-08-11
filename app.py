@@ -29,6 +29,8 @@ from flask_login import (
     login_user,
     logout_user,
 )
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 from openpyxl import load_workbook
 from werkzeug.utils import secure_filename
 
@@ -42,6 +44,20 @@ app.config["SESSION_REFRESH_EACH_REQUEST"] = True
 login_manager = LoginManager()
 login_manager.login_view = "login"
 login_manager.init_app(app)
+
+limiter = Limiter(get_remote_address, app=app, default_limits=[], storage_uri="memory://")
+
+# Cross-origin allowlist for the public lead-intake API — configurable via env
+# since the real marketing site's domain (hqueex.com, or a Netlify preview
+# domain) isn't known at deploy time. Comma-separated list of full origins.
+ALLOWED_API_ORIGINS = [
+    origin.strip()
+    for origin in os.environ.get(
+        "HQ_ALLOWED_API_ORIGINS",
+        "https://hqueex.com,https://www.hqueex.com,https://h-queex.netlify.app",
+    ).split(",")
+    if origin.strip()
+]
 
 
 def _format_date_display(value: Any) -> str:
@@ -5804,6 +5820,14 @@ def _build_page_context(
             "detail": overdue_lead.get("next_action") or "Follow up needed",
             "link": f"/crm/leads/{overdue_lead['id']}",
         })
+    new_website_enquiries = [lead for lead in leads if lead.get("source") == "Website" and lead.get("status") == "New"]
+    for website_lead in new_website_enquiries[:3]:
+        upcoming_actions.append({
+            "severity": "info",
+            "label": f"New website enquiry — {website_lead['contact_name'] or website_lead['company_name']}",
+            "detail": website_lead.get("notes") or "Submitted via website contact form",
+            "link": f"/crm/leads/{website_lead['id']}",
+        })
 
     monthly_net_trend = _build_monthly_net_trend(data)
     return {
@@ -7855,18 +7879,29 @@ def proposal_pdf(proposal_id):
 def _cors_response(payload: dict[str, Any], status_code: int = 200):
     response = jsonify(payload)
     response.status_code = status_code
-    response.headers["Access-Control-Allow-Origin"] = "*"
+    origin = request.headers.get("Origin", "")
+    if origin in ALLOWED_API_ORIGINS:
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Vary"] = "Origin"
     response.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
     response.headers["Access-Control-Allow-Headers"] = "Content-Type"
     return response
 
 
 @app.route("/api/leads", methods=["POST", "OPTIONS"])
+@limiter.limit("10 per hour", methods=["POST"])
 def api_create_lead():
     if request.method == "OPTIONS":
         return _cors_response({}, 204)
 
     payload = request.get_json(silent=True) or request.form
+
+    # Honeypot: a real visitor never sees or fills this field (hidden via CSS on
+    # the form); a bot that fills every field trips it. Reject silently with a
+    # fake-success response so the bot doesn't learn the honeypot was detected.
+    if str(payload.get("website_url") or "").strip():
+        return _cors_response({"success": True}, 201)
+
     contact_name = str(payload.get("contact_name") or "").strip()
     company_name = str(payload.get("company_name") or "").strip()
     email = str(payload.get("email") or "").strip()
@@ -7900,8 +7935,24 @@ def api_create_lead():
     _add_lead_activity(lead, "created", "Lead submitted via website enquiry form")
     leads.append(lead)
     _save_leads(leads)
-    _record_audit("create", "lead", {"lead_id": lead["id"], "record": lead, "source": "public_api"})
+    _record_audit("create", "lead", {"lead_id": lead["id"], "record": lead, "source": "Website API"})
     return _cors_response({"success": True, "lead_id": lead["id"], "lead_number": lead["lead_number"]}, 201)
+
+
+@app.route("/api/health")
+def api_health():
+    try:
+        load_finance_data()
+        data_ok = True
+    except Exception:
+        data_ok = False
+    return jsonify({
+        "status": "ok" if data_ok else "degraded",
+        "service": "H-Queex Hub",
+        "version": "1.0",
+        "timestamp": datetime.now().isoformat(timespec="seconds"),
+        "data_files_readable": data_ok,
+    })
 
 
 def _backup_eligible_files() -> list[Path]:
