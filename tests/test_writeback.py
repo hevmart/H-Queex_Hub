@@ -2972,13 +2972,17 @@ def test_expense_receipt_rejects_disallowed_extension(workbook_copy):
     data = _expense_add_payload(description="Bad receipt extension", category="Software and Subscriptions")
     data['receipt_file'] = (BytesIO(b'not a real executable'), 'malware.exe')
 
-    client.post(
+    response = client.post(
         '/expenses/add',
         data=data,
         content_type='multipart/form-data',
         follow_redirects=True,
     )
 
+    # The expense record still saves (a rejected receipt is a non-blocking
+    # attachment failure, not a reason to lose the whole financial entry),
+    # but the failure must be visible, not silent.
+    assert b'could not be attached' in response.data
     app.load_finance_data.cache_clear()
     saved = next(row for row in app.load_finance_data()["sheets"]["Expenses"] if row.get("Description") == "Bad receipt extension")
     assert saved["Receipt Filename"] == ""
@@ -3030,6 +3034,37 @@ def test_document_upload_route_persists_document_and_file(workbook_copy):
     assert (app.COMPANY_DOCUMENTS_DIR / uploaded["filename"]).exists()
 
 
+def test_document_upload_accepts_business_file_formats(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+
+    for extension, filename in (
+        ("xlsx", "budget.xlsx"),
+        ("xls", "legacy-budget.xls"),
+        ("pptx", "pitch-deck.pptx"),
+        ("csv", "export.csv"),
+    ):
+        name = f"Business file test {extension}"
+        data = {
+            "name": name,
+            "category": "Business Planning",
+            "document_file": (BytesIO(b"fake content"), filename),
+        }
+        response = client.post(
+            '/company/documents/upload',
+            data=data,
+            content_type='multipart/form-data',
+            follow_redirects=True,
+        )
+        assert response.status_code == 200
+        documents = json.loads(app.COMPANY_DOCUMENTS_PATH.read_text(encoding="utf-8"))
+        uploaded = next((doc for doc in documents if doc["name"] == name), None)
+        assert uploaded is not None, f"{extension} upload was rejected"
+        assert uploaded["filename"].endswith(f".{extension}")
+        assert (app.COMPANY_DOCUMENTS_DIR / uploaded["filename"]).exists()
+
+
 def test_document_upload_rejects_disallowed_extension(workbook_copy):
     app.WORKBOOK_PATH = workbook_copy
     app.load_finance_data.cache_clear()
@@ -3040,15 +3075,38 @@ def test_document_upload_rejects_disallowed_extension(workbook_copy):
         "category": "Other",
         "document_file": (BytesIO(b'not allowed'), 'malware.exe'),
     }
-    client.post(
+    response = client.post(
         '/company/documents/upload',
         data=data,
         content_type='multipart/form-data',
         follow_redirects=True,
     )
 
+    # A rejected upload must be visible, not silent — this exact route used to swallow
+    # validation_errors/form_data from the redirect query string entirely.
+    assert b'File type not allowed' in response.data
     documents = json.loads(app.COMPANY_DOCUMENTS_PATH.read_text(encoding="utf-8"))
     assert not any(doc["name"] == "Suspicious file" for doc in documents)
+
+
+def test_document_upload_requires_active_category_selection(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+
+    # No "category" key at all — the same as submitting the blank placeholder option
+    # without ever touching the dropdown.
+    data = {"name": "No category chosen"}
+    response = client.post(
+        '/company/documents/upload',
+        data=data,
+        content_type='multipart/form-data',
+        follow_redirects=True,
+    )
+    assert b'Please select a category' in response.data
+
+    documents = json.loads(app.COMPANY_DOCUMENTS_PATH.read_text(encoding="utf-8"))
+    assert not any(doc["name"] == "No category chosen" for doc in documents)
 
 
 def test_document_upload_rejects_file_over_max_size(workbook_copy):
@@ -3069,6 +3127,7 @@ def test_document_upload_rejects_file_over_max_size(workbook_copy):
         follow_redirects=True,
     )
     assert response.status_code == 200
+    assert b'exceeds the 25MB maximum' in response.data
 
     documents = json.loads(app.COMPANY_DOCUMENTS_PATH.read_text(encoding="utf-8"))
     assert not any(doc["name"] == "Oversized file" for doc in documents)
@@ -3827,10 +3886,35 @@ def test_sop_file_upload_rejects_disallowed_extension(workbook_copy):
         "client_id": client_a_id,
         "sop_file": (BytesIO(b'not allowed'), 'malware.exe'),
     }
-    client.post('/operations/sops/add', data=data, content_type='multipart/form-data', follow_redirects=True)
+    response = client.post('/operations/sops/add', data=data, content_type='multipart/form-data', follow_redirects=True)
 
+    # operations_sops_view used to never read validation_errors/form_data back off the
+    # redirect query string, so this rejection was completely silent.
+    assert b'File type not allowed' in response.data
     sops = json.loads(app.SOPS_PATH.read_text(encoding="utf-8")) if app.SOPS_PATH.exists() else []
     assert not any(s["title"] == "Bad file SOP" for s in sops)
+
+
+def test_delivery_file_upload_rejects_disallowed_extension(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+    client_a_id = _client_id_by_name("Client A")
+
+    data = {
+        "date": "2026-08-05",
+        "client_id": client_a_id,
+        "service_type": "Report",
+        "description": "Bad file delivery",
+        "deliverable_file": (BytesIO(b'not allowed'), 'malware.exe'),
+    }
+    response = client.post('/operations/delivery/add', data=data, content_type='multipart/form-data', follow_redirects=True)
+
+    # operations_delivery_view had the same silent-failure bug as SOPs and Documents —
+    # validation_errors/form_data were never read back off the redirect query string.
+    assert b'File type not allowed' in response.data
+    entries = json.loads(app.DELIVERY_LOG_PATH.read_text(encoding="utf-8")) if app.DELIVERY_LOG_PATH.exists() else []
+    assert not any(e["description"] == "Bad file delivery" for e in entries)
 
 
 # --- Operations: dashboard integration --------------------------------------

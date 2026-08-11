@@ -180,8 +180,8 @@ COMPANY_DOCUMENTS_PATH = BASE_DIR / "documents.json"
 COMPLIANCE_CALENDAR_PATH = BASE_DIR / "compliance-calendar.json"
 COMPANY_DOCUMENTS_DIR = BASE_DIR / "documents"
 COMPANY_DOCUMENTS_DIR.mkdir(parents=True, exist_ok=True)
-ALLOWED_DOCUMENT_EXTENSIONS = {"pdf", "docx", "png", "jpg", "jpeg"}
-MAX_DOCUMENT_SIZE_BYTES = 10 * 1024 * 1024
+ALLOWED_DOCUMENT_EXTENSIONS = {"pdf", "docx", "xlsx", "xls", "pptx", "png", "jpg", "jpeg", "csv"}
+MAX_DOCUMENT_SIZE_BYTES = 25 * 1024 * 1024
 DOCUMENT_CATEGORIES = (
     "Compliance",
     "Insurance",
@@ -1600,19 +1600,28 @@ def _run_receipt_ocr(file_bytes: bytes, extension: str, category_options: list[s
     return fields
 
 
-def _save_uploaded_receipt(file_storage: Any) -> str:
-    """Save an uploaded receipt file into RECEIPTS_DIR and return the stored filename, or '' if no valid file."""
+def _save_uploaded_receipt(file_storage: Any) -> tuple[str, str]:
+    """Returns (stored_filename, error_message). stored_filename is '' on failure or no file."""
     if not file_storage or not getattr(file_storage, "filename", ""):
-        return ""
+        return "", ""
+
     original_name = secure_filename(file_storage.filename)
     if not original_name or "." not in original_name:
-        return ""
+        return "", "File must have a valid name and extension"
+
     extension = original_name.rsplit(".", 1)[-1].lower()
     if extension not in ALLOWED_RECEIPT_EXTENSIONS:
-        return ""
+        return "", "File type not allowed. Accepted: PDF, PNG, JPG, GIF, HEIC, WEBP"
+
+    file_storage.seek(0, 2)
+    size_bytes = file_storage.tell()
+    file_storage.seek(0)
+    if size_bytes > MAX_DOCUMENT_SIZE_BYTES:
+        return "", "File exceeds the 25MB maximum size"
+
     stored_name = f"{uuid4().hex[:10]}_{original_name}"
     file_storage.save(RECEIPTS_DIR / stored_name)
-    return stored_name
+    return stored_name, ""
 
 
 PRE_TRADING_CAPEX_THRESHOLD = 1000.0
@@ -4374,13 +4383,13 @@ def _save_uploaded_document(file_storage: Any) -> tuple[str, str]:
 
     extension = original_name.rsplit(".", 1)[-1].lower()
     if extension not in ALLOWED_DOCUMENT_EXTENSIONS:
-        return "", "File type not allowed. Accepted: PDF, DOCX, PNG, JPG"
+        return "", "File type not allowed. Accepted: PDF, DOCX, XLSX, XLS, PPTX, PNG, JPG, CSV"
 
     file_storage.seek(0, 2)
     size_bytes = file_storage.tell()
     file_storage.seek(0)
     if size_bytes > MAX_DOCUMENT_SIZE_BYTES:
-        return "", "File exceeds the 10MB maximum size"
+        return "", "File exceeds the 25MB maximum size"
 
     stored_name = f"{uuid4().hex[:10]}_{original_name}"
     file_storage.save(COMPANY_DOCUMENTS_DIR / stored_name)
@@ -4808,7 +4817,7 @@ def _save_uploaded_delivery_file(file_storage: Any) -> tuple[str, str]:
     size_bytes = file_storage.tell()
     file_storage.seek(0)
     if size_bytes > MAX_DOCUMENT_SIZE_BYTES:
-        return "", "File exceeds the 10MB maximum size"
+        return "", "File exceeds the 25MB maximum size"
     stored_name = f"{uuid4().hex[:10]}_{original_name}"
     file_storage.save(DELIVERY_FILES_DIR / stored_name)
     return stored_name, ""
@@ -4882,7 +4891,7 @@ def _save_uploaded_sop(file_storage: Any) -> tuple[str, str]:
     size_bytes = file_storage.tell()
     file_storage.seek(0)
     if size_bytes > MAX_DOCUMENT_SIZE_BYTES:
-        return "", "File exceeds the 10MB maximum size"
+        return "", "File exceeds the 25MB maximum size"
     stored_name = f"{uuid4().hex[:10]}_{original_name}"
     file_storage.save(SOP_FILES_DIR / stored_name)
     return stored_name, ""
@@ -6308,6 +6317,7 @@ def company_documents_view():
     data = load_finance_data()
     documents = _load_company_documents()
     editing_document = _find_record_by_id(documents, request.args.get("edit_id"))
+    validation_errors, document_form = _build_validation_state("company_documents")
     return render_template(
         "index.html",
         **_build_page_context(
@@ -6315,6 +6325,8 @@ def company_documents_view():
             "company_documents",
             data,
             editing_document=editing_document,
+            document_form=document_form,
+            validation_errors=validation_errors,
             message=request.args.get("message"),
         ),
     )
@@ -6323,13 +6335,16 @@ def company_documents_view():
 @app.route("/company/documents/upload", methods=["POST"])
 def upload_company_document():
     name = str(request.form.get("name") or "").strip()
-    category = _normalize_document_category(request.form.get("category"))
+    raw_category = str(request.form.get("category") or "").strip()
+    category = _normalize_document_category(raw_category)
     description = str(request.form.get("description") or "").strip()
     expiry_date = str(request.form.get("expiry_date") or "").strip()
     notes = str(request.form.get("notes") or "").strip()
 
     errors: dict[str, str] = {}
     _validate_required_text(name, "name", "Document name", errors)
+    if raw_category not in DOCUMENT_CATEGORIES:
+        errors["category"] = "Please select a category"
     if expiry_date and _parse_transaction_date(expiry_date) is None:
         errors["expiry_date"] = "Expiry date must be a valid date"
 
@@ -6344,6 +6359,7 @@ def upload_company_document():
             "company_documents_view",
             {"name": name, "category": category, "description": description, "expiry_date": expiry_date, "notes": notes},
             errors,
+            validation_tab="company_documents",
         )
 
     now = datetime.now().isoformat(timespec="seconds")
@@ -6372,7 +6388,8 @@ def upload_company_document():
 def update_company_document():
     document_id = str(request.form.get("document_id") or "").strip()
     name = str(request.form.get("name") or "").strip()
-    category = _normalize_document_category(request.form.get("category"))
+    raw_category = str(request.form.get("category") or "").strip()
+    category = _normalize_document_category(raw_category)
     description = str(request.form.get("description") or "").strip()
     expiry_date = str(request.form.get("expiry_date") or "").strip()
     notes = str(request.form.get("notes") or "").strip()
@@ -6381,6 +6398,8 @@ def update_company_document():
 
     errors: dict[str, str] = {}
     _validate_required_text(name, "name", "Document name", errors)
+    if raw_category not in DOCUMENT_CATEGORIES:
+        errors["category"] = "Please select a category"
     if expiry_date and _parse_transaction_date(expiry_date) is None:
         errors["expiry_date"] = "Expiry date must be a valid date"
 
@@ -6394,6 +6413,7 @@ def update_company_document():
             "company_documents_view",
             {"name": name, "category": category, "description": description, "expiry_date": expiry_date, "notes": notes},
             errors,
+            validation_tab="company_documents",
             edit_id=document_id,
         )
 
@@ -6403,6 +6423,7 @@ def update_company_document():
             "company_documents_view",
             {"name": name, "category": category, "description": description, "expiry_date": expiry_date, "notes": notes},
             {"document_file": upload_error},
+            validation_tab="company_documents",
             edit_id=document_id,
         )
 
@@ -6977,6 +6998,7 @@ def operations_delivery_view():
     if billing_period_filter:
         entries = [entry for entry in entries if entry.get("billing_period") == billing_period_filter]
     clarity_partner_client_ids = [client["id"] for client in _clients_catalog_for_operations(data) if client["tier"] == "Clarity Partner"]
+    validation_errors, _ = _build_validation_state("operations_delivery")
     return render_template(
         "index.html",
         **_build_page_context(
@@ -6985,6 +7007,7 @@ def operations_delivery_view():
             data,
             editing_delivery=editing_delivery,
             delivery_form={"client_filter": client_filter, "project_filter": project_filter, "billing_period_filter": billing_period_filter},
+            validation_errors=validation_errors,
             message=request.args.get("message"),
         ),
         delivery_entries_filtered=entries,
@@ -7023,11 +7046,11 @@ def add_delivery_entry():
         errors["date"] = "Date must be valid"
 
     if errors:
-        return _redirect_with_form_errors("operations_delivery_view", payload, errors)
+        return _redirect_with_form_errors("operations_delivery_view", payload, errors, validation_tab="operations_delivery")
 
     stored_filename, upload_error = _save_uploaded_delivery_file(request.files.get("deliverable_file"))
     if upload_error:
-        return _redirect_with_form_errors("operations_delivery_view", payload, {"deliverable_file": upload_error})
+        return _redirect_with_form_errors("operations_delivery_view", payload, {"deliverable_file": upload_error}, validation_tab="operations_delivery")
 
     now = datetime.now().isoformat(timespec="seconds")
     entries = _load_delivery_log()
@@ -7085,11 +7108,11 @@ def update_delivery_entry():
         errors["date"] = "Date must be valid"
 
     if errors:
-        return _redirect_with_form_errors("operations_delivery_view", payload, errors, edit_id=delivery_id)
+        return _redirect_with_form_errors("operations_delivery_view", payload, errors, validation_tab="operations_delivery", edit_id=delivery_id)
 
     stored_filename, upload_error = _save_uploaded_delivery_file(request.files.get("deliverable_file"))
     if upload_error:
-        return _redirect_with_form_errors("operations_delivery_view", payload, {"deliverable_file": upload_error}, edit_id=delivery_id)
+        return _redirect_with_form_errors("operations_delivery_view", payload, {"deliverable_file": upload_error}, validation_tab="operations_delivery", edit_id=delivery_id)
 
     entry.update(payload)
     if stored_filename:
@@ -7214,6 +7237,7 @@ def operations_sops_view():
     client_filter = str(request.args.get("client_filter") or "")
     status_filter = str(request.args.get("status_filter") or "")
     process_area_filter = str(request.args.get("process_area_filter") or "")
+    validation_errors, _ = _build_validation_state("operations_sops")
     return render_template(
         "index.html",
         **_build_page_context(
@@ -7222,6 +7246,7 @@ def operations_sops_view():
             data,
             editing_sop=editing_sop,
             sop_form={"client_filter": client_filter, "status_filter": status_filter, "process_area_filter": process_area_filter},
+            validation_errors=validation_errors,
             message=request.args.get("message"),
         ),
     )
@@ -7240,11 +7265,11 @@ def add_sop():
     _validate_required_text(client_name, "client_name", "Client", errors)
 
     if errors:
-        return _redirect_with_form_errors("operations_sops_view", {"title": title, "client_name": client_name}, errors)
+        return _redirect_with_form_errors("operations_sops_view", {"title": title, "client_name": client_name}, errors, validation_tab="operations_sops")
 
     stored_filename, upload_error = _save_uploaded_sop(request.files.get("sop_file"))
     if upload_error:
-        return _redirect_with_form_errors("operations_sops_view", {"title": title, "client_name": client_name}, {"sop_file": upload_error})
+        return _redirect_with_form_errors("operations_sops_view", {"title": title, "client_name": client_name}, {"sop_file": upload_error}, validation_tab="operations_sops")
 
     sops = _load_sops()
     version = str(request.form.get("version") or "V1.0").strip()
@@ -9368,7 +9393,7 @@ def add_expense():
         "OCR Language": request.form.get("ocr_language", ""),
         "OCR Raw Response": request.form.get("ocr_raw_response", ""),
     }
-    uploaded_receipt_name = _save_uploaded_receipt(request.files.get("receipt_file"))
+    uploaded_receipt_name, receipt_upload_error = _save_uploaded_receipt(request.files.get("receipt_file"))
     if uploaded_receipt_name:
         payload["Receipt Filename"] = uploaded_receipt_name
         payload["Receipt Attached"] = "Yes"
@@ -9463,6 +9488,8 @@ def add_expense():
         _link_subscription_expense(matched_subscription, payload["id"], period, payload.get("Receipt Attached") == "Yes")
         _save_subscriptions(subscriptions)
 
+    if receipt_upload_error:
+        message = f"{message} — but the receipt could not be attached: {receipt_upload_error}"
     return redirect(url_for("expenses_view", message=message))
 
 
@@ -9512,7 +9539,7 @@ def update_expense():
         "OCR Language": request.form.get("ocr_language", existing_expense_row.get("OCR Language", "")),
         "OCR Raw Response": request.form.get("ocr_raw_response", existing_expense_row.get("OCR Raw Response", "")),
     }
-    uploaded_receipt_name = _save_uploaded_receipt(request.files.get("receipt_file"))
+    uploaded_receipt_name, receipt_upload_error = _save_uploaded_receipt(request.files.get("receipt_file"))
     if uploaded_receipt_name:
         payload["Receipt Filename"] = uploaded_receipt_name
         payload["Receipt Attached"] = "Yes"
@@ -9581,8 +9608,12 @@ def update_expense():
 
     _record_audit("update", "expense", {"row_number": row_number, "record": payload})
     _record_ledger_entry("update", "expense", payload, source="workbook", row_number=row_number)
+    receipt_warning_html = (
+        f'<div class="warn">Receipt could not be attached: {receipt_upload_error}</div>'
+        if receipt_upload_error else ""
+    )
     return Response(
-        """
+        f"""
 <!doctype html>
 <html lang=\"en\">
     <head>
@@ -9590,14 +9621,16 @@ def update_expense():
         <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">
         <title>Expense Updated</title>
         <style>
-            body { font-family: Segoe UI, Arial, sans-serif; margin: 28px; color: #0f172a; }
-            .ok { color: #065f46; font-weight: 600; margin-bottom: 10px; }
-            a { color: #1d4ed8; text-decoration: none; }
-            a:hover { text-decoration: underline; }
+            body {{ font-family: Segoe UI, Arial, sans-serif; margin: 28px; color: #0f172a; }}
+            .ok {{ color: #065f46; font-weight: 600; margin-bottom: 10px; }}
+            .warn {{ color: #b45309; font-weight: 600; margin-bottom: 10px; }}
+            a {{ color: #1d4ed8; text-decoration: none; }}
+            a:hover {{ text-decoration: underline; }}
         </style>
     </head>
     <body>
         <div class=\"ok\">Expense updated in app view.</div>
+        {receipt_warning_html}
         <div><a href=\"/expenses\">Return to Expenses</a></div>
     </body>
 </html>

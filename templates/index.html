@@ -1137,13 +1137,15 @@
                   <input id="document_name" type="text" name="name" value="{{ document_form.get('name', '') }}" placeholder="Document name">
                   {% if validation_errors.get('name') %}<span class="field-error">{{ validation_errors.get('name') }}</span>{% endif %}
                 </div>
-                <div class="field required">
+                <div class="field required {% if validation_errors.get('category') %}has-error{% endif %}">
                   <label for="document_category">Category</label>
                   <select id="document_category" name="category">
+                    <option value="" disabled {% if not document_form.get('category') %}selected{% endif %}>Select a category...</option>
                     {% for category in document_categories %}
                     <option value="{{ category }}" {% if document_form.get('category') == category %}selected{% endif %}>{{ category }}</option>
                     {% endfor %}
                   </select>
+                  {% if validation_errors.get('category') %}<span class="field-error">{{ validation_errors.get('category') }}</span>{% endif %}
                 </div>
                 <div class="field optional" style="grid-column: 1 / -1;">
                   <label for="document_description">Description</label>
@@ -1161,8 +1163,8 @@
                 <div class="field optional {% if validation_errors.get('document_file') %}has-error{% endif %}" style="grid-column: 1 / -1;">
                   <label for="document_upload_file">File</label>
                   <div class="receipt-dropzone" id="document_upload_dropzone">
-                    <input type="file" id="document_upload_file" name="document_file" accept=".pdf,.docx,.png,.jpg,.jpeg" style="display:none;">
-                    <span class="receipt-dropzone-text">Drag file here or click to upload (PDF, DOCX, PNG, JPG — max 10MB)</span>
+                    <input type="file" id="document_upload_file" name="document_file" accept=".pdf,.docx,.xlsx,.xls,.pptx,.png,.jpg,.jpeg,.csv" style="display:none;">
+                    <span class="receipt-dropzone-text">Drag file here or click to upload (PDF, DOCX, XLSX, XLS, PPTX, PNG, JPG, CSV — max 25MB)</span>
                     <span class="receipt-dropzone-filename" id="document_upload_filename"></span>
                   </div>
                   {% if validation_errors.get('document_file') %}<span class="field-error">{{ validation_errors.get('document_file') }}</span>{% endif %}
@@ -1192,13 +1194,16 @@
                   <input id="document_edit_name" type="text" name="name" value="{{ document_form.get('name') if document_form else editing_document.name }}" placeholder="Document name">
                   {% if validation_errors.get('name') %}<span class="field-error">{{ validation_errors.get('name') }}</span>{% endif %}
                 </div>
-                <div class="field required">
+                <div class="field required {% if validation_errors.get('category') %}has-error{% endif %}">
                   <label for="document_edit_category">Category</label>
                   <select id="document_edit_category" name="category">
+                    {% set current_category = document_form.get('category') if document_form else editing_document.category %}
+                    <option value="" disabled {% if not current_category %}selected{% endif %}>Select a category...</option>
                     {% for category in document_categories %}
-                    <option value="{{ category }}" {% if (document_form.get('category') if document_form else editing_document.category) == category %}selected{% endif %}>{{ category }}</option>
+                    <option value="{{ category }}" {% if current_category == category %}selected{% endif %}>{{ category }}</option>
                     {% endfor %}
                   </select>
+                  {% if validation_errors.get('category') %}<span class="field-error">{{ validation_errors.get('category') }}</span>{% endif %}
                 </div>
                 <div class="field optional" style="grid-column: 1 / -1;">
                   <label for="document_edit_description">Description</label>
@@ -1216,8 +1221,8 @@
                 <div class="field optional" style="grid-column: 1 / -1;">
                   <label for="document_edit_file">Replace file</label>
                   <div class="receipt-dropzone" id="document_edit_dropzone">
-                    <input type="file" id="document_edit_file" name="document_file" accept=".pdf,.docx,.png,.jpg,.jpeg" style="display:none;">
-                    <span class="receipt-dropzone-text">Drag file here or click to upload (PDF, DOCX, PNG, JPG — max 10MB)</span>
+                    <input type="file" id="document_edit_file" name="document_file" accept=".pdf,.docx,.xlsx,.xls,.pptx,.png,.jpg,.jpeg,.csv" style="display:none;">
+                    <span class="receipt-dropzone-text">Drag file here or click to upload (PDF, DOCX, XLSX, XLS, PPTX, PNG, JPG, CSV — max 25MB)</span>
                     <span class="receipt-dropzone-filename" id="document_edit_filename">{% if editing_document.filename %}Current file: {{ editing_document.filename }}{% endif %}</span>
                   </div>
                   {% if validation_errors.get('document_file') %}<span class="field-error">{{ validation_errors.get('document_file') }}</span>{% endif %}
@@ -3731,13 +3736,14 @@
 
           <div class="form-section-heading">Receipt upload</div>
           <div class="form-row form-row-1">
-            <div class="field optional">
+            <div class="field optional {% if validation_errors.get('receipt_file') %}has-error{% endif %}">
               <div class="receipt-dropzone receipt-dropzone-compact" id="expense_receipt_dropzone">
                 <input type="file" id="expense_receipt_file" name="receipt_file" accept="image/*,.pdf" style="display:none;">
                 <input type="file" id="expense_receipt_camera" accept="image/*" capture="environment" style="display:none;">
                 <span class="receipt-dropzone-text">Drag receipt here or click to upload</span>
                 <span class="receipt-dropzone-filename" id="expense_receipt_filename">{% if editing_expense and editing_expense.get('Receipt Filename') %}Current file: {{ editing_expense.get('Receipt Filename') }}{% endif %}</span>
               </div>
+              {% if validation_errors.get('receipt_file') %}<span class="field-error">{{ validation_errors.get('receipt_file') }}</span>{% endif %}
               <button type="button" class="btn-secondary" id="expense_receipt_camera_btn" style="display:none; margin-top: 8px;">Take Photo</button>
               <div class="ocr-status" id="expense_ocr_status" style="display:none;">
                 <span class="ocr-spinner" aria-hidden="true"></span>
