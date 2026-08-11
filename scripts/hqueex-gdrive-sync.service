@@ -1,0 +1,10 @@
+[Unit]
+Description=H-Queex Hub — nightly offsite backup copy to Google Drive (rclone)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=deploy
+Group=deploy
+ExecStart=/opt/hqueex-hub/scripts/gdrive-backup-sync.sh

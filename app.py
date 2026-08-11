@@ -237,6 +237,7 @@ RECENTLY_WON_WINDOW_DAYS = 30
 GDRIVE_BACKUP_DIR = Path("G:/My Drive/H-Queex — Working Documents/H-Queex Hub/Backups")
 GDRIVE_MOUNT_ROOT = Path("G:/")
 BACKUP_STATUS_PATH = BASE_DIR / "backup-status.json"
+GDRIVE_SYNC_STATUS_PATH = BASE_DIR / "gdrive-sync-status.json"
 FILING_LOG_PATH = BASE_DIR / "filing-log.json"
 USERS_PATH = BASE_DIR / "users.json"
 USER_ROLES = ("Owner", "Accountant", "Employee")
@@ -2281,14 +2282,26 @@ def _load_json_records(path: Path) -> list[dict[str, Any]]:
     return records if isinstance(records, list) else []
 
 
-def _load_backup_status() -> dict[str, Any]:
-    if not BACKUP_STATUS_PATH.exists():
+def _load_json_status(path: Path) -> dict[str, Any]:
+    if not path.exists():
         return {}
     try:
-        status = json.loads(BACKUP_STATUS_PATH.read_text(encoding="utf-8"))
+        status = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return {}
     return status if isinstance(status, dict) else {}
+
+
+def _load_backup_status() -> dict[str, Any]:
+    return _load_json_status(BACKUP_STATUS_PATH)
+
+
+def _load_gdrive_sync_status() -> dict[str, Any]:
+    """Status of the nightly rclone offsite copy (backups/ -> Google Drive), written by
+    scripts/gdrive-backup-sync.sh via the hqueex-gdrive-sync systemd timer. Distinct from
+    backup_status's per-save gdrive_ok, which only ever reflects a locally-mounted G: drive
+    (real on the local dev machine, never present on a headless server)."""
+    return _load_json_status(GDRIVE_SYNC_STATUS_PATH)
 
 
 def _save_backup_status(status: dict[str, Any]) -> None:
@@ -5989,6 +6002,7 @@ def _build_page_context(
         "active_clients_count": active_clients_count,
         "upcoming_actions": upcoming_actions,
         "backup_status": _load_backup_status(),
+        "gdrive_sync_status": _load_gdrive_sync_status(),
         "monthly_net_trend": monthly_net_trend,
         "client_service_tiers": list(CLIENT_SERVICE_TIERS),
         "client_retainer_frequencies": list(CLIENT_RETAINER_FREQUENCIES),

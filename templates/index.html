@@ -3122,13 +3122,24 @@
             Last backup: <strong>{{ backup_status.timestamp }}</strong> —
             {% if backup_status.local_ok %}<span style="color:var(--brand-navy);font-weight:700;">Local ✓</span>{% else %}<span style="color:var(--brand-error);font-weight:700;">Local ✗</span>{% endif %}
             &nbsp;
-            {% if backup_status.gdrive_ok %}<span style="color:var(--brand-navy);font-weight:700;">Google Drive ✓</span>{% else %}<span style="color:var(--brand-error);font-weight:700;">Google Drive ✗</span>{% endif %}
+            {% if backup_status.gdrive_ok %}<span style="color:var(--brand-navy);font-weight:700;">Google Drive (live mount) ✓</span>{% else %}<span style="color:var(--brand-error);font-weight:700;">Google Drive (live mount) ✗</span>{% endif %}
             {% if backup_status.error %}<div class="mini" style="margin-top:6px;color:var(--brand-error);">{{ backup_status.error }}</div>{% endif %}
             {% else %}
             No backups have been made yet.
             {% endif %}
           </div>
           <div style="margin-top:12px;"><a href="/settings/backups" class="btn-primary" style="border-radius:999px;display:inline-block;text-decoration:none;">Restore from backup</a></div>
+        </div>
+        <div class="card" style="margin-bottom:16px;">
+          <div class="mini" style="margin:0;">
+            {% if gdrive_sync_status and gdrive_sync_status.timestamp %}
+            Last offsite sync (nightly, rclone → Google Drive): <strong>{{ gdrive_sync_status.timestamp }}</strong> —
+            {% if gdrive_sync_status.ok %}<span style="color:var(--brand-navy);font-weight:700;">✓</span>{% else %}<span style="color:var(--brand-error);font-weight:700;">✗</span>{% endif %}
+            {% if gdrive_sync_status.error %}<div class="mini" style="margin-top:6px;color:var(--brand-error);">{{ gdrive_sync_status.error }}</div>{% endif %}
+            {% else %}
+            Offsite sync has not run yet.
+            {% endif %}
+          </div>
         </div>
       </div>
       {% endif %}
@@ -3170,9 +3181,14 @@
       <div class="card"><h3>Data status</h3><p>{{ error }}</p></div>
       {% else %}
       {% if active_tab == 'dashboard' %}
-      {% if backup_status and backup_status.timestamp and (not backup_status.local_ok or not backup_status.gdrive_ok) %}
+      {% if backup_status and backup_status.timestamp and not backup_status.local_ok %}
       <div class="notice-exceeded" style="margin-bottom:16px;padding:10px 14px;border-radius:8px;border:1px solid var(--brand-error);">
         ⚠ Backup failed — {{ backup_status.error or "the last backup did not complete successfully." }} <a href="/settings/backups" style="color:var(--brand-error);font-weight:700;">Check backups</a>
+      </div>
+      {% endif %}
+      {% if gdrive_sync_status and gdrive_sync_status.timestamp and not gdrive_sync_status.ok %}
+      <div class="notice-exceeded" style="margin-bottom:16px;padding:10px 14px;border-radius:8px;border:1px solid var(--brand-error);">
+        ⚠ Offsite backup sync failed — {{ gdrive_sync_status.error or "the last nightly sync to Google Drive did not complete successfully." }} <a href="/settings/backups" style="color:var(--brand-error);font-weight:700;">Check backups</a>
       </div>
       {% endif %}
       {% if documents_expiring_soon %}
@@ -3459,9 +3475,12 @@
         Last backup: <strong>{{ backup_status.timestamp }}</strong> —
         {% if backup_status.local_ok %}Local ✓{% else %}Local ✗{% endif %}
         ·
-        {% if backup_status.gdrive_ok %}Google Drive ✓{% else %}Google Drive ✗{% endif %}
+        {% if backup_status.gdrive_ok %}Google Drive (live) ✓{% else %}Google Drive (live) ✗{% endif %}
         {% else %}
         Last backup: never
+        {% endif %}
+        {% if gdrive_sync_status and gdrive_sync_status.timestamp %}
+        · Offsite sync: <strong>{{ gdrive_sync_status.timestamp }}</strong> — {% if gdrive_sync_status.ok %}✓{% else %}✗{% endif %}
         {% endif %}
       </div>
       {% else %}

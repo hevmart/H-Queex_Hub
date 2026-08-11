@@ -214,14 +214,77 @@ account. `users.json` (like all the other JSON data files) lives directly in
 `/opt/hqueex-hub` alongside the code — it is **not** committed to git (see
 `.gitignore`), same as local.
 
+## 8. Offsite backup (rclone → Google Drive)
+
+`_backup_json_file()` in `app.py` writes every JSON save to a local
+`backups/<date>/` folder immediately (works identically on every machine),
+and also *attempts* a live copy to a Google Drive mount at `G:/` — which is
+only ever real on the local Windows dev machine (Google Drive Desktop). On
+a headless Linux server there is no `G:` drive; `_backup_json_file` checks
+`GDRIVE_MOUNT_ROOT.is_dir()` before attempting anything and correctly
+reports `gdrive_ok: false` there rather than fabricating a fake local `G:`
+folder (an actual bug this caught and fixed — see git history). That per-save
+live-mount status still shows in Settings → Backups for informational
+purposes, but a headless server will always show it as `✗`, by design — it
+is **not** a failure there, and does not trigger the dashboard warning
+banner.
+
+Real offsite protection for the server instead comes from a separate,
+independent nightly job: `scripts/gdrive-backup-sync.sh`, run via
+`hqueex-gdrive-sync.timer`/`.service`, which `rclone copy`s the whole
+`backups/` folder to the same Google Drive folder structure used locally
+(`My Drive/H-Queex — Working Documents/H-Queex Hub/Backups/`). It uses
+`copy`, not `sync` — deliberately never deletes anything on the Drive side,
+so the offsite copy survives local deletion or corruption even though local
+`backups/` is pruned to `BACKUP_RETENTION_DAYS` (30 days). Its result is
+written to `gdrive-sync-status.json` and shown on the dashboard/Settings
+pages via `_load_gdrive_sync_status()` — a genuine sync failure (not
+"hasn't run yet") does trigger the warning banner.
+
+**One-time setup on a new server:**
+
+```bash
+sudo apt-get install -y rclone
+```
+
+Then configure the `gdrive-hqueex` remote — this step needs an interactive
+Google OAuth consent and can't be scripted or done by an agent on your
+behalf. Run `rclone config` on the server as `deploy`, create a new remote
+named `gdrive-hqueex`, type `drive` (Google Drive), and when asked "Use
+auto config?" answer **no** (the server has no browser) — it prints a
+`rclone authorize "drive"` command to run on a machine that *does* have a
+browser (e.g. locally, with `rclone` installed there too), which opens a
+Google consent screen and prints back a token to paste into the server's
+prompt. Full access scope (not `drive.file`) is required, since the sync
+target is an existing folder tree created by Google Drive Desktop locally,
+not a folder rclone creates itself.
+
+Then install and enable the timer:
+
+```bash
+sudo cp scripts/gdrive-backup-sync.sh /opt/hqueex-hub/scripts/
+sudo chmod +x /opt/hqueex-hub/scripts/gdrive-backup-sync.sh
+sudo cp scripts/hqueex-gdrive-sync.service scripts/hqueex-gdrive-sync.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now hqueex-gdrive-sync.timer
+```
+
+Test a run immediately rather than waiting for 03:00:
+`sudo systemctl start hqueex-gdrive-sync.service`, then check
+`cat /opt/hqueex-hub/gdrive-sync-status.json` and
+`journalctl -u hqueex-gdrive-sync.service`.
+
 ## Known gaps / not yet done
 
 - **No CI/CD** — deployment is a manual `git pull` + `systemctl restart` over
   SSH (see §3). No GitHub Actions workflow triggers this automatically yet.
-- **No automated backups configured on the server.** Local dev has its own
-  backup mechanism (`backup-status.json`, tracked separately); this server
-  instance currently has none — the JSON data files in `/opt/hqueex-hub` are
-  the only copy of anything entered through this instance.
+- **Uploaded file binaries are not backed up anywhere, on either instance —
+  only their JSON metadata is.** Documents, SOPs, receipts, and delivery-log
+  files are stored on disk (`documents/`, `sops/`, `receipts/`,
+  `delivery-files/`) but `_backup_eligible_files()` in `app.py` only lists
+  JSON paths — the metadata record describing a file is backed up (locally,
+  and now genuinely offsite via rclone), the file itself is not. Needs its
+  own decision — not fixed yet.
 - **`ANTHROPIC_API_KEY` not set** — OCR receipt upload will fail on this
   instance until it's added to `/etc/hqueex-hub/hqueex-hub.env`.
 - **Single gunicorn instance, no load balancing** — fine for a test/pre-launch
