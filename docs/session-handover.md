@@ -11,9 +11,9 @@ file for spreadsheet-style entities), read/written directly. **Now multi-user wi
 Flask-Login authentication** (Owner/Accountant/Employee roles — see Modules below), runs
 locally via `Launch-HQueex-Hub.ps1` on `http://127.0.0.1:5000`.
 
-**Test suite: 227 tests passing** (`tests/test_writeback.py`, run via
-`.venv/Scripts/python.exe -m pytest -q`). Every feature session so far has ended with
-the full suite green before committing — keep that bar.
+**Test suite: 229 tests passing** (`tests/test_writeback.py`, run via
+`.venv/Scripts/python.exe -m pytest -q`), latest commit `c530033`. Every feature session
+so far has ended with the full suite green before committing — keep that bar.
 
 **First run after pulling this state needs `/setup`** — there is no committed
 `users.json` (it's real per-deployment credential data, never committed). Visiting any
@@ -77,14 +77,23 @@ OwningProcess` finds the real one; kill the rest via `taskkill /PID <n> /F`).
 9. **PDF generation (WeasyPrint)** — branded PDF routes for Invoice
    (`POST /invoices/pdf/<row_number>`), Proposal (`POST /crm/proposals/pdf/<id>`, cover
    page + services/pricing + terms), and DMAIC (`POST /operations/dmaic/pdf/<project_id>`),
-   plus PDF output in the year-end pack. Every route degrades gracefully to the existing
-   HTML/browser-print view if WeasyPrint's native libraries aren't available — see Known
-   Issues below, this matters on this machine right now.
+   plus PDF output in the year-end pack. **GTK3 Runtime is now installed on this machine
+   and WeasyPrint produces real PDFs** — verified live on all four routes (`%PDF-1.7`
+   magic header confirmed, one visually inspected by rasterizing with the vendored
+   Poppler binary). The graceful HTML/browser-print fallback for machines without GTK3
+   is still there and still tested (`_generate_pdf_bytes()` returns `None`), it's just
+   not the active path here anymore.
 10. **Website lead-intake API hardening** — CORS allowlist (`HQ_ALLOWED_API_ORIGINS` env
     var, not a wildcard), 10 requests/hour/IP rate limiting (Flask-Limiter), a silent
     honeypot (`website_url` field), dashboard flagging + audit logging of new website
     enquiries, `GET /api/health` for uptime monitoring, and `docs/website-contact-form.html`
-    as the reference markup for the real website to POST from.
+    as the reference markup for the real website to POST from. **The real domains are
+    h-queex.com and h-queex.ie** (see Next Priorities — the allowlist default still has
+    guessed domains and needs updating to match).
+11. **HTTP-insecurity warning is localhost-aware** — `_is_local_request()` in `app.py`
+    (Jinja global) hides the "Running on HTTP" banner when `request.host` is
+    `localhost`/`127.0.0.1`/`::1`, since the warning is meaningless for a server nothing
+    external can reach. Still shows for any other hostname.
 
 ## Architectural decisions worth knowing
 
@@ -196,13 +205,19 @@ OwningProcess` finds the real one; kill the rest via `taskkill /PID <n> /F`).
 - **WeasyPrint needs a native GTK3 runtime that Windows doesn't ship and pip can't
   install** — a documented WeasyPrint limitation
   (https://doc.courtbouillon.org/weasyprint/stable/first_steps.html#windows), not a bug
-  in this codebase. `app.py` imports it in a `try/except (ImportError, OSError)` block
-  (`WEASYPRINT_AVAILABLE` flag) and every PDF-producing route/the year-end pack checks
-  `_generate_pdf_bytes()` returning `None` to fall back to the existing HTML/print view
-  with a clear on-page message — this fallback is what's actually running on this
-  machine right now. Tests mock `app._generate_pdf_bytes` rather than depending on real
-  WeasyPrint output. If/when GTK3 is installed on the host machine, PDFs start working
-  immediately with no code changes — same pattern as the vendored Poppler binary for OCR.
+  in this codebase. **GTK3 is now installed on this machine** and `WEASYPRINT_AVAILABLE`
+  is `True` at runtime, so all four PDF routes produce real PDFs. `app.py` still imports
+  WeasyPrint in a `try/except (ImportError, OSError)` block and every route still checks
+  `_generate_pdf_bytes()` for `None` to fall back to HTML/browser-print — keep that
+  fallback intact for portability to any machine without GTK3 (e.g. a fresh dev clone).
+  Tests mock `app._generate_pdf_bytes` rather than depending on real WeasyPrint output,
+  so the suite stays deterministic regardless of which machine runs it. One real bug was
+  caught by actually looking at a rendered PDF: the logo (navy/gold artwork) was
+  invisible against the navy PDF header — fixed with a white plate behind it in
+  `_render_branded_pdf_html`. Lesson: mocked tests prove the plumbing works, not that the
+  output looks right — visually inspect at least one real PDF (rasterize with the
+  vendored Poppler binary, `pdf2image.convert_from_path(..., poppler_path=...)`) after
+  any change to the PDF templates.
 - **CORS on `/api/leads` reflects an allowlisted Origin, never `*`.** `ALLOWED_API_ORIGINS`
   defaults to `hqueex.com`/`www.hqueex.com`/a guessed Netlify domain — **these are
   guesses, not confirmed real domains**. Set `HQ_ALLOWED_API_ORIGINS` (comma-separated)
@@ -238,20 +253,41 @@ OwningProcess` finds the real one; kill the rest via `taskkill /PID <n> /F`).
   Title was removed and Description became the sole primary identifying field); the
   review card's confidence badge uses gold rather than green for "good" (brand palette
   has no green).
-- **No real PDFs on this machine yet** — WeasyPrint's native GTK3 dependency isn't
-  installed (see Architectural Decisions above). Every PDF route works and is tested via
-  mocks, but nobody has visually reviewed a real generated PDF's layout on this machine.
-  Installing GTK3 Runtime for Windows and re-checking PDF output visually is the natural
-  next step whenever PDFs actually matter for a real handoff.
-- **`HQ_ALLOWED_API_ORIGINS` has not been set to the real website domain** — the default
-  allowlist in `app.py` is a reasonable guess (`hqueex.com`, `www.hqueex.com`, a Netlify
-  guess), not confirmed. Whoever owns the actual website deploy needs to either confirm
-  those are right or set the env var.
+- **`HQ_ALLOWED_API_ORIGINS` still defaults to guessed domains, not the real ones.** The
+  actual website domains are **h-queex.com and h-queex.ie** — the code currently defaults
+  to `hqueex.com`/`www.hqueex.com`/a guessed Netlify domain. This needs updating (either
+  the env var set at deploy time, or the default in `app.py`) before the real contact
+  form will work cross-origin — right now it would get CORS errors in the browser
+  console even though curl/server-to-server calls succeed.
 - **`docs/website-contact-form.html` has a placeholder `HUB_API_URL`** pointing at
   `http://127.0.0.1:5000` (the local dev server) — must be updated to the real deployed
-  Hub URL before the website team wires it in.
+  Hub URL before the website team wires it in. This file also hasn't actually been
+  wired into the live website yet — it's the reference implementation, not a confirmed
+  live integration.
 
-## Next priorities (not yet requested, but logical follow-ons)
+## Next priorities
+
+1. ~~Switch PDF routes to real WeasyPrint generation~~ — **done**, GTK3 installed and
+   working, all four routes verified live (see Architectural Decisions).
+2. ~~Hide the HTTP-insecurity warning on localhost~~ — **done**, `_is_local_request()`.
+3. **Update the CORS allowlist for the real domains, h-queex.com and h-queex.ie.**
+   `ALLOWED_API_ORIGINS` in `app.py` currently defaults to guessed domains
+   (`hqueex.com`, `www.hqueex.com`, a Netlify guess) — update the default list or set
+   `HQ_ALLOWED_API_ORIGINS=https://h-queex.com,https://h-queex.ie` (plus `www.` variants
+   if the site serves both) at deploy time. Until this is done the real contact form will
+   fail CORS in the browser even though the API itself works.
+4. **Wire the real website contact form to `POST /api/leads`.**
+   `docs/website-contact-form.html` is the reference implementation (honeypot field,
+   fetch-based submit) but hasn't been dropped into the live site yet, and its
+   `HUB_API_URL` placeholder still points at `127.0.0.1:5000` — needs the real deployed
+   Hub URL before it'll work from h-queex.com/h-queex.ie.
+5. **Remaining layout polish** — no specific items are currently flagged as outstanding;
+   the last full UI audit (duplicate headings, modal widths, date formats, breadcrumbs,
+   stale text) was completed and committed. If new inconsistencies turn up, treat them
+   the same way the CRM-breadcrumb and duplicate-login-tagline bugs were caught this
+   session: by actually looking at rendered output, not just reading the template code.
+
+### Lower-priority / not yet requested
 
 - Decide whether `currency` and `phase_tag` become real subscription fields, or stay as
   notes-text conventions.
@@ -261,30 +297,20 @@ OwningProcess` finds the real one; kill the rest via `taskkill /PID <n> /F`).
   and its single-source-of-truth lesson should be applied anywhere else in the app
   (Income? Invoices?) — no request for this yet, but the pattern is now proven out.
 - Decide what to do with the two sample subscription records in production data.
-- The Task 10 code-quality audit added a single global `@app.errorhandler(500)` (branded
-  friendly error page + server-side logging) rather than auditing and wrapping every
-  individual POST route in its own try/except — this satisfies "no unhandled 500 without
-  a friendly message" but a route-by-route audit for *silent* failure modes (e.g. a
-  write that partially succeeds) hasn't been done.
+- No route-by-route audit of *silent* partial-failure modes has been done — the global
+  `@app.errorhandler(500)` guarantees no unhandled exception shows a raw stack trace, but
+  a write that partially succeeds (e.g. ledger entry recorded but sheet row not saved)
+  wouldn't necessarily be caught by that alone.
 - `_export_ledger_journal_csv` filtered by year is currently the "all transactions" file
   in the year-end pack. If a future accountant workflow wants separate Income/Expense/
   Invoice CSVs instead of one ledger-journal-shaped CSV, that's a small addition to
   `generate_year_end_pack()`, not a redesign.
 - Real-world verification of the year-end pack's VAT/P&L numbers against an actual filed
   return hasn't happened yet — the calculations reuse existing, already-tested helpers
-  and were hand-checked against the real JSON data this session (P&L €370.00 income /
-  €851.30 expenses, capital allowances €64.87 total, VAT correctly all-zero since the
-  business isn't VAT-registered), but nobody with real accounting expertise has reviewed
-  the assembled pack.
-- Install GTK3 Runtime for Windows on this machine to get real PDF output (see Known
-  Issues) — everything downstream of that is already built and tested.
-- Confirm/set `HQ_ALLOWED_API_ORIGINS` to the real website domain, and update the
-  `HUB_API_URL` placeholder in `docs/website-contact-form.html` before the website team
-  wires the real contact form in.
-- No route-by-route audit of *silent* partial-failure modes has been done — the global
-  `@app.errorhandler(500)` guarantees no unhandled exception shows a raw stack trace, but
-  a write that partially succeeds (e.g. ledger entry recorded but sheet row not saved)
-  wouldn't necessarily be caught by that alone.
+  and were hand-checked against the real JSON data (P&L €370.00 income / €851.30
+  expenses, capital allowances €64.87 total, VAT correctly all-zero since the business
+  isn't VAT-registered), but nobody with real accounting expertise has reviewed the
+  assembled pack.
 - CSRF protection (Flask-WTF or similar) hasn't been added — Flask-Login's session
   cookie auth has no CSRF token on POST forms. Not exploited by anything in this app
   today (single-tenant, no third-party embeds), but worth knowing if the app is ever
