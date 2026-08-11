@@ -7,12 +7,17 @@ need to re-derive any of this from git history.
 
 A Flask + JSON-file business management app for H-Queex, an Irish sole-trader/limited
 company consultancy. No database — every entity is a flat JSON file (or a "sheet" JSON
-file for spreadsheet-style entities), read/written directly. Single-user, runs locally
-via `Launch-HQueex-Hub.ps1` on `http://127.0.0.1:5000`.
+file for spreadsheet-style entities), read/written directly. **Now multi-user with
+Flask-Login authentication** (Owner/Accountant/Employee roles — see Modules below), runs
+locally via `Launch-HQueex-Hub.ps1` on `http://127.0.0.1:5000`.
 
-**Test suite: 206 tests passing** (`tests/test_writeback.py`, run via
+**Test suite: 227 tests passing** (`tests/test_writeback.py`, run via
 `.venv/Scripts/python.exe -m pytest -q`). Every feature session so far has ended with
 the full suite green before committing — keep that bar.
+
+**First run after pulling this state needs `/setup`** — there is no committed
+`users.json` (it's real per-deployment credential data, never committed). Visiting any
+page with no `users.json` present redirects to `/setup` to create the Owner account.
 
 **App runs with `debug=False`** (`app.run(debug=False, use_reloader=False, ...)`), so
 **Jinja template auto-reload is off** — editing `templates/index.html` or `app.py` while
@@ -56,9 +61,30 @@ OwningProcess` finds the real one; kill the rest via `taskkill /PID <n> /F`).
    Full Form**. See Architectural Decisions below for the details worth knowing before
    touching this code.
 7. **Dashboard** — Upcoming Actions (overdue/due-soon invoices, next 3 compliance
-   deadlines, Clarity Partner unbilled delivery, project deadlines, lead follow-ups — all
-   clickable), Year-to-date summary (income/expenses/net profit/estimated tax using the
-   existing phase-aware `PHASE_POLICY` rate, current VAT position).
+   deadlines, Clarity Partner unbilled delivery, project deadlines, lead follow-ups, new
+   website enquiries — all clickable), Year-to-date summary (income/expenses/net
+   profit/estimated tax using the existing phase-aware `PHASE_POLICY` rate, current VAT
+   position).
+8. **Authentication (Flask-Login)** — `users.json` (bcrypt-hashed passwords, never
+   plaintext), 2-hour inactivity session timeout, `/login` and `/setup` (first-run Owner
+   creation) as standalone branded pages outside the main app shell. A single
+   `@app.before_request` gate (`_enforce_role_access` in `app.py`) enforces both
+   authentication and per-role URL-prefix allowlists — **not** per-route
+   `@login_required` decorators, to avoid the risk of missing a route. Three roles:
+   Owner (unrestricted), Accountant (read-only on Finance/Company/Reports, no Payroll,
+   but can POST to the year-end pack generator specifically), Employee (Operations + CRM
+   only). Owner-only User Management page at `/company/settings/users`.
+9. **PDF generation (WeasyPrint)** — branded PDF routes for Invoice
+   (`POST /invoices/pdf/<row_number>`), Proposal (`POST /crm/proposals/pdf/<id>`, cover
+   page + services/pricing + terms), and DMAIC (`POST /operations/dmaic/pdf/<project_id>`),
+   plus PDF output in the year-end pack. Every route degrades gracefully to the existing
+   HTML/browser-print view if WeasyPrint's native libraries aren't available — see Known
+   Issues below, this matters on this machine right now.
+10. **Website lead-intake API hardening** — CORS allowlist (`HQ_ALLOWED_API_ORIGINS` env
+    var, not a wildcard), 10 requests/hour/IP rate limiting (Flask-Limiter), a silent
+    honeypot (`website_url` field), dashboard flagging + audit logging of new website
+    enquiries, `GET /api/health` for uptime monitoring, and `docs/website-contact-form.html`
+    as the reference markup for the real website to POST from.
 
 ## Architectural decisions worth knowing
 
@@ -156,6 +182,33 @@ OwningProcess` finds the real one; kill the rest via `taskkill /PID <n> /F`).
   top-level `*_PATH` constant added to `app.py` **must** be added to that fixture's
   save/redirect/restore triple, or tests will read/write the real project data file
   instead of an isolated tmp copy (this happened once this session before being caught).
+  `USERS_PATH` was added the same way when auth landed.
+- **Auth is enforced by one `before_request` gate, not per-route decorators.** Adding a
+  new route does *not* require remembering `@login_required` — `_enforce_role_access()`
+  in `app.py` checks every request's path against `EMPLOYEE_ALLOWED_PREFIXES` /
+  `ACCOUNTANT_ALLOWED_PREFIXES` / `OWNER_ONLY_PREFIXES`. When adding a route under a new
+  URL prefix, check whether it needs adding to one of those tuples — a prefix not
+  explicitly listed is simply denied for non-Owner roles, so the fail-safe direction is
+  "too locked down," not "accidentally exposed." Existing tests bypass this gate entirely
+  via Flask-Login's standard `app.config["LOGIN_DISABLED"] = True`, set in the autouse
+  test fixture — new tests that need to exercise real auth explicitly set it back to
+  `False` (see the `test_login_*` / `test_*_role_*` tests for the pattern).
+- **WeasyPrint needs a native GTK3 runtime that Windows doesn't ship and pip can't
+  install** — a documented WeasyPrint limitation
+  (https://doc.courtbouillon.org/weasyprint/stable/first_steps.html#windows), not a bug
+  in this codebase. `app.py` imports it in a `try/except (ImportError, OSError)` block
+  (`WEASYPRINT_AVAILABLE` flag) and every PDF-producing route/the year-end pack checks
+  `_generate_pdf_bytes()` returning `None` to fall back to the existing HTML/print view
+  with a clear on-page message — this fallback is what's actually running on this
+  machine right now. Tests mock `app._generate_pdf_bytes` rather than depending on real
+  WeasyPrint output. If/when GTK3 is installed on the host machine, PDFs start working
+  immediately with no code changes — same pattern as the vendored Poppler binary for OCR.
+- **CORS on `/api/leads` reflects an allowlisted Origin, never `*`.** `ALLOWED_API_ORIGINS`
+  defaults to `hqueex.com`/`www.hqueex.com`/a guessed Netlify domain — **these are
+  guesses, not confirmed real domains**. Set `HQ_ALLOWED_API_ORIGINS` (comma-separated)
+  to the actual website origin(s) before relying on this in production, or the real
+  contact form will get CORS errors in the browser console even though curl/server-to-
+  server calls work fine.
 
 ## Known issues / things a new session should be aware of
 
@@ -185,6 +238,18 @@ OwningProcess` finds the real one; kill the rest via `taskkill /PID <n> /F`).
   Title was removed and Description became the sole primary identifying field); the
   review card's confidence badge uses gold rather than green for "good" (brand palette
   has no green).
+- **No real PDFs on this machine yet** — WeasyPrint's native GTK3 dependency isn't
+  installed (see Architectural Decisions above). Every PDF route works and is tested via
+  mocks, but nobody has visually reviewed a real generated PDF's layout on this machine.
+  Installing GTK3 Runtime for Windows and re-checking PDF output visually is the natural
+  next step whenever PDFs actually matter for a real handoff.
+- **`HQ_ALLOWED_API_ORIGINS` has not been set to the real website domain** — the default
+  allowlist in `app.py` is a reasonable guess (`hqueex.com`, `www.hqueex.com`, a Netlify
+  guess), not confirmed. Whoever owns the actual website deploy needs to either confirm
+  those are right or set the env var.
+- **`docs/website-contact-form.html` has a placeholder `HUB_API_URL`** pointing at
+  `http://127.0.0.1:5000` (the local dev server) — must be updated to the real deployed
+  Hub URL before the website team wires it in.
 
 ## Next priorities (not yet requested, but logical follow-ons)
 
@@ -207,5 +272,24 @@ OwningProcess` finds the real one; kill the rest via `taskkill /PID <n> /F`).
   `generate_year_end_pack()`, not a redesign.
 - Real-world verification of the year-end pack's VAT/P&L numbers against an actual filed
   return hasn't happened yet — the calculations reuse existing, already-tested helpers
-  but the *assembled* pack itself has only been smoke-tested (`test_year_end_pack_generates_zip_with_expected_files`),
-  not reviewed by an accountant.
+  and were hand-checked against the real JSON data this session (P&L €370.00 income /
+  €851.30 expenses, capital allowances €64.87 total, VAT correctly all-zero since the
+  business isn't VAT-registered), but nobody with real accounting expertise has reviewed
+  the assembled pack.
+- Install GTK3 Runtime for Windows on this machine to get real PDF output (see Known
+  Issues) — everything downstream of that is already built and tested.
+- Confirm/set `HQ_ALLOWED_API_ORIGINS` to the real website domain, and update the
+  `HUB_API_URL` placeholder in `docs/website-contact-form.html` before the website team
+  wires the real contact form in.
+- No route-by-route audit of *silent* partial-failure modes has been done — the global
+  `@app.errorhandler(500)` guarantees no unhandled exception shows a raw stack trace, but
+  a write that partially succeeds (e.g. ledger entry recorded but sheet row not saved)
+  wouldn't necessarily be caught by that alone.
+- CSRF protection (Flask-WTF or similar) hasn't been added — Flask-Login's session
+  cookie auth has no CSRF token on POST forms. Not exploited by anything in this app
+  today (single-tenant, no third-party embeds), but worth knowing if the app is ever
+  exposed beyond a trusted local/VPN network.
+- Rate limiting (`Flask-Limiter`) currently uses in-memory storage
+  (`storage_uri="memory://"`), which resets on every app restart and doesn't share state
+  across multiple worker processes. Fine for this single-process dev deployment; would
+  need Redis or similar if ever run behind multiple gunicorn workers.

@@ -19,8 +19,7 @@
         background: var(--brand-white); border-top: 3px solid var(--brand-gold); border-radius: 12px;
         padding: 40px 36px; width: 92%; max-width: 380px; box-shadow: 0 12px 32px rgba(22, 41, 74, 0.15);
       }
-      .login-logo { display: block; max-width: 220px; margin: 0 auto 8px; }
-      .login-tagline { text-align: center; color: var(--brand-steel); font-size: 13px; font-style: italic; margin: 0 0 28px; }
+      .login-logo { display: block; max-width: 220px; margin: 0 auto 28px; }
       .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 16px; }
       .field label { font-size: 12px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--brand-navy); }
       .field input {
@@ -55,8 +54,7 @@
       <div class="http-warning">Running on HTTP — not secure for remote access. Switch to HTTPS before sharing access.</div>
       {% endif %}
       <div class="login-card">
-        <img class="login-logo" src="{{ url_for('static', filename='H-Queex Logo Blue and Gold with Tagline V4.0.png') }}" alt="H-Queex">
-        <p class="login-tagline">Value from every process.</p>
+        <img class="login-logo" src="{{ url_for('static', filename='H-Queex Logo Blue and Gold with Tagline V4.0.png') }}" alt="H-Queex — Value from every process.">
         {% if error %}<div class="login-error">{{ error }}</div>{% endif %}
         {% if request.args.get('message') %}<div class="login-message">{{ request.args.get('message') }}</div>{% endif %}
         <form method="post" action="/login{% if request.args.get('next') %}?next={{ request.args.get('next') }}{% endif %}" novalidate>
