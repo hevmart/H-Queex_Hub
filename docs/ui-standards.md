@@ -135,12 +135,23 @@ Font: Segoe UI throughout. No other typeface, no other colours.
   screen.
 - Binary yes/no options use a toggle switch, not a checkbox styled to look like a legal
   disclaimer.
-- **Modal width scales with form complexity.** A modal form with more than 6 fields must
+- **Modal width scales with form complexity.** A modal form with 6 or more fields must
   use a wide modal (at least 800px, e.g. `.wide-crm-modal-box` at 880px) laid out in a
   multi-column `form-row` grid so it fits without scrolling. Narrow modals (under 600px,
   e.g. the default `.modal-box` or `.form-modal-box`) are reserved for simple
   confirmations and short forms — don't force a long field list into a narrow modal and
   rely on scrolling to make it fit.
+  **This is enforced automatically at render time**, not by remembering to add a
+  `wide-modal-box` class to every qualifying modal by hand — a global script in
+  `templates/index.html` counts each modal's rendered `.field` elements and adds
+  `wide-modal-box` whenever the count reaches 6, unless it's already there. This exists
+  because a static per-modal class gets it wrong whenever field count is conditional
+  (e.g. the SOP edit modal shows 4-6 fields depending on workflow state) and because
+  three modals (Upload Document, Edit Document, Supplier Add/Edit) had silently shipped
+  narrow despite having 6 fields before this was caught. When adding a new modal, you
+  still don't need to add `wide-modal-box` yourself for the 6+ case — just don't fight
+  the script by pre-emptively adding it to something with fewer fields, since the script
+  only adds the class, it never removes it.
 
 ## Typography
 

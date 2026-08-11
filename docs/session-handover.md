@@ -161,16 +161,24 @@ OwningProcess` finds the real one; kill the rest via `taskkill /PID <n> /F`).
   added this session, those two values were put in the `notes` field as text rather than
   silently dropped or the schema being expanded ad hoc — flagged to the user, not yet
   decided whether to promote them to real fields.
-- **Modal width follows field count, not a fixed default.** `ui-standards.md` now
-  requires modals with more than 6 fields to be ≥800px wide with a multi-column layout;
-  narrow (`.modal-box`/`.form-modal-box`, 380/560px) modals are for simple confirmations
-  only. The wide pattern is the `.wide-modal-box` modifier (900px, `min(900px, 85vw)`)
-  combined with `.service-modal-box` (tightened field/row spacing, 90vh scroll safety
-  net) — used by Lead, Proposal, and Service. Other wide forms (Business Profile,
-  Project, Delivery, SOP, Client) reuse `.wide-modal-box` on top of the existing
-  `.form-modal-box` base rather than switching base classes, since `.form-modal-box` sets
-  nothing but `max-width`. When adding a new modal with >6 fields, add `wide-modal-box` to
-  its class list rather than inventing a new width value.
+- **Modal width follows field count, not a fixed default — and this is now enforced
+  automatically, not by convention.** `ui-standards.md` requires modals with 6 or more
+  fields to be ≥800px wide with a multi-column layout; narrow (`.modal-box`/
+  `.form-modal-box`, 380/560px) modals are for simple confirmations only. The wide
+  pattern is the `.wide-modal-box` modifier (900px, `min(900px, 85vw)`) combined with
+  `.service-modal-box` (tightened field/row spacing, 90vh scroll safety net) — used by
+  Lead, Proposal, and Service. Other wide forms (Business Profile, Project, Delivery,
+  SOP, Client) reuse `.wide-modal-box` on top of the existing `.form-modal-box` base
+  rather than switching base classes, since `.form-modal-box` sets nothing but
+  `max-width`. **A relying-on-memory version of this rule shipped three modals narrow
+  despite having 6 fields** (Upload Document, Edit Document, Supplier Add/Edit) before
+  being caught — fixed by a global script in `templates/index.html` that counts each
+  modal's rendered `.field` elements at page load and adds `wide-modal-box` automatically
+  whenever the count reaches 6 (needed anyway since the SOP edit modal's field count is
+  conditional on workflow state, so no static class could ever be correct there). Adding
+  `wide-modal-box` by hand is no longer necessary for the 6+ case — the script handles it
+  — though it's harmless to also add it explicitly for a modal you already know will
+  always qualify.
 - **`fmt_date` Jinja filter** (`app.py`, registered via `app.jinja_env.filters["fmt_date"]`)
   converts stored ISO (`YYYY-MM-DD`) dates to `DD/MM/YYYY` for display. Applied to every
   list-view/detail-view date display across the app. Never apply it to `<input

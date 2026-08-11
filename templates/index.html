@@ -7283,12 +7283,24 @@
     </script>
     <script>
       (function () {
-        // Applies two consistent, app-wide conventions to every rendered form without
+        // Applies three consistent, app-wide conventions to every rendered form without
         // requiring each of the ~15 add/edit forms to be hand-edited: currency amount
-        // fields get a € prefix + 2-decimal formatting, and every .form-shell gets a
+        // fields get a € prefix + 2-decimal formatting, every .form-shell gets a
         // Cancel button that reloads the page's base URL (dropping any ?edit_row=/
-        // ?edit_id= query string), which is the same "start clean" behaviour the
-        // existing per-section "Cancel edit" links already use.
+        // ?edit_id= query string, which is the same "start clean" behaviour the
+        // existing per-section "Cancel edit" links already use), and any modal with 6+
+        // fields is forced wide (ui-standards.md -> Layout). This last one runs at
+        // render time rather than relying on a hand-added "wide-modal-box" class per
+        // modal, because field count isn't always static — the SOP edit modal shows
+        // 4-6 fields depending on workflow state, so a fixed class can't get every
+        // state right; counting live .field elements does.
+
+        document.querySelectorAll(".modal-box.form-modal-box, .modal-box.service-modal-box").forEach(function (modalBox) {
+          if (modalBox.classList.contains("wide-modal-box")) { return; }
+          if (modalBox.querySelectorAll(".field").length >= 6) {
+            modalBox.classList.add("wide-modal-box");
+          }
+        });
 
         function isCurrencyInput(input) {
           if (input.tagName !== "INPUT" || input.type !== "number") { return false; }
