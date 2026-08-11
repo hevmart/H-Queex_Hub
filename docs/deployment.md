@@ -1,0 +1,234 @@
+# H-Queex Hub — Deployment (Hetzner VPS)
+
+This documents the first real deployment of H-Queex Hub, done ahead of launch for
+testing purposes. Local dev (Flask dev server via `Launch-HQueex-Hub.ps1`) is
+unaffected and remains the day-to-day workflow — this is a separate, always-on
+instance for testing the app the way it'll actually run in production.
+
+## Current deployment
+
+- **Server**: Hetzner VPS, Ubuntu 24.04.4 LTS, IP `167.233.110.170`
+- **Domain**: `hub.h-queex.com` (A record → server IP)
+- **App path**: `/opt/hqueex-hub` (git clone of `origin/main`)
+- **Process manager**: systemd unit `hqueex-hub.service` running gunicorn
+- **Reverse proxy / TLS**: Caddy (`hqueex-hub` proxied on `127.0.0.1:8000`),
+  automatic HTTPS via Let's Encrypt
+- **Deploy user**: `deploy` (passwordless sudo, SSH key auth only)
+
+## 1. Server hardening
+
+Root SSH login and password auth are both disabled. All administration goes
+through the `deploy` user (key-based auth, passwordless sudo).
+
+```bash
+# as root, one-time setup
+useradd -m -s /bin/bash deploy
+usermod -aG sudo deploy
+mkdir -p /home/deploy/.ssh
+cp /root/.ssh/authorized_keys /home/deploy/.ssh/authorized_keys
+chown -R deploy:deploy /home/deploy/.ssh
+chmod 700 /home/deploy/.ssh && chmod 600 /home/deploy/.ssh/authorized_keys
+echo "deploy ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/deploy
+chmod 440 /etc/sudoers.d/deploy
+
+# then, after confirming `ssh deploy@<ip>` + `sudo whoami` both work:
+sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin no/' /etc/ssh/sshd_config
+sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config
+sshd -t && systemctl reload ssh
+```
+
+Firewall (ufw) allows only SSH, HTTP, HTTPS:
+
+```bash
+ufw allow OpenSSH
+ufw allow 80/tcp
+ufw allow 443/tcp
+ufw --force enable
+```
+
+**Never disable root login before verifying the new user can actually log in
+and sudo** — do it in the same session, immediately after the check passes,
+so there's no window where the server is unreachable.
+
+## 2. System dependencies
+
+```bash
+apt-get update
+apt-get install -y \
+  python3 python3-venv python3-pip python3-dev \
+  git build-essential \
+  python3-cffi python3-brotli libpango-1.0-0 libpangoft2-1.0-0 \
+  libpangocairo-1.0-0 libgdk-pixbuf2.0-0 libffi-dev shared-mime-info \
+  fonts-liberation \
+  poppler-utils
+```
+
+- The `libpango*`/`libgdk-pixbuf*`/`libffi-dev` set is WeasyPrint's documented
+  Linux dependency list (Pango ≥ 1.44 required; Ubuntu 24.04 ships 1.52, well
+  above that — no PPA needed, unlike older Ubuntu releases).
+- `poppler-utils` is for `pdf2image` (receipt OCR's PDF-to-image step) —
+  the equivalent of the vendored Poppler binary used on the local Windows dev
+  machine, but installed as a normal system package on Linux.
+- Verified with `python -c "import weasyprint"` after the venv was set up —
+  confirms the native libs are actually linkable, not just that apt reported
+  success.
+
+## 3. App checkout and Python environment
+
+```bash
+mkdir -p /opt/hqueex-hub && chown deploy:deploy /opt/hqueex-hub
+git clone https://github.com/hevmart/H-Queex_Hub.git /opt/hqueex-hub
+cd /opt/hqueex-hub
+python3 -m venv .venv
+.venv/bin/pip install --upgrade pip
+.venv/bin/pip install -r requirements.txt
+.venv/bin/pip install gunicorn
+```
+
+`gunicorn` is not in `requirements.txt` (it's a deploy-time concern, not an
+app dependency) — install it into the venv separately, as above.
+
+**To redeploy after a `git push` to `main`:**
+
+```bash
+ssh deploy@167.233.110.170
+cd /opt/hqueex-hub
+git pull
+.venv/bin/pip install -r requirements.txt   # only if requirements changed
+sudo systemctl restart hqueex-hub
+```
+
+## 4. Environment variables
+
+Secrets and per-deployment config live outside the repo, in
+`/etc/hqueex-hub/hqueex-hub.env` (root:deploy, mode 640 — not world-readable),
+loaded by systemd via `EnvironmentFile=`.
+
+```
+HQ_SECRET_KEY=<64-char hex, generated fresh on the server — never reused from local .env>
+HQ_ALLOWED_API_ORIGINS=https://h-queex.com,https://www.h-queex.com,https://h-queex.ie,https://www.h-queex.ie
+HQ_NETLIFY_SITE_SLUG=h-queex
+```
+
+Generate a fresh secret key the same way for any future server:
+
+```bash
+python3 -c "import secrets; print(secrets.token_hex(32))"
+```
+
+**Not currently set** (add to the same file if/when needed):
+- `ANTHROPIC_API_KEY` — required for the receipt OCR feature to work on this
+  server. Not set on this test instance yet; OCR upload will fail without it,
+  everything else works fine.
+
+## 5. Running as a service (gunicorn + systemd)
+
+Unit file: `/etc/systemd/system/hqueex-hub.service`
+
+```ini
+[Unit]
+Description=H-Queex Hub (gunicorn)
+After=network.target
+
+[Service]
+Type=notify
+User=deploy
+Group=deploy
+WorkingDirectory=/opt/hqueex-hub
+EnvironmentFile=/etc/hqueex-hub/hqueex-hub.env
+ExecStart=/opt/hqueex-hub/.venv/bin/gunicorn --workers 3 --bind 127.0.0.1:8000 --timeout 120 app:app
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable hqueex-hub
+sudo systemctl start hqueex-hub
+```
+
+Gunicorn binds to `127.0.0.1:8000` only — never exposed directly to the
+internet, always reached through Caddy. `app:app` refers to the module-level
+`app = Flask(__name__)` object in `app.py` — the same object the Flask dev
+server runs, just served by gunicorn's worker model instead of
+`app.run(debug=False, use_reloader=False)`.
+
+**Common commands:**
+
+```bash
+sudo systemctl status hqueex-hub      # is it running
+sudo journalctl -u hqueex-hub -f      # tail logs
+sudo systemctl restart hqueex-hub     # after a git pull / env change
+```
+
+## 6. Caddy (automatic HTTPS)
+
+```bash
+apt-get install -y debian-keyring debian-archive-keyring apt-transport-https curl
+curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' \
+  | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' \
+  | tee /etc/apt/sources.list.d/caddy-stable.list
+apt-get update && apt-get install -y caddy
+```
+
+`/etc/caddy/Caddyfile`:
+
+```
+hub.h-queex.com {
+	reverse_proxy 127.0.0.1:8000
+}
+```
+
+```bash
+sudo caddy validate --config /etc/caddy/Caddyfile
+sudo systemctl restart caddy
+sudo systemctl enable caddy
+```
+
+Caddy obtains and renews the Let's Encrypt certificate for `hub.h-queex.com`
+automatically — no certbot, no manual renewal cron. It requires DNS to
+already resolve to the server before it can complete the ACME HTTP-01
+challenge; if the Caddyfile is deployed before the DNS record propagates,
+Caddy just keeps retrying in the background (visible via
+`journalctl -u caddy`) and picks up the cert as soon as DNS resolves — no
+redeploy needed.
+
+## 7. First-run setup on a fresh instance
+
+Same behavior as local: with no `users.json` present, any request redirects
+to `/setup`, which lets you create the first Owner account (bcrypt-hashed
+password, written to `users.json` in the app directory). After that,
+`/setup` stops being reachable and normal `/login` takes over.
+
+```bash
+curl -s https://hub.h-queex.com/api/health
+# {"data_files_readable":true,"service":"H-Queex Hub","status":"ok",...}
+```
+
+Visit `https://hub.h-queex.com/setup` in a browser to create the Owner
+account. `users.json` (like all the other JSON data files) lives directly in
+`/opt/hqueex-hub` alongside the code — it is **not** committed to git (see
+`.gitignore`), same as local.
+
+## Known gaps / not yet done
+
+- **No CI/CD** — deployment is a manual `git pull` + `systemctl restart` over
+  SSH (see §3). No GitHub Actions workflow triggers this automatically yet.
+- **No automated backups configured on the server.** Local dev has its own
+  backup mechanism (`backup-status.json`, tracked separately); this server
+  instance currently has none — the JSON data files in `/opt/hqueex-hub` are
+  the only copy of anything entered through this instance.
+- **`ANTHROPIC_API_KEY` not set** — OCR receipt upload will fail on this
+  instance until it's added to `/etc/hqueex-hub/hqueex-hub.env`.
+- **Single gunicorn instance, no load balancing** — fine for a test/pre-launch
+  instance; revisit `--workers` count and consider multiple app servers behind
+  Caddy if real traffic before launch warrants it.
+- **Rate limiting still uses in-memory storage** (`storage_uri="memory://"` in
+  `app.py`), same caveat as noted in `session-handover.md` — resets on
+  gunicorn restart, doesn't share state across the 3 worker processes. Not a
+  problem for the login/API rate limits' intended purpose at this scale, but
+  worth knowing.
