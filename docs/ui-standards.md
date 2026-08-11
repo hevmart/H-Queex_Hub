@@ -135,6 +135,12 @@ Font: Segoe UI throughout. No other typeface, no other colours.
   screen.
 - Binary yes/no options use a toggle switch, not a checkbox styled to look like a legal
   disclaimer.
+- **Modal width scales with form complexity.** A modal form with more than 6 fields must
+  use a wide modal (at least 800px, e.g. `.wide-crm-modal-box` at 880px) laid out in a
+  multi-column `form-row` grid so it fits without scrolling. Narrow modals (under 600px,
+  e.g. the default `.modal-box` or `.form-modal-box`) are reserved for simple
+  confirmations and short forms — don't force a long field list into a narrow modal and
+  rely on scrolling to make it fit.
 
 ## Typography
 

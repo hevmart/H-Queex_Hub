@@ -1,6 +1,7 @@
 import os
 import tempfile
 import json
+import zipfile
 from io import BytesIO
 from datetime import date, timedelta
 from pathlib import Path
@@ -76,6 +77,7 @@ def isolated_subscription_file(tmp_path):
     original_leads_path = app.LEADS_PATH
     original_proposals_path = app.PROPOSALS_PATH
     original_terms_path = app.TERMS_PATH
+    original_filing_log_path = app.FILING_LOG_PATH
     app.BACKUPS_DIR = tmp_path / "backups"
     app.GDRIVE_BACKUP_DIR = tmp_path / "gdrive-backups"
     app.BACKUP_STATUS_PATH = tmp_path / "backup-status.json"
@@ -117,6 +119,7 @@ def isolated_subscription_file(tmp_path):
     app.PROPOSALS_PATH = tmp_path / "proposals.json"
     app.TERMS_PATH = tmp_path / "terms.json"
     app.SERVICES_PATH = tmp_path / "services.json"
+    app.FILING_LOG_PATH = tmp_path / "filing-log.json"
     app.load_finance_data.cache_clear()
     yield
     app.SUBSCRIPTIONS_PATH = original_path
@@ -150,6 +153,7 @@ def isolated_subscription_file(tmp_path):
     app.PROPOSALS_PATH = original_proposals_path
     app.TERMS_PATH = original_terms_path
     app.SERVICES_PATH = original_services_path
+    app.FILING_LOG_PATH = original_filing_log_path
     app.load_finance_data.cache_clear()
 
 
@@ -1762,7 +1766,8 @@ def test_invoice_numbers_auto_generate_sequentially(workbook_copy):
     app.load_finance_data.cache_clear()
     rows = app.load_finance_data()["sheets"]["Invoices"]
     generated = sorted([str(row.get("Invoice #")) for row in rows if str(row.get("Invoice #", "")).startswith("HQ-2026-")])
-    assert generated[-2:] == ["HQ-2026-001", "HQ-2026-002"]
+    # Default invoice_number_offset is 100, so the first invoice of a year starts at 101.
+    assert generated[-2:] == ["HQ-2026-101", "HQ-2026-102"]
 
 
 def test_client_and_supplier_update_and_delete_routes(workbook_copy):
@@ -5304,3 +5309,87 @@ def test_expense_review_card_has_visible_expense_type_and_status_dropdowns(workb
 
     assert 'if (fields.subscription_match) { typeValue = "Subscription"; }' in html
     assert 'statusField.value = "Paid";' in html
+
+
+def test_invoice_preview_renders_branded_page(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+
+    response = client.get('/invoices/preview/1')
+    assert response.status_code == 200
+    html = response.data.decode("utf-8")
+    assert "invoice-pdf-preview" in html
+    assert "INV-001" in html
+    assert "Print / Save as PDF" in html
+    # The generic duplicate-heading fallback must not render on this tab.
+    assert html.count("<h2>Invoice INV-001</h2>") == 0
+
+
+def test_invoice_preview_missing_row_redirects(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+
+    response = client.get('/invoices/preview/999', follow_redirects=True)
+    assert response.status_code == 200
+    assert b'Invoice not found' in response.data
+
+
+def test_year_end_pack_generates_zip_with_expected_files(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+
+    response = client.post('/finance/year-end-pack/generate', data={"year": "2026"})
+    assert response.status_code == 200
+    assert response.mimetype == "application/zip"
+
+    archive = zipfile.ZipFile(BytesIO(response.data))
+    names = set(archive.namelist())
+    assert names == {
+        "profit-and-loss.html",
+        "vat-summary.html",
+        "pre-trading-expenses.html",
+        "capital-allowances.html",
+        "all-transactions.csv",
+    }
+    pnl_html = archive.read("profit-and-loss.html").decode("utf-8")
+    assert "Profit &amp; Loss Statement" in pnl_html
+    assert "Net profit" in pnl_html
+
+    filing_log = app._load_filing_log()
+    assert any(entry.get("year") == 2026 for entry in filing_log)
+
+
+def test_expense_bulk_archive_removes_selected_rows(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+
+    add_payload = {
+        "date": "2026-08-01",
+        "description": "Bulk test expense",
+        "supplier": "Bulk Supplier",
+        "category": "Software and Subscriptions",
+        "net_amount": "50.00",
+        "total_amount": "61.50",
+        "status": "Pending",
+        "deductibility_status": "Fully Deductible",
+        "receipt_attached": "No",
+        "input_vat_reclaimable": "No",
+    }
+    client.post('/expenses/add', data=add_payload, follow_redirects=True)
+
+    app.load_finance_data.cache_clear()
+    rows_before = app.load_finance_data()["sheets"]["Expenses"]
+    target_row = next(row for row in rows_before if row.get("Description") == "Bulk test expense")
+    row_number = target_row["__row_number"]
+
+    response = client.post('/expenses/bulk-archive', data={"row_numbers": [str(row_number)]}, follow_redirects=True)
+    assert response.status_code == 200
+    assert b'1 expense archived' in response.data
+
+    app.load_finance_data.cache_clear()
+    rows_after = app.load_finance_data()["sheets"]["Expenses"]
+    assert all(row.get("Description") != "Bulk test expense" for row in rows_after)

@@ -7,6 +7,7 @@ import os
 import shutil
 import time
 import threading
+import zipfile
 from calendar import monthrange
 from datetime import date, datetime, timedelta
 from functools import lru_cache
@@ -26,8 +27,52 @@ load_dotenv()
 app = Flask(__name__)
 
 
+def _format_date_display(value: Any) -> str:
+    """Render a stored date value as DD/MM/YYYY for display in list views."""
+    if not value:
+        return ""
+    text = str(value).strip()
+    if not text:
+        return ""
+    for date_format in ("%Y-%m-%d", "%d/%m/%Y"):
+        try:
+            return datetime.strptime(text, date_format).strftime("%d/%m/%Y")
+        except ValueError:
+            continue
+    return text
+
+
+app.jinja_env.filters["fmt_date"] = _format_date_display
+
+
 class WorkbookWriteError(RuntimeError):
     """Raised when the workbook cannot be updated because it is locked or busy."""
+
+
+@app.errorhandler(500)
+def handle_internal_error(error):
+    import logging
+    import traceback
+
+    logging.getLogger(__name__).error("Unhandled exception: %s", traceback.format_exc())
+    referrer = request.referrer or "/"
+    html = f"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Something went wrong — H-Queex Hub</title>
+<style>
+  body {{ font-family: 'Segoe UI', Arial, sans-serif; background: #F7F7F7; color: #37373A; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; }}
+  .error-card {{ background: #FFFFFF; border-top: 3px solid #B08D57; border-radius: 12px; padding: 32px; max-width: 420px; box-shadow: 0 12px 32px rgba(22,41,74,0.15); text-align: center; }}
+  h1 {{ color: #16294A; font-size: 18px; margin: 0 0 8px; }}
+  p {{ color: #535356; font-size: 14px; line-height: 1.5; }}
+  a {{ display: inline-block; margin-top: 16px; background: #16294A; color: #FFFFFF; border-bottom: 3px solid #B08D57; border-radius: 8px; padding: 10px 20px; text-decoration: none; font-weight: 700; }}
+</style></head>
+<body>
+  <div class="error-card">
+    <h1>Something went wrong</h1>
+    <p>We couldn't complete that action. Nothing was changed. Please try again — if this keeps happening, check the server logs for details.</p>
+    <a href="{referrer}">Go back</a>
+  </div>
+</body></html>"""
+    return Response(html, status=500, mimetype="text/html")
 
 
 @app.after_request
@@ -122,6 +167,7 @@ LEAD_FOLLOWUP_WINDOW_DAYS = 7
 RECENTLY_WON_WINDOW_DAYS = 30
 GDRIVE_BACKUP_DIR = Path("G:/My Drive/H-Queex — Working Documents/H-Queex Hub/Backups")
 BACKUP_STATUS_PATH = BASE_DIR / "backup-status.json"
+FILING_LOG_PATH = BASE_DIR / "filing-log.json"
 BACKUP_RETENTION_DAYS = 30
 SHEET_JSON_PATHS = {
     "Income": INCOME_PATH,
@@ -290,6 +336,7 @@ def _default_business_profile() -> dict[str, Any]:
         "transition_date": "",
         "pre_trading_start_date": "",
         "trading_start_date": "",
+        "invoice_number_offset": 100,
         "updated_at": datetime.now().isoformat(timespec="seconds"),
     }
 
@@ -323,6 +370,7 @@ def _load_business_profile() -> dict[str, Any]:
         "transition_date": str(payload.get("transition_date") or "").strip(),
         "pre_trading_start_date": str(payload.get("pre_trading_start_date") or "").strip(),
         "trading_start_date": str(payload.get("trading_start_date") or "").strip(),
+        "invoice_number_offset": int(_coerce_number(payload.get("invoice_number_offset", defaults["invoice_number_offset"]))),
         "updated_at": str(payload.get("updated_at") or defaults["updated_at"]).strip(),
     }
 
@@ -339,6 +387,7 @@ def _save_business_profile(profile: dict[str, Any]) -> None:
         "transition_date": str(profile.get("transition_date") or "").strip(),
         "pre_trading_start_date": str(profile.get("pre_trading_start_date") or "").strip(),
         "trading_start_date": str(profile.get("trading_start_date") or "").strip(),
+        "invoice_number_offset": int(_coerce_number(profile.get("invoice_number_offset", 100))),
         "updated_at": datetime.now().isoformat(timespec="seconds"),
     }
     BUSINESS_PROFILE_PATH.write_text(json.dumps(normalized, indent=2), encoding="utf-8")
@@ -415,6 +464,41 @@ def _build_phase_policy(summary: dict[str, Any], structure: str) -> dict[str, An
         "owner_account_label": config.get("owner_account_label", "Proprietor Capital Account"),
         "next_filing_deadline": config.get("next_filing_deadline", ""),
         "taxable_profit_basis": taxable_profit,
+    }
+
+
+def _build_ytd_summary(sheets: dict[str, Any], structure: str, vat_control_summary: dict[str, Any], *, today: date | None = None) -> dict[str, Any]:
+    """Year-to-date income/expense/tax/VAT snapshot for the dashboard."""
+    current_day = today or date.today()
+    year = current_day.year
+
+    income_ytd = sum(
+        _coerce_number(row.get("Amount (€)", row.get("Total incl. VAT (€)", 0)))
+        for row in sheets.get("Income", [])
+        if str(row.get("Status") or "").strip().lower() == "received"
+        and (_parse_transaction_date(row.get("Date")) or date.min).year == year
+    )
+    expense_ytd = sum(
+        _coerce_number(row.get("Total (€)"))
+        for row in sheets.get("Expenses", [])
+        if (_parse_transaction_date(row.get("Date (Registered)")) or date.min).year == year
+    )
+    net_profit_ytd = income_ytd - expense_ytd
+    structure_key = _normalize_business_structure(structure)
+    config = PHASE_POLICY.get(structure_key, PHASE_POLICY["sole_trader"])
+    estimated_tax_rate = float(config.get("estimated_tax_rate", 0.0))
+    estimated_tax_due_ytd = round(max(net_profit_ytd, 0.0) * estimated_tax_rate, 2)
+
+    return {
+        "year": year,
+        "income_total": round(income_ytd, 2),
+        "expense_total": round(expense_ytd, 2),
+        "net_profit": round(net_profit_ytd, 2),
+        "estimated_tax_rate": estimated_tax_rate,
+        "estimated_tax_due": estimated_tax_due_ytd,
+        "vat_period_label": vat_control_summary.get("period_label", ""),
+        "vat_net_position": vat_control_summary.get("t3_net_vat", 0.0),
+        "vat_due_date": vat_control_summary.get("due_date", ""),
     }
 
 
@@ -1700,6 +1784,11 @@ def _next_invoice_number(issue_date_value: Any, existing_invoices: list[dict[str
         suffix = invoice_number.replace(prefix, "", 1)
         if suffix.isdigit():
             max_seq = max(max_seq, int(suffix))
+    if max_seq == 0:
+        # No invoices exist for this year yet — start from the configured offset
+        # rather than renumbering any invoice already issued in a prior year.
+        offset = _coerce_number(_load_business_profile().get("invoice_number_offset", 100))
+        max_seq = int(offset) if offset > 0 else 0
     return f"{prefix}{max_seq + 1:03d}"
 
 
@@ -2958,6 +3047,16 @@ def _compute_vat_control_summary(ledger_entries: list[dict[str, Any]]) -> dict[s
         due_year = period_end.year
         due_month = period_end.month + 1
     due_date = date(due_year, due_month, 23).isoformat()
+    return _compute_vat_summary_for_bounds(ledger_entries, period_start, period_end, period_label, due_date)
+
+
+def _compute_vat_summary_for_bounds(
+    ledger_entries: list[dict[str, Any]],
+    period_start: date,
+    period_end: date,
+    period_label: str,
+    due_date: str,
+) -> dict[str, Any]:
     summary = {
         "period_label": period_label,
         "period_start": period_start.isoformat(),
@@ -3014,6 +3113,143 @@ def _compute_vat_control_summary(ledger_entries: list[dict[str, Any]]) -> dict[s
         f"Reverse-charge purchases €{summary['reverse_charge_purchases']:.2f}"
     )
     return summary
+
+
+def _build_year_vat_period_summaries(ledger_entries: list[dict[str, Any]], year: int) -> list[dict[str, Any]]:
+    """T1/T2/T3 VAT summary per bi-monthly period for a given tax year."""
+    summaries = []
+    for period_start, period_end, due_date in _vat3_period_due_dates(year):
+        label = f"{period_start.strftime('%b')} - {period_end.strftime('%b %Y')}"
+        summaries.append(
+            _compute_vat_summary_for_bounds(ledger_entries, period_start, period_end, label, due_date.isoformat())
+        )
+    return summaries
+
+
+def _build_pnl_by_category(sheets: dict[str, Any], year: int) -> dict[str, Any]:
+    income_by_category: dict[str, float] = {}
+    for row in sheets.get("Income", []):
+        if str(row.get("Status") or "").strip().lower() != "received":
+            continue
+        row_date = _parse_transaction_date(row.get("Date"))
+        if row_date is None or row_date.year != year:
+            continue
+        category = str(row.get("Category") or "Uncategorised").strip() or "Uncategorised"
+        amount = _coerce_number(row.get("Amount (€)", row.get("Total incl. VAT (€)", 0)))
+        income_by_category[category] = round(income_by_category.get(category, 0.0) + amount, 2)
+
+    expense_by_category: dict[str, float] = {}
+    for row in sheets.get("Expenses", []):
+        row_date = _parse_transaction_date(row.get("Date (Registered)"))
+        if row_date is None or row_date.year != year:
+            continue
+        category = str(row.get("Category") or "Uncategorised").strip() or "Uncategorised"
+        amount = _coerce_number(row.get("Total (€)"))
+        expense_by_category[category] = round(expense_by_category.get(category, 0.0) + amount, 2)
+
+    total_income = round(sum(income_by_category.values()), 2)
+    total_expenses = round(sum(expense_by_category.values()), 2)
+    return {
+        "year": year,
+        "income_by_category": dict(sorted(income_by_category.items(), key=lambda item: -item[1])),
+        "expense_by_category": dict(sorted(expense_by_category.items(), key=lambda item: -item[1])),
+        "total_income": total_income,
+        "total_expenses": total_expenses,
+        "gross_profit": round(total_income - total_expenses, 2),
+        "net_profit": round(total_income - total_expenses, 2),
+    }
+
+
+def _build_pretrading_schedule(sheets: dict[str, Any]) -> dict[str, Any]:
+    by_category: dict[str, float] = {}
+    entries: list[dict[str, Any]] = []
+    for row in sheets.get("Expenses", []):
+        if str(row.get("Phase Tag") or "").strip() != "Pre-Trading":
+            continue
+        category = str(row.get("Category") or "Uncategorised").strip() or "Uncategorised"
+        amount = _coerce_number(row.get("Total (€)"))
+        by_category[category] = round(by_category.get(category, 0.0) + amount, 2)
+        entries.append(
+            {
+                "date": str(row.get("Date (Registered)") or ""),
+                "supplier": str(row.get("Supplier / Payee") or ""),
+                "description": str(row.get("Description") or ""),
+                "category": category,
+                "amount": amount,
+            }
+        )
+    return {
+        "by_category": dict(sorted(by_category.items(), key=lambda item: -item[1])),
+        "total": round(sum(by_category.values()), 2),
+        "entries": sorted(entries, key=lambda entry: entry["date"]),
+    }
+
+
+def _report_logo_data_uri() -> str:
+    logo_path = BASE_DIR / "static" / "H-Queex Logo Blue and Gold with Tagline V4.0.png"
+    try:
+        encoded = base64.b64encode(logo_path.read_bytes()).decode("ascii")
+        return f"data:image/png;base64,{encoded}"
+    except OSError:
+        return ""
+
+
+def _render_branded_report_html(title: str, subtitle: str, body_html: str) -> str:
+    logo_uri = _report_logo_data_uri()
+    logo_html = f'<img src="{logo_uri}" alt="H-Queex" style="max-height:48px;">' if logo_uri else "<strong>H-QUEEX</strong>"
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>{title} — H-Queex Hub</title>
+<style>
+  body {{ font-family: 'Segoe UI', Arial, sans-serif; color: #37373A; margin: 0; background: #F7F7F7; }}
+  .report-header {{ background: #16294A; color: #FFFFFF; padding: 24px 32px; display: flex; justify-content: space-between; align-items: center; border-bottom: 4px solid #B08D57; }}
+  .report-header h1 {{ margin: 0; font-size: 20px; }}
+  .report-header p {{ margin: 4px 0 0; font-size: 13px; opacity: 0.85; }}
+  .report-body {{ padding: 28px 32px; background: #FFFFFF; max-width: 900px; margin: 0 auto; }}
+  table {{ width: 100%; border-collapse: collapse; margin-bottom: 24px; }}
+  th {{ background: #16294A; color: #FFFFFF; text-align: left; padding: 8px 12px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }}
+  td {{ padding: 8px 12px; border-bottom: 1px solid #E2E2E3; font-size: 13px; }}
+  tr:nth-child(even) td {{ background: #F7F7F7; }}
+  .report-section-title {{ color: #16294A; font-size: 15px; font-weight: 700; margin: 24px 0 8px; border-left: 3px solid #B08D57; padding-left: 10px; }}
+  .report-total-row td {{ font-weight: 700; color: #16294A; border-top: 2px solid #16294A; }}
+  .report-footer {{ text-align: center; font-size: 11px; color: #618096; padding: 16px; }}
+</style>
+</head>
+<body>
+  <div class="report-header">
+    {logo_html}
+    <div style="text-align:right;">
+      <h1>{title}</h1>
+      <p>{subtitle}</p>
+    </div>
+  </div>
+  <div class="report-body">
+    {body_html}
+  </div>
+  <div class="report-footer">Generated by H-Queex Hub — {datetime.now().strftime('%d %B %Y')}</div>
+</body>
+</html>"""
+
+
+def _load_filing_log() -> list[dict[str, Any]]:
+    return _load_json_records(FILING_LOG_PATH)
+
+
+def _save_filing_log(entries: list[dict[str, Any]]) -> None:
+    _save_json_records(FILING_LOG_PATH, entries)
+
+
+def _transactions_modified_since(ledger_entries: list[dict[str, Any]], year: int, since_timestamp: str) -> int:
+    count = 0
+    for entry in ledger_entries:
+        transaction_date = _parse_transaction_date(entry.get("transaction_date"))
+        if transaction_date is None or transaction_date.year != year:
+            continue
+        if str(entry.get("timestamp") or "") > since_timestamp:
+            count += 1
+    return count
 
 
 def _export_trial_balance_csv(trial_balance: dict[str, Any]) -> str:
@@ -5009,12 +5245,14 @@ def _build_page_context(
     sop_form: dict[str, Any] | None = None,
     status_filter: str | None = None,
     tier_filter: str | None = None,
+    client_filter: str | None = None,
     editing_lead: dict[str, Any] | None = None,
     lead_form: dict[str, Any] | None = None,
     lead_detail: dict[str, Any] | None = None,
     editing_proposal: dict[str, Any] | None = None,
     proposal_form: dict[str, Any] | None = None,
     proposal_detail: dict[str, Any] | None = None,
+    invoice_detail: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     try:
         workbook_path = _resolve_workbook_path()
@@ -5033,6 +5271,7 @@ def _build_page_context(
     ledger_entries_sorted = sorted(ledger_entries, key=lambda item: str(item.get("timestamp") or ""), reverse=True)
     trial_balance = _compute_trial_balance(ledger_entries, chart_of_accounts)
     vat_control_summary = _compute_vat_control_summary(ledger_entries)
+    ytd_summary = _build_ytd_summary(data.get("sheets", {}), structure, vat_control_summary)
     vat_threshold_summary = _compute_vat_threshold_summary(income_rows_for_metrics, invoice_rows_for_metrics, vat_threshold_basis)
     vat_anomalies = _detect_vat_anomalies(ledger_entries)
     capital_assets = _load_capital_assets()
@@ -5099,7 +5338,7 @@ def _build_page_context(
         upcoming_actions.append({
             "severity": "warning",
             "label": f"Project due soon: {project['title']}",
-            "detail": f"Target end {project['target_end_date']}",
+            "detail": f"Target end {_format_date_display(project['target_end_date'])}",
             "link": f"/operations/projects/{project['id']}",
         })
     delivery_log = _load_delivery_log()
@@ -5240,6 +5479,7 @@ def _build_page_context(
         },
         "trial_balance": trial_balance,
         "vat_control_summary": vat_control_summary,
+        "ytd_summary": ytd_summary,
         "services": all_services,
         "active_services": active_services,
         "editing_service": editing_service,
@@ -5281,6 +5521,7 @@ def _build_page_context(
         "dmaic_project": dmaic_project,
         "status_filter": status_filter or "",
         "tier_filter": tier_filter or "",
+        "client_filter": client_filter or "",
         "delivery_log": delivery_log,
         "delivery_service_types": list(DELIVERY_SERVICE_TYPES),
         "pending_billing": pending_billing,
@@ -5312,6 +5553,7 @@ def _build_page_context(
         "editing_proposal": editing_proposal,
         "proposal_form": proposal_form or {},
         "proposal_detail": proposal_detail,
+        "invoice_detail": invoice_detail,
         "standard_terms": standard_terms,
     }
 
@@ -5506,6 +5748,18 @@ def index():
     )
 
 
+def _build_year_end_pack_status(year: int | None = None) -> dict[str, Any]:
+    target_year = year or date.today().year
+    filing_log = _load_filing_log()
+    entries_for_year = [entry for entry in filing_log if entry.get("year") == target_year]
+    last_entry = max(entries_for_year, key=lambda entry: str(entry.get("generated_at") or ""), default=None)
+    if last_entry is None:
+        return {"year": target_year, "last_generated_at": None, "modified_count": 0}
+    ledger_entries = _load_ledger_entries()
+    modified_count = _transactions_modified_since(ledger_entries, target_year, str(last_entry.get("generated_at") or ""))
+    return {"year": target_year, "last_generated_at": last_entry.get("generated_at"), "modified_count": modified_count}
+
+
 @app.route("/finance")
 def finance_view():
     data = load_finance_data()
@@ -5517,6 +5771,7 @@ def finance_view():
             data,
             message=request.args.get("message"),
         ),
+        year_end_pack_status=_build_year_end_pack_status(),
     )
 
 
@@ -5804,6 +6059,7 @@ def update_company_profile():
     vat_registered = str(request.form.get("vat_registered") or "").strip().lower() in {"1", "true", "yes", "on"}
     vat_threshold_basis = _normalize_vat_threshold_basis(request.form.get("vat_threshold_basis"))
     transition_date = str(request.form.get("transition_date") or "").strip()
+    invoice_number_offset_raw = str(request.form.get("invoice_number_offset") or "").strip()
 
     errors: dict[str, str] = {}
     _validate_required_text(business_name, "business_name", "Business name", errors)
@@ -5815,6 +6071,8 @@ def update_company_profile():
     ):
         if value and _parse_transaction_date(value) is None:
             errors[field_name] = f"{label} must be a valid date"
+    if invoice_number_offset_raw and (not invoice_number_offset_raw.isdigit()):
+        errors["invoice_number_offset"] = "Invoice number offset must be a whole number"
 
     if errors:
         return _redirect_with_form_errors(
@@ -5843,6 +6101,8 @@ def update_company_profile():
     profile["vat_registered"] = vat_registered
     profile["vat_threshold_basis"] = vat_threshold_basis
     profile["transition_date"] = transition_date
+    if invoice_number_offset_raw:
+        profile["invoice_number_offset"] = int(invoice_number_offset_raw)
     _save_business_profile(profile)
     _record_audit("update", "business_profile", {"record": profile})
     return redirect(url_for("company_profile_view", message="Business profile updated"))
@@ -5912,6 +6172,7 @@ def operations_projects_view():
     editing_project = _find_record_by_id(projects, request.args.get("edit_id"))
     status_filter = str(request.args.get("status_filter") or "")
     tier_filter = str(request.args.get("tier_filter") or "")
+    client_filter = str(request.args.get("client_filter") or "")
     return render_template(
         "index.html",
         **_build_page_context(
@@ -5921,6 +6182,7 @@ def operations_projects_view():
             editing_project=editing_project,
             status_filter=status_filter,
             tier_filter=tier_filter,
+            client_filter=client_filter,
             message=request.args.get("message"),
         ),
     )
@@ -7247,6 +7509,24 @@ def invoices_view():
     ), invoice_manual_status_options=INVOICE_MANUAL_STATUS_OPTIONS, show_cancelled_invoices=show_cancelled)
 
 
+@app.route("/invoices/preview/<int:row_number>")
+def invoice_preview(row_number):
+    data = load_finance_data()
+    rows = data["sheets"].get("Invoices", [])
+    invoice = _find_row_by_number(rows, row_number)
+    if invoice is None:
+        return redirect(url_for("invoices_view", message="Invoice not found"))
+    return render_template(
+        "index.html",
+        **_build_page_context(
+            f"Invoice {invoice.get('Invoice #')}",
+            "invoice_pdf",
+            data,
+            invoice_detail=invoice,
+        ),
+    )
+
+
 @app.route("/services")
 def services_view():
     data = load_finance_data()
@@ -7374,6 +7654,7 @@ def ledger_view():
             error=data.get("error"),
             message=request.args.get("message"),
         ),
+        year_end_pack_status=_build_year_end_pack_status(),
     )
 
 
@@ -7409,6 +7690,134 @@ def export_ledger_journal_csv():
         csv_text,
         mimetype="text/csv",
         headers={"Content-Disposition": "attachment; filename=ledger-journal.csv"},
+    )
+
+
+@app.route("/finance/year-end-pack/generate", methods=["POST"])
+def generate_year_end_pack():
+    try:
+        year = int(str(request.form.get("year") or date.today().year).strip())
+    except ValueError:
+        year = date.today().year
+
+    data = load_finance_data()
+    sheets = data.get("sheets", {})
+    ledger_entries = _load_ledger_entries()
+    structure = _normalize_business_structure(_load_business_profile().get("structure"))
+
+    pnl = _build_pnl_by_category(sheets, year)
+    vat_periods = _build_year_vat_period_summaries(ledger_entries, year)
+    pretrading = _build_pretrading_schedule(sheets)
+    capital_assets = _load_capital_assets()
+    capital_summary = _summarize_capital_assets(capital_assets)
+
+    pnl_rows = "".join(
+        f"<tr><td>{category}</td><td style='text-align:right;'>{_format_currency(amount)}</td></tr>"
+        for category, amount in pnl["income_by_category"].items()
+    )
+    expense_rows = "".join(
+        f"<tr><td>{category}</td><td style='text-align:right;'>{_format_currency(amount)}</td></tr>"
+        for category, amount in pnl["expense_by_category"].items()
+    )
+    pnl_html = _render_branded_report_html(
+        f"Profit &amp; Loss Statement — {year}",
+        f"Tax year {year} · {PHASE_POLICY.get(structure, PHASE_POLICY['sole_trader'])['tax_regime']}",
+        f"""
+        <div class="report-section-title">Income by category</div>
+        <table><tr><th>Category</th><th style="text-align:right;">Amount</th></tr>{pnl_rows}
+        <tr class="report-total-row"><td>Total income</td><td style="text-align:right;">{_format_currency(pnl['total_income'])}</td></tr></table>
+        <div class="report-section-title">Expenses by category</div>
+        <table><tr><th>Category</th><th style="text-align:right;">Amount</th></tr>{expense_rows}
+        <tr class="report-total-row"><td>Total expenses</td><td style="text-align:right;">{_format_currency(pnl['total_expenses'])}</td></tr></table>
+        <div class="report-section-title">Summary</div>
+        <table>
+          <tr><td>Gross profit</td><td style="text-align:right;">{_format_currency(pnl['gross_profit'])}</td></tr>
+          <tr class="report-total-row"><td>Net profit</td><td style="text-align:right;">{_format_currency(pnl['net_profit'])}</td></tr>
+        </table>
+        """,
+    )
+
+    vat_rows = "".join(
+        f"<tr><td>{period['period_label']}</td><td style='text-align:right;'>{_format_currency(period['t1_output_vat'])}</td>"
+        f"<td style='text-align:right;'>{_format_currency(period['t2_input_vat'])}</td>"
+        f"<td style='text-align:right;'>{_format_currency(period['t3_net_vat'])}</td></tr>"
+        for period in vat_periods
+    )
+    vat_html = _render_branded_report_html(
+        f"VAT Summary — {year}",
+        f"Bi-monthly VAT 3 return periods for {year}",
+        f"""
+        <table><tr><th>Period</th><th style="text-align:right;">T1 Output VAT</th><th style="text-align:right;">T2 Input VAT</th><th style="text-align:right;">T3 Net VAT</th></tr>{vat_rows}</table>
+        """,
+    )
+
+    pretrading_rows = "".join(
+        f"<tr><td>{category}</td><td style='text-align:right;'>{_format_currency(amount)}</td></tr>"
+        for category, amount in pretrading["by_category"].items()
+    )
+    pretrading_html = _render_branded_report_html(
+        "Pre-Trading Expenses Schedule",
+        "Expenses incurred before trading commenced, grouped by category",
+        f"""
+        <table><tr><th>Category</th><th style="text-align:right;">Amount</th></tr>{pretrading_rows}
+        <tr class="report-total-row"><td>Total pre-trading expenses</td><td style="text-align:right;">{_format_currency(pretrading['total'])}</td></tr></table>
+        """,
+    )
+
+    capital_rows = "".join(
+        f"<tr><td>{asset.get('description','')}</td><td>{asset.get('acquisition_date','') and _format_date_display(asset.get('acquisition_date'))}</td>"
+        f"<td style='text-align:right;'>{_format_currency(asset.get('cost_eur', 0))}</td>"
+        f"<td style='text-align:right;'>{_format_currency(asset.get('annual_allowance_eur', 0))}</td></tr>"
+        for asset in capital_assets
+        if bool(asset.get("active", True))
+    )
+    capital_html = _render_branded_report_html(
+        "Capital Allowances Schedule",
+        "Wear and tear allowances at 12.5% per year (8-year write-down)",
+        f"""
+        <table><tr><th>Asset</th><th>Acquired</th><th style="text-align:right;">Cost</th><th style="text-align:right;">Annual allowance</th></tr>{capital_rows}
+        <tr class="report-total-row"><td colspan="3">Total annual allowance</td><td style="text-align:right;">{_format_currency(capital_summary['annual_allowance_total'])}</td></tr></table>
+        """,
+    )
+
+    all_transactions_csv = _export_ledger_journal_csv(
+        [entry for entry in ledger_entries if (_parse_transaction_date(entry.get("transaction_date")) or date.min).year == year]
+    )
+
+    now_iso = datetime.now().isoformat(timespec="seconds")
+    file_list = [
+        "profit-and-loss.html",
+        "vat-summary.html",
+        "pre-trading-expenses.html",
+        "capital-allowances.html",
+        "all-transactions.csv",
+    ]
+
+    buffer = BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
+        zip_file.writestr("profit-and-loss.html", pnl_html)
+        zip_file.writestr("vat-summary.html", vat_html)
+        zip_file.writestr("pre-trading-expenses.html", pretrading_html)
+        zip_file.writestr("capital-allowances.html", capital_html)
+        zip_file.writestr("all-transactions.csv", all_transactions_csv)
+    buffer.seek(0)
+
+    filing_log = _load_filing_log()
+    filing_log.append(
+        {
+            "id": str(uuid4()),
+            "year": year,
+            "generated_at": now_iso,
+            "files": file_list,
+        }
+    )
+    _save_filing_log(filing_log)
+    _record_audit("generate", "year_end_pack", {"year": year, "files": file_list})
+
+    return Response(
+        buffer.getvalue(),
+        mimetype="application/zip",
+        headers={"Content-Disposition": f"attachment; filename=H-Queex-year-end-pack-{year}.zip"},
     )
 
 
@@ -8499,6 +8908,27 @@ def delete_expense():
         return redirect(url_for("expenses_view", message="Expense archived"))
     except WorkbookWriteError as exc:
         return redirect(url_for("expenses_view", message=str(exc)))
+
+
+@app.route("/expenses/bulk-archive", methods=["POST"])
+def bulk_archive_expenses():
+    row_numbers = [_parse_row_number(value) for value in request.form.getlist("row_numbers")]
+    row_numbers = sorted({row for row in row_numbers if row is not None}, reverse=True)
+    archived_count = 0
+    for row_number in row_numbers:
+        row = _find_sheet_row_or_raise("Expenses", row_number)
+        if row is None:
+            continue
+        try:
+            _archive_record("expense", row, source="workbook")
+            _delete_row_from_sheet("Expenses", row_number)
+            _upsert_capital_asset_from_expense(row, row_number, active=False)
+            _record_ledger_entry("archive", "expense", row, source="workbook", row_number=row_number)
+            archived_count += 1
+        except WorkbookWriteError:
+            continue
+    load_finance_data.cache_clear()
+    return redirect(url_for("expenses_view", message=f"{archived_count} expense{'s' if archived_count != 1 else ''} archived"))
 
 
 @app.route("/invoices/add", methods=["POST"])
