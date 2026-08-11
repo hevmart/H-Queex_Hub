@@ -5413,9 +5413,13 @@ def test_invoice_preview_missing_row_redirects(workbook_copy):
     assert b'Invoice not found' in response.data
 
 
-def test_year_end_pack_generates_zip_with_expected_files(workbook_copy):
+def test_year_end_pack_generates_zip_with_expected_files(workbook_copy, monkeypatch):
+    """Mocks WeasyPrint (consistent with the other PDF tests) so this stays
+    deterministic and fast regardless of whether the real GTK3 runtime is
+    installed on whatever machine runs the suite."""
     app.WORKBOOK_PATH = workbook_copy
     app.load_finance_data.cache_clear()
+    monkeypatch.setattr(app, "_generate_pdf_bytes", lambda html: None)
     client = app.app.test_client()
 
     response = client.post('/finance/year-end-pack/generate', data={"year": "2026"})

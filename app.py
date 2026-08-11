@@ -3629,7 +3629,13 @@ def _pdf_page_css() -> str:
 
 def _render_branded_pdf_html(title: str, subtitle: str, body_html: str) -> str:
     logo_uri = _report_logo_data_uri()
-    logo_html = f'<img src="{logo_uri}" alt="H-Queex" style="max-height:44px;">' if logo_uri else "<strong>H-QUEEX</strong>"
+    # The logo artwork is navy/gold, not white — it needs a light plate behind it
+    # to stay legible against the navy header bar (invisible without this).
+    logo_html = (
+        f'<span style="background:#FFFFFF;border-radius:6px;padding:6px 10px;display:inline-block;">'
+        f'<img src="{logo_uri}" alt="H-Queex" style="max-height:32px;display:block;"></span>'
+        if logo_uri else "<strong>H-QUEEX</strong>"
+    )
     return f"""<!doctype html>
 <html lang="en">
 <head>
