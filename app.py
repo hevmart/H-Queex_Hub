@@ -400,24 +400,29 @@ WORKBOOK_ENTITY_CONFIG = {
 
 def _default_business_profile() -> dict[str, Any]:
     return {
-        "business_name": "H-Queex",
-        "owner_name": "Hevandro Martire",
-        "cro_number": "790968",
-        "registration_date": "2026-08-04",
-        "structure": "sole_trader",
+        "business_name": "",
+        "owner_name": "",
+        "cro_number": "",
+        "registration_date": "",
+        "structure": "",
         "vat_registered": True,
+        "vat_number": "",
         "vat_threshold_basis": "services",
         "transition_date": "",
         "pre_trading_start_date": "",
         "trading_start_date": "",
+        "revenue_registration_date": "",
         "invoice_number_offset": 100,
         "updated_at": datetime.now().isoformat(timespec="seconds"),
     }
 
 
 def _normalize_business_structure(value: Any) -> str:
+    # "" is a real, distinct state — legal structure not yet declared. Registering a
+    # business name with the CRO says nothing about sole trader vs limited company;
+    # never silently assume sole_trader here just because nothing was picked yet.
     structure = str(value or "").strip().lower()
-    return structure if structure in BUSINESS_STRUCTURES else "sole_trader"
+    return structure if structure in BUSINESS_STRUCTURES else ""
 
 
 def _load_business_profile() -> dict[str, Any]:
@@ -440,10 +445,12 @@ def _load_business_profile() -> dict[str, Any]:
         "registration_date": str(payload.get("registration_date") or defaults["registration_date"]).strip(),
         "structure": _normalize_business_structure(payload.get("structure")),
         "vat_registered": bool(payload.get("vat_registered", defaults["vat_registered"])),
+        "vat_number": str(payload.get("vat_number") or "").strip(),
         "vat_threshold_basis": _normalize_vat_threshold_basis(payload.get("vat_threshold_basis")),
         "transition_date": str(payload.get("transition_date") or "").strip(),
         "pre_trading_start_date": str(payload.get("pre_trading_start_date") or "").strip(),
         "trading_start_date": str(payload.get("trading_start_date") or "").strip(),
+        "revenue_registration_date": str(payload.get("revenue_registration_date") or "").strip(),
         "invoice_number_offset": int(_coerce_number(payload.get("invoice_number_offset", defaults["invoice_number_offset"]))),
         "updated_at": str(payload.get("updated_at") or defaults["updated_at"]).strip(),
     }
@@ -451,16 +458,18 @@ def _load_business_profile() -> dict[str, Any]:
 
 def _save_business_profile(profile: dict[str, Any]) -> None:
     normalized = {
-        "business_name": str(profile.get("business_name") or "H-Queex").strip(),
-        "owner_name": str(profile.get("owner_name") or "Hevandro Martire").strip(),
-        "cro_number": str(profile.get("cro_number") or "790968").strip(),
-        "registration_date": str(profile.get("registration_date") or "2026-08-04").strip(),
+        "business_name": str(profile.get("business_name") or "").strip(),
+        "owner_name": str(profile.get("owner_name") or "").strip(),
+        "cro_number": str(profile.get("cro_number") or "").strip(),
+        "registration_date": str(profile.get("registration_date") or "").strip(),
         "structure": _normalize_business_structure(profile.get("structure")),
         "vat_registered": bool(profile.get("vat_registered", True)),
+        "vat_number": str(profile.get("vat_number") or "").strip(),
         "vat_threshold_basis": _normalize_vat_threshold_basis(profile.get("vat_threshold_basis")),
         "transition_date": str(profile.get("transition_date") or "").strip(),
         "pre_trading_start_date": str(profile.get("pre_trading_start_date") or "").strip(),
         "trading_start_date": str(profile.get("trading_start_date") or "").strip(),
+        "revenue_registration_date": str(profile.get("revenue_registration_date") or "").strip(),
         "invoice_number_offset": int(_coerce_number(profile.get("invoice_number_offset", 100))),
         "updated_at": datetime.now().isoformat(timespec="seconds"),
     }
@@ -502,7 +511,11 @@ def _resolve_phase_tag(transaction_date: Any) -> str:
         if record_date >= pre_trading_start and (trading_start is None or record_date < trading_start):
             return "Pre-Trading"
 
-    if structure == "sole_trader":
+    # "" (structure not yet declared) is treated as Phase 1 here as a practical
+    # default for tagging transactions — not a claim that sole trader status has
+    # actually been declared. Everything below this line is limited-company-specific
+    # logic (transition_date), which only makes sense once that structure is real.
+    if structure in ("sole_trader", ""):
         return "Phase 1"
 
     if transition_date is None:
@@ -514,9 +527,12 @@ def _resolve_phase_tag(transaction_date: Any) -> str:
 
 
 def _phase_label_for_structure(structure: Any) -> str:
-    if _normalize_business_structure(structure) == "limited_company":
+    normalized = _normalize_business_structure(structure)
+    if normalized == "limited_company":
         return "Phase 2 - Private Limited Company"
-    return "Phase 1 - Sole Trader / Business Name"
+    if normalized == "sole_trader":
+        return "Phase 1 - Sole Trader / Business Name"
+    return "Business Name registered, legal structure not yet declared"
 
 
 def _append_message_to_path(path: str, message: str) -> str:
@@ -526,6 +542,10 @@ def _append_message_to_path(path: str, message: str) -> str:
 
 def _build_phase_policy(summary: dict[str, Any], structure: str) -> dict[str, Any]:
     structure_key = _normalize_business_structure(structure)
+    # Falls back to sole_trader's tax config for an undeclared ("") structure — an
+    # estimated-tax figure has to be computed with something, and this is the closer
+    # default for a business that hasn't formally incorporated. Not a claim that
+    # sole trader status has actually been declared.
     config = PHASE_POLICY.get(structure_key, PHASE_POLICY["sole_trader"])
     net_profit = _coerce_number(summary.get("net_cashflow", 0))
     taxable_profit = max(net_profit, 0.0)
@@ -559,6 +579,8 @@ def _build_ytd_summary(sheets: dict[str, Any], structure: str, vat_control_summa
     )
     net_profit_ytd = income_ytd - expense_ytd
     structure_key = _normalize_business_structure(structure)
+    # Same practical default as _build_phase_policy — sole_trader's rate for an
+    # undeclared structure, not a claim that it's been declared.
     config = PHASE_POLICY.get(structure_key, PHASE_POLICY["sole_trader"])
     estimated_tax_rate = float(config.get("estimated_tax_rate", 0.0))
     estimated_tax_due_ytd = round(max(net_profit_ytd, 0.0) * estimated_tax_rate, 2)
@@ -4512,7 +4534,14 @@ def _build_compliance_deadlines(
                 }
             )
 
-    if structure == "sole_trader":
+    # Gating Form 11 / Preliminary Tax on trading_start_date being set is a practical
+    # default for this dashboard, not authoritative tax guidance — a sole trader could
+    # still have a real Form 11 obligation depending on actual circumstances even
+    # before "trading" is confirmed in the app's sense. This only controls when the
+    # UI starts surfacing the reminder, matching the same gating pattern already used
+    # for the limited-company deadlines below (transition_date/registration_date).
+    trading_start = _parse_transaction_date(business_profile.get("trading_start_date"))
+    if structure == "sole_trader" and trading_start is not None:
         form11_due = date(current_day.year, 10, 31)
         if form11_due < current_day:
             form11_due = date(current_day.year + 1, 10, 31)
@@ -5451,6 +5480,8 @@ def _build_upcoming_actions(
     business_structure: str,
     clients_catalog: list[dict[str, Any]],
     *,
+    vat_registered: bool = False,
+    trading_start_date: Any = None,
     today: date | None = None,
 ) -> list[dict[str, Any]]:
     current_day = today or date.today()
@@ -5483,15 +5514,18 @@ def _build_upcoming_actions(
             "link": "/invoices",
         })
 
-    vat_due = _next_vat_return_due_date(current_day)
-    actions.append({
-        "severity": "info",
-        "label": "Next VAT return due",
-        "detail": vat_due.strftime("%d %B %Y"),
-        "link": "/ledger",
-    })
+    if vat_registered:
+        vat_due = _next_vat_return_due_date(current_day)
+        actions.append({
+            "severity": "info",
+            "label": "Next VAT return due",
+            "detail": vat_due.strftime("%d %B %Y"),
+            "link": "/ledger",
+        })
 
-    if _normalize_business_structure(business_structure) == "sole_trader":
+    # Same practical-default gating as _build_compliance_deadlines — not authoritative
+    # tax guidance, just when this dashboard reminder starts showing.
+    if _normalize_business_structure(business_structure) == "sole_trader" and _parse_transaction_date(trading_start_date) is not None:
         form11_deadline = date(current_day.year, 10, 31)
         if form11_deadline < current_day:
             form11_deadline = date(current_day.year + 1, 10, 31)
@@ -5813,7 +5847,7 @@ def _build_page_context(
     documents_expiring_soon = _documents_expiring_soon(company_documents)
     compliance_entries = _load_compliance_entries()
     compliance_deadlines = _build_compliance_deadlines(business_profile, data, compliance_entries)
-    upcoming_actions = _build_upcoming_actions(data, structure, clients_catalog)
+    upcoming_actions = _build_upcoming_actions(data, structure, clients_catalog, vat_registered=bool(business_profile.get("vat_registered")), trading_start_date=business_profile.get("trading_start_date"))
     for deadline in compliance_deadlines[:3]:
         upcoming_actions.append({
             "severity": {"red": "danger", "amber": "warning", "green": "info"}.get(deadline["severity"], "info"),
@@ -6585,7 +6619,9 @@ def update_company_profile():
     structure = _normalize_business_structure(request.form.get("structure"))
     trading_start_date = str(request.form.get("trading_start_date") or "").strip()
     pre_trading_start_date = str(request.form.get("pre_trading_start_date") or "").strip()
+    revenue_registration_date = str(request.form.get("revenue_registration_date") or "").strip()
     vat_registered = str(request.form.get("vat_registered") or "").strip().lower() in {"1", "true", "yes", "on"}
+    vat_number = str(request.form.get("vat_number") or "").strip()
     vat_threshold_basis = _normalize_vat_threshold_basis(request.form.get("vat_threshold_basis"))
     transition_date = str(request.form.get("transition_date") or "").strip()
     invoice_number_offset_raw = str(request.form.get("invoice_number_offset") or "").strip()
@@ -6593,9 +6629,10 @@ def update_company_profile():
     errors: dict[str, str] = {}
     _validate_required_text(business_name, "business_name", "Business name", errors)
     for field_name, label, value in (
-        ("registration_date", "Registration date", registration_date),
+        ("registration_date", "CRO registration date", registration_date),
         ("trading_start_date", "Trading start date", trading_start_date),
         ("pre_trading_start_date", "Pre-trading start date", pre_trading_start_date),
+        ("revenue_registration_date", "Revenue registration date", revenue_registration_date),
         ("transition_date", "Transition date", transition_date),
     ):
         if value and _parse_transaction_date(value) is None:
@@ -6614,7 +6651,9 @@ def update_company_profile():
                 "structure": structure,
                 "trading_start_date": trading_start_date,
                 "pre_trading_start_date": pre_trading_start_date,
+                "revenue_registration_date": revenue_registration_date,
                 "transition_date": transition_date,
+                "vat_number": vat_number,
             },
             errors,
         )
@@ -6627,7 +6666,9 @@ def update_company_profile():
     profile["structure"] = structure
     profile["trading_start_date"] = trading_start_date
     profile["pre_trading_start_date"] = pre_trading_start_date
+    profile["revenue_registration_date"] = revenue_registration_date
     profile["vat_registered"] = vat_registered
+    profile["vat_number"] = vat_number
     profile["vat_threshold_basis"] = vat_threshold_basis
     profile["transition_date"] = transition_date
     if invoice_number_offset_raw:

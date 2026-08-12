@@ -1377,18 +1377,38 @@
           <h2>Business profile</h2>
           <a href="/company/profile#profile-edit-modal" class="btn-secondary" id="profile_edit_btn">Edit Profile</a>
         </div>
-        <div class="card" style="display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));">
-          <div><div class="mini" style="margin:0;">Business name</div><strong>{{ business_profile.business_name }}</strong></div>
-          <div><div class="mini" style="margin:0;">Owner name</div><strong>{{ business_profile.owner_name }}</strong></div>
-          <div><div class="mini" style="margin:0;">CRO number</div><strong>{{ business_profile.cro_number or '—' }}</strong></div>
-          <div><div class="mini" style="margin:0;">Registration date</div><strong>{{ business_profile.registration_date | fmt_date or '—' }}</strong></div>
-          <div><div class="mini" style="margin:0;">Legal structure</div><strong>{{ phase_label }}</strong></div>
-          <div><div class="mini" style="margin:0;">Trading start date</div><strong>{{ business_profile.trading_start_date | fmt_date or '—' }}</strong></div>
-          <div><div class="mini" style="margin:0;">Pre-trading start date</div><strong>{{ business_profile.pre_trading_start_date | fmt_date or '—' }}</strong></div>
-          <div><div class="mini" style="margin:0;">Transition date</div><strong>{{ business_profile.transition_date | fmt_date or '—' }}</strong></div>
-          <div><div class="mini" style="margin:0;">VAT registration</div><strong>{{ 'Registered' if vat_registered else 'Not registered' }}</strong></div>
-          <div><div class="mini" style="margin:0;">VAT threshold basis</div><strong>{{ vat_threshold_summary.get('label', business_profile.vat_threshold_basis) if vat_threshold_summary else business_profile.vat_threshold_basis }}</strong></div>
-          <div><div class="mini" style="margin:0;">Invoice number offset</div><strong>{{ business_profile.invoice_number_offset }}</strong></div>
+        <div class="card">
+          <div class="form-section-heading">Identity</div>
+          <div style="display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));">
+            <div><div class="mini" style="margin:0;">Business name</div><strong>{{ business_profile.business_name }}</strong></div>
+            <div><div class="mini" style="margin:0;">Owner name</div><strong>{{ business_profile.owner_name }}</strong></div>
+            <div><div class="mini" style="margin:0;">Legal structure</div><strong>{{ phase_label }}</strong></div>
+          </div>
+          <div class="form-section-heading">CRO Registration</div>
+          <div style="display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));">
+            <div><div class="mini" style="margin:0;">CRO number</div><strong>{{ business_profile.cro_number or '—' }}</strong></div>
+            <div><div class="mini" style="margin:0;">CRO registration date</div><strong>{{ business_profile.registration_date | fmt_date or '—' }}</strong></div>
+          </div>
+          <div class="form-section-heading">Trading Timeline</div>
+          <div style="display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));">
+            <div><div class="mini" style="margin:0;">Trading start date</div><strong>{{ business_profile.trading_start_date | fmt_date or '—' }}</strong></div>
+            <div><div class="mini" style="margin:0;">Pre-trading start date</div><strong>{{ business_profile.pre_trading_start_date | fmt_date or '—' }}</strong></div>
+            <div><div class="mini" style="margin:0;">Transition date</div><strong>{{ business_profile.transition_date | fmt_date or '—' }}</strong></div>
+          </div>
+          <div class="form-section-heading">Revenue Registration</div>
+          <div style="display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));">
+            <div><div class="mini" style="margin:0;">Revenue registration date</div><strong>{{ business_profile.revenue_registration_date | fmt_date or '—' }}</strong></div>
+          </div>
+          <div class="form-section-heading">VAT</div>
+          <div style="display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));">
+            <div><div class="mini" style="margin:0;">VAT registration</div><strong>{{ 'Registered' if vat_registered else 'Not registered' }}</strong></div>
+            <div><div class="mini" style="margin:0;">VAT number</div><strong>{{ business_profile.vat_number or '—' }}</strong></div>
+            <div><div class="mini" style="margin:0;">VAT threshold basis</div><strong>{{ vat_threshold_summary.get('label', business_profile.vat_threshold_basis | capitalize) if vat_threshold_summary else business_profile.vat_threshold_basis | capitalize }}</strong></div>
+          </div>
+          <div class="form-section-heading">Invoicing</div>
+          <div style="display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));">
+            <div><div class="mini" style="margin:0;">Invoice number offset</div><strong>{{ business_profile.invoice_number_offset }}</strong></div>
+          </div>
         </div>
       </div>
 
@@ -1399,6 +1419,7 @@
           </div>
           <div class="compliance-modal-body">
             <form method="post" action="/company/profile/update" class="form-shell" novalidate>
+              <div class="form-section-heading">Identity</div>
               <div class="form-grid">
                 <div class="field required {% if validation_errors.get('business_name') %}has-error{% endif %}">
                   <label for="profile_business_name">Business name</label>
@@ -1410,21 +1431,31 @@
                   <input id="profile_owner_name" type="text" name="owner_name" value="{{ business_profile.owner_name }}" placeholder="Owner name">
                 </div>
                 <div class="field optional">
+                  <label for="profile_structure">Legal structure</label>
+                  <select id="profile_structure" name="structure">
+                    <option value="" {% if business_structure == '' %}selected{% endif %}>Not yet declared</option>
+                    <option value="sole_trader" {% if business_structure == 'sole_trader' %}selected{% endif %}>Sole Trader / Business Name (Phase 1)</option>
+                    <option value="limited_company" {% if business_structure == 'limited_company' %}selected{% endif %}>Private Limited Company (Phase 2)</option>
+                  </select>
+                  <span class="mini" style="color:var(--brand-steel);display:block;margin-top:4px;">Registering a business name with the CRO does not itself declare a legal structure — set this once you've actually decided.</span>
+                </div>
+              </div>
+
+              <div class="form-section-heading">CRO Registration</div>
+              <div class="form-grid">
+                <div class="field optional">
                   <label for="profile_cro_number">CRO number</label>
                   <input id="profile_cro_number" type="text" name="cro_number" value="{{ business_profile.cro_number }}" placeholder="CRO number">
                 </div>
                 <div class="field optional {% if validation_errors.get('registration_date') %}has-error{% endif %}">
-                  <label for="profile_registration_date">Registration date</label>
+                  <label for="profile_registration_date">CRO registration date</label>
                   <input id="profile_registration_date" type="date" name="registration_date" value="{{ business_profile.registration_date }}">
                   {% if validation_errors.get('registration_date') %}<span class="field-error">{{ validation_errors.get('registration_date') }}</span>{% endif %}
                 </div>
-                <div class="field required">
-                  <label for="profile_structure">Legal structure</label>
-                  <select id="profile_structure" name="structure">
-                    <option value="sole_trader" {% if business_structure == 'sole_trader' %}selected{% endif %}>Sole Trader / Business Name (Phase 1)</option>
-                    <option value="limited_company" {% if business_structure == 'limited_company' %}selected{% endif %}>Private Limited Company (Phase 2)</option>
-                  </select>
-                </div>
+              </div>
+
+              <div class="form-section-heading">Trading Timeline</div>
+              <div class="form-grid">
                 <div class="field optional {% if validation_errors.get('trading_start_date') %}has-error{% endif %}">
                   <label for="profile_trading_start_date">Trading start date</label>
                   <input id="profile_trading_start_date" type="date" name="trading_start_date" value="{{ business_profile.trading_start_date }}">
@@ -1440,6 +1471,20 @@
                   <input id="profile_transition_date" type="date" name="transition_date" value="{{ business_profile.transition_date }}">
                   {% if validation_errors.get('transition_date') %}<span class="field-error">{{ validation_errors.get('transition_date') }}</span>{% endif %}
                 </div>
+              </div>
+
+              <div class="form-section-heading">Revenue Registration</div>
+              <div class="form-grid">
+                <div class="field optional {% if validation_errors.get('revenue_registration_date') %}has-error{% endif %}">
+                  <label for="profile_revenue_registration_date">Revenue registration date</label>
+                  <input id="profile_revenue_registration_date" type="date" name="revenue_registration_date" value="{{ business_profile.revenue_registration_date }}">
+                  <span class="mini" style="color:var(--brand-steel);display:block;margin-top:4px;">Date registered with Revenue via a TR1 form for Income Tax self-assessment (and VAT/PRSI, if applicable). Required within 30 days of actually starting to trade. Separate from CRO business name registration above.</span>
+                  {% if validation_errors.get('revenue_registration_date') %}<span class="field-error">{{ validation_errors.get('revenue_registration_date') }}</span>{% endif %}
+                </div>
+              </div>
+
+              <div class="form-section-heading">VAT</div>
+              <div class="form-grid">
                 <div class="field optional" style="justify-content:flex-end;">
                   <span>VAT registration</span>
                   <div style="display:flex;align-items:center;gap:8px;min-height:46px;">
@@ -1449,6 +1494,12 @@
                     </label>
                     <label for="profile_vat_registered" style="margin:0;font-size:13px;color:var(--brand-charcoal);">VAT registered business</label>
                   </div>
+                  <span class="mini" style="color:var(--brand-steel);display:block;margin-top:4px;">Generally required once turnover exceeds €42,500 for services in a 12-month period (voluntary below that). Completed via the same TR1 process as Income Tax registration. Sometimes together, sometimes later once the threshold is approached.</span>
+                </div>
+                <div class="field optional">
+                  <label for="profile_vat_number">VAT number</label>
+                  <input id="profile_vat_number" type="text" name="vat_number" value="{{ business_profile.vat_number }}" placeholder="e.g. IE1234567T">
+                  <span class="mini" style="color:var(--brand-steel);display:block;margin-top:4px;">Only relevant once VAT registered. Can stay blank until then.</span>
                 </div>
                 <div class="field optional">
                   <label for="profile_vat_threshold_basis">VAT threshold basis</label>
@@ -1458,6 +1509,10 @@
                     {% endfor %}
                   </select>
                 </div>
+              </div>
+
+              <div class="form-section-heading">Invoicing</div>
+              <div class="form-grid">
                 <div class="field optional {% if validation_errors.get('invoice_number_offset') %}has-error{% endif %}">
                   <label for="profile_invoice_number_offset">Invoice number offset</label>
                   <input id="profile_invoice_number_offset" type="number" min="0" step="1" name="invoice_number_offset" value="{{ business_profile.invoice_number_offset }}">

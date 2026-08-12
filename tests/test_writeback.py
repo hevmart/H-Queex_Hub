@@ -393,6 +393,46 @@ def test_phase_resolution_uses_transition_date_for_limited_company(workbook_copy
     assert app._resolve_phase_tag("2026-08-20") == "Phase 2"
 
 
+def test_normalize_business_structure_treats_blank_as_undeclared_not_sole_trader():
+    # Registering a business name with the CRO says nothing about legal structure —
+    # blank/invalid must never silently become "sole_trader".
+    assert app._normalize_business_structure("") == ""
+    assert app._normalize_business_structure(None) == ""
+    assert app._normalize_business_structure("garbage") == ""
+    assert app._normalize_business_structure("sole_trader") == "sole_trader"
+    assert app._normalize_business_structure("limited_company") == "limited_company"
+
+
+def test_phase_label_reflects_undeclared_structure_distinctly():
+    assert app._phase_label_for_structure("") == "Business Name registered, legal structure not yet declared"
+    assert app._phase_label_for_structure("sole_trader") == "Phase 1 - Sole Trader / Business Name"
+    assert app._phase_label_for_structure("limited_company") == "Phase 2 - Private Limited Company"
+
+
+def test_resolve_phase_tag_treats_undeclared_structure_as_phase_1(workbook_copy):
+    # Deliberate exception: undeclared structure is still treated as Phase 1 for
+    # tagging real transactions (a practical default), even though it must NOT be
+    # treated as Phase 1 for compliance-deadline generation or the profile label.
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+
+    app._save_business_profile({"structure": ""})
+    assert app._resolve_phase_tag("2026-08-10") == "Phase 1"
+
+
+def test_build_compliance_deadlines_excludes_form11_for_undeclared_structure():
+    today = date(2026, 8, 8)
+    profile = {
+        "structure": "",
+        "vat_registered": False,
+        "trading_start_date": "2026-01-01",
+    }
+    deadlines = app._build_compliance_deadlines(profile, {"summary": {}}, [], today=today)
+    names = [d["name"] for d in deadlines]
+    assert not any("Form 11" in name for name in names)
+    assert not any("Preliminary tax" in name for name in names)
+
+
 def test_ledger_posts_income_with_mapped_account(workbook_copy):
     app.WORKBOOK_PATH = workbook_copy
     app.load_finance_data.cache_clear()
@@ -3222,6 +3262,7 @@ def test_build_compliance_deadlines_includes_form11_and_vat3_for_sole_trader():
         "vat_registered": True,
         "registration_date": "2026-08-04",
         "transition_date": "",
+        "trading_start_date": "2026-01-01",
     }
     deadlines = app._build_compliance_deadlines(profile, {"summary": {}}, [], today=today)
     names = [d["name"] for d in deadlines]
@@ -3231,6 +3272,20 @@ def test_build_compliance_deadlines_includes_form11_and_vat3_for_sole_trader():
     assert not any("CT1" in name for name in names)
     assert not any("CRO annual return" in name for name in names)
     assert deadlines == sorted(deadlines, key=lambda item: item["due_date"])
+
+
+def test_build_compliance_deadlines_excludes_form11_until_trading_start_date_set():
+    today = date(2026, 8, 8)
+    profile = {
+        "structure": "sole_trader",
+        "vat_registered": False,
+        "registration_date": "2026-08-04",
+        "trading_start_date": "",
+    }
+    deadlines = app._build_compliance_deadlines(profile, {"summary": {}}, [], today=today)
+    names = [d["name"] for d in deadlines]
+    assert not any("Form 11" in name for name in names)
+    assert not any("Preliminary tax" in name for name in names)
 
 
 def test_build_compliance_deadlines_includes_ct1_and_cro_for_limited_company_phase_2():
@@ -3343,8 +3398,10 @@ def test_profile_update_route_persists_all_fields(workbook_copy):
             "structure": "limited_company",
             "trading_start_date": "2026-01-01",
             "pre_trading_start_date": "2025-11-01",
+            "revenue_registration_date": "2026-02-15",
             "transition_date": "2026-06-01",
             "vat_registered": "1",
+            "vat_number": "IE1234567T",
             "vat_threshold_basis": "goods",
         },
         follow_redirects=True,
@@ -3355,8 +3412,36 @@ def test_profile_update_route_persists_all_fields(workbook_copy):
     assert profile["business_name"] == "H-Queex Hub"
     assert profile["structure"] == "limited_company"
     assert profile["trading_start_date"] == "2026-01-01"
+    assert profile["vat_number"] == "IE1234567T"
+    # Distinct from CRO registration_date — Revenue registration (Income Tax, and VAT
+    # if applicable) happens separately, once trading actually starts.
+    assert profile["revenue_registration_date"] == "2026-02-15"
     assert profile["vat_registered"] is True
     assert profile["vat_threshold_basis"] == "goods"
+
+
+def test_save_business_profile_does_not_backfill_blank_fields_with_real_identity(workbook_copy):
+    # _save_business_profile() used to hardcode real H-Queex identity data (name,
+    # owner, CRO number, registration date) as fallbacks for blank fields — meaning a
+    # genuinely blank field never actually saved as blank. Called directly here
+    # (bypassing the route's own business_name requirement) to prove the function
+    # itself no longer backfills, not just that the route blocks the blank case.
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+
+    app._save_business_profile({
+        "business_name": "",
+        "owner_name": "",
+        "cro_number": "",
+        "registration_date": "",
+        "structure": "sole_trader",
+    })
+
+    profile = app._load_business_profile()
+    assert profile["business_name"] == ""
+    assert profile["owner_name"] == ""
+    assert profile["cro_number"] == ""
+    assert profile["registration_date"] == ""
 
 
 def test_profile_update_route_rejects_missing_business_name(workbook_copy):
@@ -3364,6 +3449,14 @@ def test_profile_update_route_rejects_missing_business_name(workbook_copy):
     app.load_finance_data.cache_clear()
     client = app.app.test_client()
 
+    # _default_business_profile() has no business_name of its own (it must never leak
+    # real identity data as a fallback), so first set a real value, then prove a blank
+    # update is rejected rather than silently clearing it back out.
+    client.post(
+        '/company/profile/update',
+        data={"business_name": "Acme Ltd", "structure": "sole_trader"},
+        follow_redirects=True,
+    )
     client.post(
         '/company/profile/update',
         data={"business_name": "", "structure": "sole_trader"},
@@ -3371,7 +3464,7 @@ def test_profile_update_route_rejects_missing_business_name(workbook_copy):
     )
 
     profile = app._load_business_profile()
-    assert profile["business_name"] != ""
+    assert profile["business_name"] == "Acme Ltd"
 
 
 # --- Company: Settings redirect and navigation ------------------------------
