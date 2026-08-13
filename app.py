@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import csv
 import json
+import mimetypes
 import os
 import re
 import secrets
@@ -20,6 +21,7 @@ from urllib.parse import quote
 from uuid import uuid4
 
 import bcrypt
+import graph_documents
 from dotenv import load_dotenv
 from flask import Flask, Response, jsonify, redirect, render_template, request, send_from_directory, session, url_for
 from flask_login import (
@@ -178,8 +180,9 @@ RECEIPTS_DIR.mkdir(parents=True, exist_ok=True)
 ALLOWED_RECEIPT_EXTENSIONS = {"pdf", "png", "jpg", "jpeg", "gif", "heic", "webp"}
 COMPANY_DOCUMENTS_PATH = BASE_DIR / "documents.json"
 COMPLIANCE_CALENDAR_PATH = BASE_DIR / "compliance-calendar.json"
-COMPANY_DOCUMENTS_DIR = BASE_DIR / "documents"
-COMPANY_DOCUMENTS_DIR.mkdir(parents=True, exist_ok=True)
+# Company Documents files live in OneDrive via Microsoft Graph (graph_documents.py),
+# not on local/server disk — see docs/deployment.md for the Graph setup. SOPs,
+# Delivery Log files, and Expense receipts are unaffected and still use local disk.
 ALLOWED_DOCUMENT_EXTENSIONS = {"pdf", "docx", "xlsx", "xls", "pptx", "png", "jpg", "jpeg", "csv"}
 MAX_DOCUMENT_SIZE_BYTES = 25 * 1024 * 1024
 DOCUMENT_CATEGORIES = (
@@ -4348,7 +4351,8 @@ def _default_company_documents() -> list[dict[str, Any]]:
             "category": "Compliance",
             "description": "",
             "filename": "",
-            "file_path": "",
+            "graph_item_id": "",
+            "graph_web_url": "",
             "date_added": "2026-08-04",
             "expiry_date": "",
             "status": "active",
@@ -4371,14 +4375,21 @@ def _load_company_documents() -> list[dict[str, Any]]:
         if not isinstance(record, dict):
             continue
         status = str(record.get("status") or "active").strip().lower()
+        record_id = str(record.get("id") or uuid4())
+        graph_item_id = str(record.get("graph_item_id") or "").strip()
         documents.append(
             {
-                "id": str(record.get("id") or uuid4()),
+                "id": record_id,
                 "name": str(record.get("name") or "").strip(),
                 "category": _normalize_document_category(record.get("category")),
                 "description": str(record.get("description") or "").strip(),
                 "filename": str(record.get("filename") or "").strip(),
-                "file_path": str(record.get("file_path") or "").strip(),
+                "graph_item_id": graph_item_id,
+                "graph_web_url": str(record.get("graph_web_url") or "").strip(),
+                # Computed, not stored: the app's own download/view route for this
+                # record, mirrored into file_path so templates keep working the same
+                # way they did when this pointed at a local disk path.
+                "file_path": f"documents/{record_id}" if graph_item_id else "",
                 "date_added": str(record.get("date_added") or "").strip(),
                 "expiry_date": str(record.get("expiry_date") or "").strip(),
                 "status": status if status in DOCUMENT_STATUSES else "active",
@@ -4391,31 +4402,51 @@ def _load_company_documents() -> list[dict[str, Any]]:
 
 
 def _save_company_documents(documents: list[dict[str, Any]]) -> None:
-    _save_json_records(COMPANY_DOCUMENTS_PATH, documents)
+    # file_path is computed by _load_company_documents, never persisted.
+    persisted = [{key: value for key, value in document.items() if key != "file_path"} for document in documents]
+    _save_json_records(COMPANY_DOCUMENTS_PATH, persisted)
 
 
-def _save_uploaded_document(file_storage: Any) -> tuple[str, str]:
-    """Returns (stored_filename, error_message). stored_filename is '' on failure or no file."""
+def _document_category_folder(category: str) -> str:
+    return f"{graph_documents.DOCUMENTS_ROOT_FOLDER}/{category}"
+
+
+def _validate_document_file(file_storage: Any) -> tuple[str, bytes, str]:
+    """Returns (original_filename, file_bytes, error_message). original_filename is
+    '' on failure or no file. Pure validation — does not touch OneDrive or disk,
+    so it stays fast and network-free even when the caller doesn't need to upload."""
     if not file_storage or not getattr(file_storage, "filename", ""):
-        return "", ""
+        return "", b"", ""
 
     original_name = secure_filename(file_storage.filename)
     if not original_name or "." not in original_name:
-        return "", "File must have a valid name and extension"
+        return "", b"", "File must have a valid name and extension"
 
     extension = original_name.rsplit(".", 1)[-1].lower()
     if extension not in ALLOWED_DOCUMENT_EXTENSIONS:
-        return "", "File type not allowed. Accepted: PDF, DOCX, XLSX, XLS, PPTX, PNG, JPG, CSV"
+        return "", b"", "File type not allowed. Accepted: PDF, DOCX, XLSX, XLS, PPTX, PNG, JPG, CSV"
 
     file_storage.seek(0, 2)
     size_bytes = file_storage.tell()
     file_storage.seek(0)
     if size_bytes > MAX_DOCUMENT_SIZE_BYTES:
-        return "", "File exceeds the 25MB maximum size"
+        return "", b"", "File exceeds the 25MB maximum size"
 
-    stored_name = f"{uuid4().hex[:10]}_{original_name}"
-    file_storage.save(COMPANY_DOCUMENTS_DIR / stored_name)
-    return stored_name, ""
+    return original_name, file_storage.read(), ""
+
+
+def _upload_document_to_graph(category: str, original_name: str, file_bytes: bytes) -> tuple[dict[str, Any], str]:
+    """Returns (drive_item, error_message). drive_item is {} on failure — the
+    caller must treat that the same as any other rejected upload: a real error
+    shown on the form, nothing saved, nothing silently dropped."""
+    try:
+        graph_documents.ensure_folder(graph_documents.DOCUMENTS_ROOT_FOLDER)
+        graph_documents.ensure_folder(_document_category_folder(category))
+        stored_name = f"{uuid4().hex[:10]}_{original_name}"
+        drive_item = graph_documents.upload_file(_document_category_folder(category), stored_name, file_bytes)
+        return drive_item, ""
+    except (graph_documents.GraphAuthError, graph_documents.GraphRequestError) as exc:
+        return {}, f"Couldn't upload to OneDrive: {exc}"
 
 
 def _document_expiry_severity(expiry_date: Any, *, today: date | None = None) -> str:
@@ -6326,10 +6357,25 @@ def finance_view():
     )
 
 
-@app.route("/documents/<path:filename>")
-def serve_company_document(filename):
+@app.route("/documents/<document_id>")
+def serve_company_document(document_id):
     as_attachment = request.args.get("download") == "1"
-    return send_from_directory(COMPANY_DOCUMENTS_DIR, filename, as_attachment=as_attachment)
+    documents = _load_company_documents()
+    document = _find_record_by_id(documents, document_id)
+    if document is None or not document.get("graph_item_id"):
+        return redirect(url_for("company_documents_view", message="Document file not found"))
+
+    try:
+        content = graph_documents.download_file(document["graph_item_id"])
+    except (graph_documents.GraphAuthError, graph_documents.GraphRequestError) as exc:
+        return redirect(url_for("company_documents_view", message=f"Couldn't retrieve file from OneDrive: {exc}"))
+
+    mimetype = mimetypes.guess_type(document.get("filename") or "")[0] or "application/octet-stream"
+    response = Response(content, mimetype=mimetype)
+    disposition = "attachment" if as_attachment else "inline"
+    safe_filename = (document.get("filename") or document_id).replace('"', "")
+    response.headers["Content-Disposition"] = f'{disposition}; filename="{safe_filename}"'
+    return response
 
 
 @app.route("/company")
@@ -6382,9 +6428,10 @@ def upload_company_document():
     if expiry_date and _parse_transaction_date(expiry_date) is None:
         errors["expiry_date"] = "Expiry date must be a valid date"
 
-    stored_filename = ""
+    original_name = ""
+    file_bytes = b""
     if not errors:
-        stored_filename, upload_error = _save_uploaded_document(request.files.get("document_file"))
+        original_name, file_bytes, upload_error = _validate_document_file(request.files.get("document_file"))
         if upload_error:
             errors["document_file"] = upload_error
 
@@ -6396,6 +6443,17 @@ def upload_company_document():
             validation_tab="company_documents",
         )
 
+    drive_item: dict[str, Any] = {}
+    if original_name:
+        drive_item, graph_error = _upload_document_to_graph(category, original_name, file_bytes)
+        if graph_error:
+            return _redirect_with_form_errors(
+                "company_documents_view",
+                {"name": name, "category": category, "description": description, "expiry_date": expiry_date, "notes": notes},
+                {"document_file": graph_error},
+                validation_tab="company_documents",
+            )
+
     now = datetime.now().isoformat(timespec="seconds")
     documents = _load_company_documents()
     document = {
@@ -6403,8 +6461,9 @@ def upload_company_document():
         "name": name,
         "category": category,
         "description": description,
-        "filename": stored_filename,
-        "file_path": f"documents/{stored_filename}" if stored_filename else "",
+        "filename": original_name,
+        "graph_item_id": str(drive_item.get("id") or ""),
+        "graph_web_url": str(drive_item.get("webUrl") or ""),
         "date_added": date.today().isoformat(),
         "expiry_date": expiry_date,
         "status": "active",
@@ -6451,7 +6510,7 @@ def update_company_document():
             edit_id=document_id,
         )
 
-    stored_filename, upload_error = _save_uploaded_document(request.files.get("document_file"))
+    original_name, file_bytes, upload_error = _validate_document_file(request.files.get("document_file"))
     if upload_error:
         return _redirect_with_form_errors(
             "company_documents_view",
@@ -6461,19 +6520,47 @@ def update_company_document():
             edit_id=document_id,
         )
 
+    category_changed = category != document.get("category")
+    warning = ""
+
+    if original_name:
+        # A replacement file was uploaded — upload the new one first, only drop
+        # the old one from OneDrive once the new one has actually landed.
+        drive_item, graph_error = _upload_document_to_graph(category, original_name, file_bytes)
+        if graph_error:
+            return _redirect_with_form_errors(
+                "company_documents_view",
+                {"name": name, "category": category, "description": description, "expiry_date": expiry_date, "notes": notes},
+                {"document_file": graph_error},
+                validation_tab="company_documents",
+                edit_id=document_id,
+            )
+        old_item_id = document.get("graph_item_id")
+        if old_item_id:
+            try:
+                graph_documents.delete_file(old_item_id)
+            except (graph_documents.GraphAuthError, graph_documents.GraphRequestError):
+                warning = " (previous file could not be removed from OneDrive — safe to delete by hand later)"
+        document["filename"] = original_name
+        document["graph_item_id"] = str(drive_item.get("id") or "")
+        document["graph_web_url"] = str(drive_item.get("webUrl") or "")
+    elif category_changed and document.get("graph_item_id"):
+        try:
+            moved_item = graph_documents.move_file(document["graph_item_id"], _document_category_folder(category))
+            document["graph_web_url"] = str(moved_item.get("webUrl") or document.get("graph_web_url") or "")
+        except (graph_documents.GraphAuthError, graph_documents.GraphRequestError):
+            warning = " (file could not be moved to the new category folder in OneDrive — it's still there under the old one)"
+
     document["name"] = name
     document["category"] = category
     document["description"] = description
     document["expiry_date"] = expiry_date
     document["notes"] = notes
     document["status"] = status
-    if stored_filename:
-        document["filename"] = stored_filename
-        document["file_path"] = f"documents/{stored_filename}"
     document["last_updated_at"] = datetime.now().isoformat(timespec="seconds")
     _save_company_documents(documents)
     _record_audit("update", "company_document", {"document_id": document_id, "record": document})
-    return redirect(url_for("company_documents_view", message="Document updated"))
+    return redirect(url_for("company_documents_view", message=f"Document updated{warning}"))
 
 
 @app.route("/company/documents/archive", methods=["POST"])

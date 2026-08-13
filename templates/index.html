@@ -1108,6 +1108,9 @@
                 {% if document.file_path %}
                 <a href="/{{ document.file_path }}" target="_blank" rel="noopener" class="edit-link">View</a>
                 <a href="/{{ document.file_path }}?download=1" class="edit-link">Download</a>
+                {% if document.graph_web_url %}
+                <a href="{{ document.graph_web_url }}" target="_blank" rel="noopener" class="edit-link">Open in OneDrive</a>
+                {% endif %}
                 {{ edit_button('/company/documents?edit_id=' ~ document.id ~ '#document-edit-modal') }}
                 {% else %}
                 <a href="/company/documents?edit_id={{ document.id }}#document-edit-modal" class="btn-secondary" style="padding:8px 12px;">Upload</a>

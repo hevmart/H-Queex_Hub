@@ -5,6 +5,7 @@ import zipfile
 from io import BytesIO
 from datetime import date, timedelta
 from pathlib import Path
+from typing import Any
 
 import pytest
 from openpyxl import Workbook, load_workbook
@@ -45,6 +46,46 @@ def workbook_copy(tmp_path):
 
 
 @pytest.fixture(autouse=True)
+def fake_graph_documents(monkeypatch):
+    """Replaces every graph_documents call app.py can make with an in-memory
+    fake store, so the suite never touches real OneDrive and stays
+    deterministic/offline — same spirit as the OCR tests mocking
+    _run_receipt_ocr instead of calling the real Anthropic API."""
+    store: dict[str, dict[str, Any]] = {}
+    counter = {"n": 0}
+
+    def fake_ensure_folder(path):
+        return None
+
+    def fake_upload_file(folder_path, filename, content):
+        counter["n"] += 1
+        item_id = f"fake-item-{counter['n']}"
+        store[item_id] = {"name": filename, "folder": folder_path, "content": content}
+        return {"id": item_id, "name": filename, "webUrl": f"https://h-queex-test.sharepoint.com/{item_id}"}
+
+    def fake_download_file(item_id):
+        if item_id not in store:
+            raise app.graph_documents.GraphRequestError(f"Download from OneDrive failed (404): item {item_id} not found")
+        return store[item_id]["content"]
+
+    def fake_delete_file(item_id):
+        store.pop(item_id, None)
+
+    def fake_move_file(item_id, new_folder_path):
+        if item_id not in store:
+            raise app.graph_documents.GraphRequestError(f"Move within OneDrive failed (404): item {item_id} not found")
+        store[item_id]["folder"] = new_folder_path
+        return {"id": item_id, "webUrl": f"https://h-queex-test.sharepoint.com/{item_id}"}
+
+    monkeypatch.setattr(app.graph_documents, "ensure_folder", fake_ensure_folder)
+    monkeypatch.setattr(app.graph_documents, "upload_file", fake_upload_file)
+    monkeypatch.setattr(app.graph_documents, "download_file", fake_download_file)
+    monkeypatch.setattr(app.graph_documents, "delete_file", fake_delete_file)
+    monkeypatch.setattr(app.graph_documents, "move_file", fake_move_file)
+    yield store
+
+
+@pytest.fixture(autouse=True)
 def isolated_subscription_file(tmp_path):
     original_path = app.SUBSCRIPTIONS_PATH
     original_archive_path = app.ARCHIVE_PATH
@@ -69,7 +110,6 @@ def isolated_subscription_file(tmp_path):
     original_receipts_dir = app.RECEIPTS_DIR
     original_company_documents_path = app.COMPANY_DOCUMENTS_PATH
     original_compliance_calendar_path = app.COMPLIANCE_CALENDAR_PATH
-    original_company_documents_dir = app.COMPANY_DOCUMENTS_DIR
     original_projects_path = app.PROJECTS_PATH
     original_delivery_log_path = app.DELIVERY_LOG_PATH
     original_sops_path = app.SOPS_PATH
@@ -112,8 +152,6 @@ def isolated_subscription_file(tmp_path):
     }
     app.COMPANY_DOCUMENTS_PATH = tmp_path / "documents.json"
     app.COMPLIANCE_CALENDAR_PATH = tmp_path / "compliance-calendar.json"
-    app.COMPANY_DOCUMENTS_DIR = tmp_path / "documents"
-    app.COMPANY_DOCUMENTS_DIR.mkdir(parents=True, exist_ok=True)
     app.PROJECTS_PATH = tmp_path / "projects.json"
     app.DELIVERY_LOG_PATH = tmp_path / "delivery-log.json"
     app.SOPS_PATH = tmp_path / "sops.json"
@@ -153,7 +191,6 @@ def isolated_subscription_file(tmp_path):
     app.RECEIPTS_DIR = original_receipts_dir
     app.COMPANY_DOCUMENTS_PATH = original_company_documents_path
     app.COMPLIANCE_CALENDAR_PATH = original_compliance_calendar_path
-    app.COMPANY_DOCUMENTS_DIR = original_company_documents_dir
     app.PROJECTS_PATH = original_projects_path
     app.DELIVERY_LOG_PATH = original_delivery_log_path
     app.SOPS_PATH = original_sops_path
@@ -3044,7 +3081,7 @@ def test_company_documents_seeds_cro_certificate_on_first_load(workbook_copy):
     assert documents[0]["notes"] == "H-Queex business name registration, CRO No. 790968"
 
 
-def test_document_upload_route_persists_document_and_file(workbook_copy):
+def test_document_upload_route_persists_document_and_file(workbook_copy, fake_graph_documents):
     app.WORKBOOK_PATH = workbook_copy
     app.load_finance_data.cache_clear()
     client = app.app.test_client()
@@ -3069,12 +3106,23 @@ def test_document_upload_route_persists_document_and_file(workbook_copy):
     documents = json.loads(app.COMPANY_DOCUMENTS_PATH.read_text(encoding="utf-8"))
     uploaded = next(doc for doc in documents if doc["name"] == "Public Liability Insurance")
     assert uploaded["category"] == "Insurance"
-    assert uploaded["filename"]
-    assert uploaded["file_path"] == f"documents/{uploaded['filename']}"
-    assert (app.COMPANY_DOCUMENTS_DIR / uploaded["filename"]).exists()
+    assert uploaded["filename"] == "policy.pdf"
+    assert uploaded["graph_item_id"]
+    assert uploaded["graph_web_url"]
+    assert "file_path" not in uploaded  # computed at load time, never persisted
+
+    # It actually reached the (fake) OneDrive store, in the right category folder.
+    stored = fake_graph_documents[uploaded["graph_item_id"]]
+    assert stored["content"] == b'%PDF-1.4 fake policy content'
+    assert stored["folder"] == "H-Queex Hub Documents/Insurance"
+
+    # And the view route serves it back via Graph rather than local disk.
+    view_response = client.get(f"/documents/{uploaded['id']}")
+    assert view_response.status_code == 200
+    assert view_response.data == b'%PDF-1.4 fake policy content'
 
 
-def test_document_upload_accepts_business_file_formats(workbook_copy):
+def test_document_upload_accepts_business_file_formats(workbook_copy, fake_graph_documents):
     app.WORKBOOK_PATH = workbook_copy
     app.load_finance_data.cache_clear()
     client = app.app.test_client()
@@ -3102,7 +3150,111 @@ def test_document_upload_accepts_business_file_formats(workbook_copy):
         uploaded = next((doc for doc in documents if doc["name"] == name), None)
         assert uploaded is not None, f"{extension} upload was rejected"
         assert uploaded["filename"].endswith(f".{extension}")
-        assert (app.COMPANY_DOCUMENTS_DIR / uploaded["filename"]).exists()
+        assert uploaded["graph_item_id"] in fake_graph_documents
+        assert fake_graph_documents[uploaded["graph_item_id"]]["folder"] == "H-Queex Hub Documents/Business Planning"
+
+
+def test_document_upload_surfaces_graph_error_without_saving(workbook_copy, fake_graph_documents, monkeypatch):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+
+    def failing_upload(folder_path, filename, content):
+        raise app.graph_documents.GraphRequestError("Upload to OneDrive failed (507): quota exceeded")
+
+    monkeypatch.setattr(app.graph_documents, "upload_file", failing_upload)
+
+    data = {
+        "name": "Never lands",
+        "category": "Other",
+        "document_file": (BytesIO(b'content'), 'file.pdf'),
+    }
+    response = client.post(
+        '/company/documents/upload',
+        data=data,
+        content_type='multipart/form-data',
+        follow_redirects=True,
+    )
+    assert response.status_code == 200
+    assert b"Couldn&#39;t upload to OneDrive" in response.data or b"Couldn't upload to OneDrive" in response.data
+    documents = json.loads(app.COMPANY_DOCUMENTS_PATH.read_text(encoding="utf-8"))
+    assert not any(doc["name"] == "Never lands" for doc in documents)
+
+
+def test_document_update_moves_file_when_category_changes(workbook_copy, fake_graph_documents):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+
+    client.post(
+        '/company/documents/upload',
+        data={"name": "Lease agreement", "category": "Legal", "document_file": (BytesIO(b'lease'), 'lease.pdf')},
+        content_type='multipart/form-data',
+        follow_redirects=True,
+    )
+    documents = json.loads(app.COMPANY_DOCUMENTS_PATH.read_text(encoding="utf-8"))
+    document = next(doc for doc in documents if doc["name"] == "Lease agreement")
+    assert fake_graph_documents[document["graph_item_id"]]["folder"] == "H-Queex Hub Documents/Legal"
+
+    response = client.post(
+        '/company/documents/update',
+        data={
+            "document_id": document["id"],
+            "name": "Lease agreement",
+            "category": "Client Agreements",
+            "expiry_date": "",
+            "notes": "",
+            "status": "active",
+        },
+        content_type='multipart/form-data',
+        follow_redirects=True,
+    )
+    assert response.status_code == 200
+
+    documents = json.loads(app.COMPANY_DOCUMENTS_PATH.read_text(encoding="utf-8"))
+    updated = next(doc for doc in documents if doc["id"] == document["id"])
+    assert updated["category"] == "Client Agreements"
+    assert updated["graph_item_id"] == document["graph_item_id"]  # moved, not re-uploaded
+    assert fake_graph_documents[updated["graph_item_id"]]["folder"] == "H-Queex Hub Documents/Client Agreements"
+
+
+def test_document_update_replaces_file_and_deletes_old_one(workbook_copy, fake_graph_documents):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+
+    client.post(
+        '/company/documents/upload',
+        data={"name": "Insurance cert", "category": "Insurance", "document_file": (BytesIO(b'v1'), 'cert-v1.pdf')},
+        content_type='multipart/form-data',
+        follow_redirects=True,
+    )
+    documents = json.loads(app.COMPANY_DOCUMENTS_PATH.read_text(encoding="utf-8"))
+    document = next(doc for doc in documents if doc["name"] == "Insurance cert")
+    old_item_id = document["graph_item_id"]
+    assert old_item_id in fake_graph_documents
+
+    client.post(
+        '/company/documents/update',
+        data={
+            "document_id": document["id"],
+            "name": "Insurance cert",
+            "category": "Insurance",
+            "expiry_date": "",
+            "notes": "",
+            "status": "active",
+            "document_file": (BytesIO(b'v2'), 'cert-v2.pdf'),
+        },
+        content_type='multipart/form-data',
+        follow_redirects=True,
+    )
+
+    documents = json.loads(app.COMPANY_DOCUMENTS_PATH.read_text(encoding="utf-8"))
+    updated = next(doc for doc in documents if doc["id"] == document["id"])
+    assert updated["filename"] == "cert-v2.pdf"
+    assert updated["graph_item_id"] != old_item_id
+    assert old_item_id not in fake_graph_documents  # old file cleaned up
+    assert fake_graph_documents[updated["graph_item_id"]]["content"] == b'v2'
 
 
 def test_document_upload_rejects_disallowed_extension(workbook_copy):
