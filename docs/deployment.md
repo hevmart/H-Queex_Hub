@@ -284,15 +284,38 @@ banner.
 
 Real offsite protection for the server instead comes from a separate,
 independent nightly job: `scripts/gdrive-backup-sync.sh`, run via
-`hqueex-gdrive-sync.timer`/`.service`, which `rclone copy`s the whole
-`backups/` folder to the same Google Drive folder structure used locally
-(`My Drive/H-Queex — Working Documents/H-Queex Hub/Backups/`). It uses
-`copy`, not `sync` — deliberately never deletes anything on the Drive side,
-so the offsite copy survives local deletion or corruption even though local
-`backups/` is pruned to `BACKUP_RETENTION_DAYS` (30 days). Its result is
-written to `gdrive-sync-status.json` and shown on the dashboard/Settings
-pages via `_load_gdrive_sync_status()` — a genuine sync failure (not
-"hasn't run yet") does trigger the warning banner.
+`hqueex-gdrive-sync.timer`/`.service`, which does two `rclone copy` legs:
+
+1. **JSON metadata**: the whole `backups/` folder to the same Google Drive
+   folder structure used locally (`My Drive/H-Queex — Working Documents/
+   H-Queex Hub/Backups/`).
+2. **File binaries**: everything under the Graph `H-Queex Hub Documents`
+   root on OneDrive (Receipts, SOPs, Delivery Logs, Documents, and any
+   future category — see `_graph_category_folder()` in `app.py`) is synced
+   remote-to-remote, OneDrive → Google Drive, to `My Drive/H-Queex —
+   Working Documents/H-Queex Hub/Documents-Binaries/`. Added 13 Aug 2026 —
+   before this, only the JSON metadata describing a file was backed up
+   offsite, not the file itself; a simultaneous loss of OneDrive and the
+   server disk would have destroyed the file binaries with no recovery
+   path.
+
+Both legs use `copy`, not `sync` — deliberately never deletes anything on
+the Drive side, so the offsite copy survives local/OneDrive deletion or
+corruption. `backups/` is locally pruned to `BACKUP_RETENTION_DAYS` (30
+days) but the offsite Backups/ copy is not pruned to match. Its combined
+result (both legs) is written to `gdrive-sync-status.json` and shown on the
+dashboard/Settings pages via `_load_gdrive_sync_status()` — a genuine
+failure in *either* leg (not "hasn't run yet") does trigger the warning
+banner, since a half-completed offsite backup isn't something the dashboard
+should show as green.
+
+**Destination account**: `hqueexbackups@gmail.com`, a dedicated free-tier
+Google account created specifically for this — deliberately separate from
+Hev's personal Gmail, so business backup data (which may include client
+data once real engagements start) never sits in a personal account. This
+was a deliberate account-separation fix made 13 Aug 2026 (previously the
+`gdrive-hqueex` remote pointed at Hev's personal Google account); see git
+history for the migration.
 
 **One-time setup on a new server:**
 
@@ -300,17 +323,30 @@ pages via `_load_gdrive_sync_status()` — a genuine sync failure (not
 sudo apt-get install -y rclone
 ```
 
-Then configure the `gdrive-hqueex` remote — this step needs an interactive
-Google OAuth consent and can't be scripted or done by an agent on your
-behalf. Run `rclone config` on the server as `deploy`, create a new remote
-named `gdrive-hqueex`, type `drive` (Google Drive), and when asked "Use
-auto config?" answer **no** (the server has no browser) — it prints a
-`rclone authorize "drive"` command to run on a machine that *does* have a
-browser (e.g. locally, with `rclone` installed there too), which opens a
-Google consent screen and prints back a token to paste into the server's
-prompt. Full access scope (not `drive.file`) is required, since the sync
-target is an existing folder tree created by Google Drive Desktop locally,
-not a folder rclone creates itself.
+Then configure two rclone remotes — both need an interactive OAuth consent
+and can't be scripted or done by an agent on your behalf (though the actual
+`rclone config create`/`update` calls that consume the resulting token can
+be run non-interactively with `--non-interactive --continue`, once the
+token itself has been obtained interactively elsewhere):
+
+- **`gdrive-hqueex`** (Google Drive, full `drive` scope — not `drive.file`,
+  since the sync target is an existing folder tree, not one rclone creates
+  itself): run `rclone authorize "drive" --drive-scope drive` on a machine
+  with a browser, signed in as `hqueexbackups@gmail.com`, then feed the
+  resulting token to `rclone config create`/`update` on the server.
+- **`onedrive-hqueex`** (OneDrive, business drive, signed in as
+  `hmartire@h-queex.com` — this is a *separate* rclone-native OAuth app
+  registration, unrelated to the Hub's own Graph app used for Documents
+  uploads and lead-notification email): run `rclone authorize "onedrive"`
+  on a machine with a browser, then feed the resulting token to
+  `rclone config create onedrive-hqueex onedrive drive_type=business
+  region=global --non-interactive`, answering the resulting state-machine
+  prompts (declining token refresh, declining Shared Drive, confirming the
+  one business drive found).
+
+Neither remote's OAuth token/refresh-token should ever be pasted into a
+chat session or committed to git — treat them exactly like the Graph
+`GRAPH_REFRESH_TOKEN`.
 
 Then install and enable the timer:
 
@@ -331,13 +367,6 @@ Test a run immediately rather than waiting for 03:00:
 
 - **No CI/CD** — deployment is a manual `git pull` + `systemctl restart` over
   SSH (see §3). No GitHub Actions workflow triggers this automatically yet.
-- **Uploaded file binaries are not backed up anywhere, on either instance —
-  only their JSON metadata is.** Documents, SOPs, receipts, and delivery-log
-  files are stored on disk (`documents/`, `sops/`, `receipts/`,
-  `delivery-files/`) but `_backup_eligible_files()` in `app.py` only lists
-  JSON paths — the metadata record describing a file is backed up (locally,
-  and now genuinely offsite via rclone), the file itself is not. Needs its
-  own decision — not fixed yet.
 - **`ANTHROPIC_API_KEY` not set** — OCR receipt upload will fail on this
   instance until it's added to `/etc/hqueex-hub/hqueex-hub.env`.
 - **Single gunicorn instance, no load balancing** — fine for a test/pre-launch
