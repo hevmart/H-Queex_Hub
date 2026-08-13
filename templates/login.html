@@ -45,11 +45,20 @@
         max-width: 380px; width: 92%; margin: 0 auto 12px; background: rgba(198, 40, 40, 0.06); border: 1px solid var(--brand-error);
         border-radius: 8px; padding: 10px 12px; font-size: 12px; color: var(--brand-error); text-align: center;
       }
+      /* Deliberate exception to the fixed brand palette — see the same comment in
+         index.html's .local-dev-banner rule. */
+      .local-dev-banner {
+        width: 100%; background: #B45309; color: var(--brand-white); font-size: 12px; font-weight: 700;
+        text-align: center; padding: 8px 12px; text-transform: uppercase; letter-spacing: 0.04em;
+      }
       .login-wrap { display: flex; flex-direction: column; align-items: center; }
     </style>
   </head>
   <body>
     <div class="login-wrap">
+      {% if is_local_request() %}
+      <div class="local-dev-banner">LOCAL DEVELOPMENT — not the live server</div>
+      {% endif %}
       {% if not request.is_secure and not is_local_request() %}
       <div class="http-warning">Running on HTTP — not secure for remote access. Switch to HTTPS before sharing access.</div>
       {% endif %}

@@ -250,6 +250,17 @@
         background: rgba(198, 40, 40, 0.06); border: 1px solid var(--brand-error); color: var(--brand-error);
         font-size: 12px; font-weight: 600; text-align: center; padding: 6px 12px; margin: 0 0 12px;
       }
+      /* Deliberate exception to the fixed brand palette (see the palette comment
+         above): every other warning in this app reuses gold/red because it's
+         signalling something about business data. This one signals something
+         about the environment itself — which machine you're looking at — and
+         needs to be visually unmistakable from an ordinary in-app warning, per
+         explicit request. A genuine amber, not gold-tinted, is intentional here. */
+      .local-dev-banner {
+        background: #B45309; border: none; color: var(--brand-white);
+        font-size: 12px; font-weight: 700; text-align: center; padding: 8px 12px;
+        text-transform: uppercase; letter-spacing: 0.04em;
+      }
       .phase-badge { font-family: 'Segoe UI', sans-serif; font-size: 12px; font-weight: 600; color: var(--brand-steel); background: var(--brand-bg-deep); padding: 5px 12px; border-radius: 999px; white-space: nowrap; }
       .settings-link { color: var(--brand-steel); font-size: 22px; text-decoration: none; padding: 8px; border-radius: 8px; line-height: 1; display: inline-flex; align-items: center; justify-content: center; }
       .settings-link:hover, .settings-link.active { color: var(--brand-navy); background: var(--brand-bg-deep); }
@@ -847,6 +858,9 @@
   </head>
   <body>
     <div class="container" data-version="{{ version }}">
+      {% if is_local_request() %}
+      <div class="local-dev-banner">LOCAL DEVELOPMENT — not the live server</div>
+      {% endif %}
       <div class="header">
         <div class="brand-row">
           <div class="brand-left">
