@@ -11,9 +11,11 @@
                  request.form.
   CORS:          The Hub only returns Access-Control-Allow-Origin for origins
                  in its HQ_ALLOWED_API_ORIGINS allowlist (defaults to
-                 https://hqueex.com, https://www.hqueex.com,
-                 https://h-queex.netlify.app — set the env var on the Hub
-                 host if the real domain differs).
+                 https://h-queex.com, https://www.h-queex.com,
+                 https://h-queex.ie, https://www.h-queex.ie — set the env var
+                 on the Hub host if the real domain differs). Netlify deploy
+                 previews matching https://<slug>--h-queex.netlify.app are
+                 also allowed via HQ_NETLIFY_SITE_SLUG.
   Rate limit:    10 requests/hour per IP — a real visitor will never hit
                  this; it exists to blunt scripted spam.
   Honeypot:      The hidden "website_url" field below must stay empty.

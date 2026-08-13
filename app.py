@@ -228,7 +228,7 @@ PROJECT_DEADLINE_WARNING_DAYS = 14
 LEADS_PATH = BASE_DIR / "leads.json"
 PROPOSALS_PATH = BASE_DIR / "proposals.json"
 TERMS_PATH = BASE_DIR / "terms.json"
-LEAD_SOURCES = ("Website", "Referral", "LinkedIn", "Direct", "Other")
+LEAD_SOURCES = ("Website", "Website — Update Request", "Referral", "LinkedIn", "Direct", "Other")
 LEAD_STATUSES = ("New", "Contacted", "Qualified", "Proposal Sent", "Negotiating", "Won", "Lost", "On Hold")
 LEAD_KANBAN_STATUSES = ("New", "Contacted", "Qualified", "Proposal Sent", "Negotiating", "Won", "Lost")
 LEAD_CLOSED_STATUSES = ("Won", "Lost")
@@ -8272,6 +8272,7 @@ def api_create_lead():
     email = str(payload.get("email") or "").strip()
     phone = str(payload.get("phone") or "").strip()
     message = str(payload.get("message") or "").strip()
+    source = str(payload.get("source") or "").strip() or "Website"
     service_interest = payload.get("service_interest") or []
     if isinstance(service_interest, str):
         service_interest = [service_interest]
@@ -8286,7 +8287,7 @@ def api_create_lead():
     lead = _normalize_lead({
         "id": str(uuid4()),
         "lead_number": _generate_lead_number(leads),
-        "source": "Website",
+        "source": source,
         "contact_name": contact_name,
         "company_name": company_name,
         "email": email,
