@@ -8,4 +8,5 @@ anthropic
 python-dotenv
 pdf2image
 Pillow
+requests
 pytest
