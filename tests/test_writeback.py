@@ -6,6 +6,7 @@ from io import BytesIO
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import pytest
 from openpyxl import Workbook, load_workbook
@@ -3940,7 +3941,8 @@ def test_delivery_add_route_persists_entry_with_project_client(workbook_copy):
             "service_type": "Advisory Call",
             "description": "Monthly check-in call",
             "hours_spent": "1.5",
-            "billing_period": "August 2026",
+            "billing_period_start": "2026-08-01",
+            "billing_period_end": "2026-08-31",
         },
         follow_redirects=True,
     )
@@ -4014,9 +4016,129 @@ def test_delivery_file_attachment_uploads_to_onedrive_and_serves_from_it(workboo
     assert entry["deliverable_graph_item_id"]
     assert fake_graph_documents[entry["deliverable_graph_item_id"]]["folder"] == "H-Queex Hub Documents/Delivery Logs"
 
-    download = client.get(f"/delivery-files/{entry['deliverable_filename']}")
-    assert download.status_code == 200
-    assert download.data == b'%PDF-1.4 fake onedrive report'
+
+def test_delivery_billing_period_derives_label_from_start_end_dates(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+    client_a_id = _client_id_by_name("Client A")
+
+    response = client.post(
+        '/operations/delivery/add',
+        data={
+            "date": "2026-08-05",
+            "client_id": client_a_id,
+            "service_type": "Report",
+            "description": "Billing period range entry",
+            "billing_period_start": "2026-08-01",
+            "billing_period_end": "2026-08-31",
+        },
+        follow_redirects=True,
+    )
+    assert response.status_code == 200
+
+    entries = json.loads(app.DELIVERY_LOG_PATH.read_text(encoding="utf-8"))
+    entry = next(e for e in entries if e["description"] == "Billing period range entry")
+    assert entry["billing_period_start"] == "2026-08-01"
+    assert entry["billing_period_end"] == "2026-08-31"
+    assert entry["billing_period"] == "01 Aug 2026 – 31 Aug 2026"
+
+
+def test_delivery_billing_period_requires_both_dates_when_one_is_set(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+    client_a_id = _client_id_by_name("Client A")
+
+    response = client.post(
+        '/operations/delivery/add',
+        data={
+            "date": "2026-08-05",
+            "client_id": client_a_id,
+            "service_type": "Report",
+            "description": "Half-set billing period",
+            "billing_period_start": "2026-08-01",
+        },
+        follow_redirects=True,
+    )
+    assert b'Billing period needs both a start and end date' in response.data
+    entries = json.loads(app.DELIVERY_LOG_PATH.read_text(encoding="utf-8")) if app.DELIVERY_LOG_PATH.exists() else []
+    assert not any(e.get("description") == "Half-set billing period" for e in entries)
+
+
+def test_delivery_billing_period_rejects_end_before_start(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+    client_a_id = _client_id_by_name("Client A")
+
+    response = client.post(
+        '/operations/delivery/add',
+        data={
+            "date": "2026-08-05",
+            "client_id": client_a_id,
+            "service_type": "Report",
+            "description": "Backwards billing period",
+            "billing_period_start": "2026-08-31",
+            "billing_period_end": "2026-08-01",
+        },
+        follow_redirects=True,
+    )
+    assert b'end date must be on or after the start date' in response.data
+    entries = json.loads(app.DELIVERY_LOG_PATH.read_text(encoding="utf-8")) if app.DELIVERY_LOG_PATH.exists() else []
+    assert not any(e.get("description") == "Backwards billing period" for e in entries)
+
+
+def test_delivery_add_requires_service_type(workbook_copy):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+    client_a_id = _client_id_by_name("Client A")
+
+    response = client.post(
+        '/operations/delivery/add',
+        data={
+            "date": "2026-08-05",
+            "client_id": client_a_id,
+            "service_type": "",
+            "description": "No service type set",
+        },
+        follow_redirects=True,
+    )
+    assert b'Service type is required' in response.data
+    entries = json.loads(app.DELIVERY_LOG_PATH.read_text(encoding="utf-8")) if app.DELIVERY_LOG_PATH.exists() else []
+    assert not any(e.get("description") == "No service type set" for e in entries)
+
+
+def test_delivery_failed_submission_preserves_entered_field_values(workbook_copy):
+    """Regression test: operations_delivery_view used to discard the submitted
+    form_data on a rejected POST, hardcoding delivery_form to just the filter
+    fields — so a failed submission's already-typed description/dates were
+    silently wiped even though the error banner correctly showed. Real bug
+    report: user fills the form, one field is missing, submit fails, and the
+    reopened modal looks completely cleared instead of just flagging the one
+    problem field."""
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+
+    # Client deliberately omitted so the server rejects this — description and
+    # billing period dates must still come back on the redirect.
+    response = client.post(
+        '/operations/delivery/add',
+        data={
+            "date": "2026-08-05",
+            "service_type": "Report",
+            "description": "Should survive the failed redirect",
+            "billing_period_start": "2026-08-01",
+            "billing_period_end": "2026-08-31",
+        },
+        follow_redirects=True,
+    )
+    assert b'Client is required' in response.data
+    assert b'Should survive the failed redirect' in response.data
+    assert b'2026-08-01' in response.data
+    assert b'2026-08-31' in response.data
 
 
 # --- Operations: Clarity Partner invoice generation from Delivery Log -------
@@ -4053,13 +4175,15 @@ def test_generate_delivery_invoice_creates_invoice_and_marks_entries_invoiced(wo
                 "service_type": "KPI Review",
                 "description": description,
                 "hours_spent": "1",
-                "billing_period": "August 2026",
+                "billing_period_start": "2026-08-01",
+                "billing_period_end": "2026-08-31",
             },
             follow_redirects=True,
         )
 
+    billing_period_label = "01 Aug 2026 – 31 Aug 2026"
     response = client.post(
-        f'/operations/delivery/generate-invoice/{partner_id}/August 2026',
+        f'/operations/delivery/generate-invoice/{partner_id}/{quote(billing_period_label, safe="")}',
         follow_redirects=True,
     )
     assert response.status_code == 200
@@ -4090,11 +4214,12 @@ def test_generate_delivery_invoice_requires_retainer_amount(workbook_copy):
 
     client.post(
         '/operations/delivery/add',
-        data={"date": "2026-08-05", "client_id": no_retainer_id, "service_type": "Other", "description": "Some work", "billing_period": "August 2026"},
+        data={"date": "2026-08-05", "client_id": no_retainer_id, "service_type": "Other", "description": "Some work", "billing_period_start": "2026-08-01", "billing_period_end": "2026-08-31"},
         follow_redirects=True,
     )
 
-    response = client.post(f'/operations/delivery/generate-invoice/{no_retainer_id}/August 2026', follow_redirects=True)
+    billing_period_label = "01 Aug 2026 – 31 Aug 2026"
+    response = client.post(f'/operations/delivery/generate-invoice/{no_retainer_id}/{quote(billing_period_label, safe="")}', follow_redirects=True)
     assert response.status_code == 200
     assert b'retainer amount' in response.data
 

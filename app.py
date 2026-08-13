@@ -4866,12 +4866,45 @@ def _normalize_delivery_entry(record: dict[str, Any]) -> dict[str, Any]:
         "deliverable_graph_item_id": str(record.get("deliverable_graph_item_id") or "").strip(),
         "deliverable_graph_web_url": str(record.get("deliverable_graph_web_url") or "").strip(),
         "billing_period": str(record.get("billing_period") or "").strip(),
+        "billing_period_start": str(record.get("billing_period_start") or "").strip(),
+        "billing_period_end": str(record.get("billing_period_end") or "").strip(),
         "invoiced": bool(record.get("invoiced", False)),
         "invoice_id": str(record.get("invoice_id") or "").strip(),
         "created_at": str(record.get("created_at") or now),
         "last_updated_at": str(record.get("last_updated_at") or now),
         "archived": bool(record.get("archived", False)),
     }
+
+
+def _resolve_billing_period_from_form(form: Any) -> tuple[str, str, str, str]:
+    """Returns (billing_period_label, start_iso, end_iso, error_message). The
+    old free-text billing_period field let a Clarity Partner period be typed as
+    "Aug 2026", "8/26", "Q3", etc. — inconsistent shapes that couldn't be
+    reliably filtered or reconciled against invoices. Native date pickers for
+    start/end replace it; the label stored in `billing_period` (still used for
+    grouping/display everywhere else — invoice generation, the Clarity Partner
+    pending-billing summary, the filter bar) is now always derived from those
+    two dates, so it's consistent regardless of what the user picks."""
+    start_raw = str(form.get("billing_period_start") or "").strip()
+    end_raw = str(form.get("billing_period_end") or "").strip()
+    if not start_raw and not end_raw:
+        return "", "", "", ""
+
+    start = _parse_transaction_date(start_raw)
+    end = _parse_transaction_date(end_raw)
+    if not start or not end:
+        return "", "", "", "Billing period needs both a start and end date"
+    if end < start:
+        return "", "", "", "Billing period end date must be on or after the start date"
+
+    # Deliberately not DD/MM/YYYY here (unlike _format_date_display elsewhere):
+    # this label is also used as a raw path segment in the invoice-generation
+    # URL (/operations/delivery/generate-invoice/<client_id>/<period>), and a
+    # slash-containing value there 404s — Werkzeug's default string converter
+    # can't contain "/" even url-encoded, because routing matches on the
+    # decoded path. "01 Aug 2026" has no such character.
+    label = f"{start.strftime('%d %b %Y')} – {end.strftime('%d %b %Y')}"
+    return label, start.isoformat(), end.isoformat(), ""
 
 
 def _load_delivery_log() -> list[dict[str, Any]]:
@@ -7171,7 +7204,7 @@ def operations_delivery_view():
     if billing_period_filter:
         entries = [entry for entry in entries if entry.get("billing_period") == billing_period_filter]
     clarity_partner_client_ids = [client["id"] for client in _clients_catalog_for_operations(data) if client["tier"] == "Clarity Partner"]
-    validation_errors, _ = _build_validation_state("operations_delivery")
+    validation_errors, submitted_form = _build_validation_state("operations_delivery")
     return render_template(
         "index.html",
         **_build_page_context(
@@ -7179,7 +7212,12 @@ def operations_delivery_view():
             "operations_delivery",
             data,
             editing_delivery=editing_delivery,
-            delivery_form={"client_filter": client_filter, "project_filter": project_filter, "billing_period_filter": billing_period_filter},
+            # The filter fields (client_filter/project_filter/billing_period_filter)
+            # always apply; submitted_form only has values when this render follows
+            # a rejected add/update POST — that's the failed attempt's field values
+            # (client_id, description, dates, ...), which must survive the redirect
+            # or the modal reopens looking cleared even though the error is showing.
+            delivery_form={"client_filter": client_filter, "project_filter": project_filter, "billing_period_filter": billing_period_filter, **submitted_form},
             validation_errors=validation_errors,
             message=request.args.get("message"),
         ),
@@ -7201,22 +7239,29 @@ def add_delivery_entry():
         client_id = str(request.form.get("client_id") or "").strip()
         client_name = _client_name_for_id_operations(data, client_id)
 
+    billing_period, billing_period_start, billing_period_end, billing_period_error = _resolve_billing_period_from_form(request.form)
+
     payload = {
         "date": str(request.form.get("date") or date.today().isoformat()).strip(),
         "project_id": project_id,
         "client_id": client_id,
         "client_name": client_name,
-        "service_type": str(request.form.get("service_type") or "Other").strip(),
+        "service_type": str(request.form.get("service_type") or "").strip(),
         "description": str(request.form.get("description") or "").strip(),
         "hours_spent": request.form.get("hours_spent") or None,
-        "billing_period": str(request.form.get("billing_period") or "").strip(),
+        "billing_period": billing_period,
+        "billing_period_start": billing_period_start,
+        "billing_period_end": billing_period_end,
     }
 
     errors: dict[str, str] = {}
     _validate_required_text(payload.get("description"), "description", "Description", errors)
     _validate_required_text(client_name, "client_name", "Client", errors)
+    _validate_required_text(payload.get("service_type"), "service_type", "Service type", errors)
     if not _parse_transaction_date(payload.get("date")):
         errors["date"] = "Date must be valid"
+    if billing_period_error:
+        errors["billing_period_end"] = billing_period_error
 
     if errors:
         return _redirect_with_form_errors("operations_delivery_view", payload, errors, validation_tab="operations_delivery")
@@ -7263,24 +7308,37 @@ def update_delivery_entry():
         client_id = str(request.form.get("client_id") or "").strip()
         client_name = _client_name_for_id_operations(data, client_id)
 
+    # Billing period is locked once invoiced — the date fields render disabled, so
+    # form data won't include them at all; keep the entry's existing values.
+    if entry.get("invoiced"):
+        billing_period = entry.get("billing_period", "")
+        billing_period_start = entry.get("billing_period_start", "")
+        billing_period_end = entry.get("billing_period_end", "")
+        billing_period_error = ""
+    else:
+        billing_period, billing_period_start, billing_period_end, billing_period_error = _resolve_billing_period_from_form(request.form)
+
     payload = {
         "date": str(request.form.get("date") or date.today().isoformat()).strip(),
         "project_id": project_id,
         "client_id": client_id,
         "client_name": client_name,
-        "service_type": str(request.form.get("service_type") or "Other").strip(),
+        "service_type": str(request.form.get("service_type") or "").strip(),
         "description": str(request.form.get("description") or "").strip(),
         "hours_spent": request.form.get("hours_spent") or None,
-        # Billing period is locked once invoiced — the field renders disabled, so
-        # form data won't include it at all; keep the entry's existing value.
-        "billing_period": str(request.form.get("billing_period") or "").strip() if not entry.get("invoiced") else entry.get("billing_period", ""),
+        "billing_period": billing_period,
+        "billing_period_start": billing_period_start,
+        "billing_period_end": billing_period_end,
     }
 
     errors: dict[str, str] = {}
     _validate_required_text(payload.get("description"), "description", "Description", errors)
     _validate_required_text(client_name, "client_name", "Client", errors)
+    _validate_required_text(payload.get("service_type"), "service_type", "Service type", errors)
     if not _parse_transaction_date(payload.get("date")):
         errors["date"] = "Date must be valid"
+    if billing_period_error:
+        errors["billing_period_end"] = billing_period_error
 
     if errors:
         return _redirect_with_form_errors("operations_delivery_view", payload, errors, validation_tab="operations_delivery", edit_id=delivery_id)
@@ -7414,7 +7472,7 @@ def operations_sops_view():
     client_filter = str(request.args.get("client_filter") or "")
     status_filter = str(request.args.get("status_filter") or "")
     process_area_filter = str(request.args.get("process_area_filter") or "")
-    validation_errors, _ = _build_validation_state("operations_sops")
+    validation_errors, submitted_form = _build_validation_state("operations_sops")
     return render_template(
         "index.html",
         **_build_page_context(
@@ -7422,7 +7480,7 @@ def operations_sops_view():
             "operations_sops",
             data,
             editing_sop=editing_sop,
-            sop_form={"client_filter": client_filter, "status_filter": status_filter, "process_area_filter": process_area_filter},
+            sop_form={"client_filter": client_filter, "status_filter": status_filter, "process_area_filter": process_area_filter, **submitted_form},
             validation_errors=validation_errors,
             message=request.args.get("message"),
         ),

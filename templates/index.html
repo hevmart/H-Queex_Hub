@@ -2067,21 +2067,28 @@
                   </select>
                   {% if validation_errors.get('client_name') %}<span class="field-error">{{ validation_errors.get('client_name') }}</span>{% endif %}
                 </div>
-                <div class="field required">
+                <div class="field required {% if validation_errors.get('service_type') %}has-error{% endif %}">
                   <label for="delivery_service_type">Service type</label>
                   <select id="delivery_service_type" name="service_type">
+                    <option value="">Select service type</option>
                     {% for service_type in delivery_service_types %}
                     <option value="{{ service_type }}" {% if delivery_form.get('service_type') == service_type %}selected{% endif %}>{{ service_type }}</option>
                     {% endfor %}
                   </select>
+                  {% if validation_errors.get('service_type') %}<span class="field-error">{{ validation_errors.get('service_type') }}</span>{% endif %}
                 </div>
                 <div class="field optional">
                   <label for="delivery_hours_spent">Hours spent</label>
                   <input id="delivery_hours_spent" type="number" step="0.25" name="hours_spent" value="{{ delivery_form.get('hours_spent', '') }}" placeholder="0.00">
                 </div>
-                <div class="field optional">
-                  <label for="delivery_billing_period">Billing period</label>
-                  <input id="delivery_billing_period" type="text" name="billing_period" value="{{ delivery_form.get('billing_period', '') }}" placeholder="e.g. August 2026">
+                <div class="field optional {% if validation_errors.get('billing_period_end') %}has-error{% endif %}">
+                  <label for="delivery_billing_period_start">Billing period start</label>
+                  <input id="delivery_billing_period_start" type="date" name="billing_period_start" value="{{ delivery_form.get('billing_period_start', '') }}">
+                </div>
+                <div class="field optional {% if validation_errors.get('billing_period_end') %}has-error{% endif %}">
+                  <label for="delivery_billing_period_end">Billing period end</label>
+                  <input id="delivery_billing_period_end" type="date" name="billing_period_end" value="{{ delivery_form.get('billing_period_end', '') }}">
+                  {% if validation_errors.get('billing_period_end') %}<span class="field-error">{{ validation_errors.get('billing_period_end') }}</span>{% endif %}
                 </div>
                 <div class="field required {% if validation_errors.get('description') %}has-error{% endif %}" style="grid-column: 1 / -1;">
                   <label for="delivery_description">Description</label>
@@ -2092,7 +2099,7 @@
                   <label for="delivery_file">Attachment</label>
                   <div class="receipt-dropzone" id="delivery_file_dropzone">
                     <input type="file" id="delivery_file" name="deliverable_file" accept=".pdf,.docx,.png,.jpg,.jpeg,.xlsx,.csv" style="display:none;">
-                    <span class="receipt-dropzone-text">Drag file here or click to upload</span>
+                    <span class="receipt-dropzone-text">Drag file here or click to upload (PDF, DOCX, XLSX, PNG, JPG, CSV — max 25MB)</span>
                     <span class="receipt-dropzone-filename" id="delivery_file_filename"></span>
                   </div>
                   {% if validation_errors.get('deliverable_file') %}<span class="field-error">{{ validation_errors.get('deliverable_file') }}</span>{% endif %}
@@ -2140,21 +2147,27 @@
                   </select>
                   {% if validation_errors.get('client_name') %}<span class="field-error">{{ validation_errors.get('client_name') }}</span>{% endif %}
                 </div>
-                <div class="field required">
+                <div class="field required {% if validation_errors.get('service_type') %}has-error{% endif %}">
                   <label for="delivery_edit_service_type">Service type</label>
                   <select id="delivery_edit_service_type" name="service_type">
                     {% for service_type in delivery_service_types %}
                     <option value="{{ service_type }}" {% if (delivery_form.get('service_type') if delivery_form else editing_delivery.service_type) == service_type %}selected{% endif %}>{{ service_type }}</option>
                     {% endfor %}
                   </select>
+                  {% if validation_errors.get('service_type') %}<span class="field-error">{{ validation_errors.get('service_type') }}</span>{% endif %}
                 </div>
                 <div class="field optional">
                   <label for="delivery_edit_hours_spent">Hours spent</label>
                   <input id="delivery_edit_hours_spent" type="number" step="0.25" name="hours_spent" value="{{ delivery_form.get('hours_spent') if delivery_form else editing_delivery.hours_spent }}" placeholder="0.00">
                 </div>
-                <div class="field optional">
-                  <label for="delivery_edit_billing_period">Billing period</label>
-                  <input id="delivery_edit_billing_period" type="text" name="billing_period" value="{{ delivery_form.get('billing_period') if delivery_form else editing_delivery.billing_period }}" placeholder="e.g. August 2026" {% if editing_delivery.invoiced %}disabled{% endif %}>
+                <div class="field optional {% if validation_errors.get('billing_period_end') %}has-error{% endif %}">
+                  <label for="delivery_edit_billing_period_start">Billing period start</label>
+                  <input id="delivery_edit_billing_period_start" type="date" name="billing_period_start" value="{{ delivery_form.get('billing_period_start') if delivery_form else editing_delivery.billing_period_start }}" {% if editing_delivery.invoiced %}disabled{% endif %}>
+                </div>
+                <div class="field optional {% if validation_errors.get('billing_period_end') %}has-error{% endif %}">
+                  <label for="delivery_edit_billing_period_end">Billing period end</label>
+                  <input id="delivery_edit_billing_period_end" type="date" name="billing_period_end" value="{{ delivery_form.get('billing_period_end') if delivery_form else editing_delivery.billing_period_end }}" {% if editing_delivery.invoiced %}disabled{% endif %}>
+                  {% if validation_errors.get('billing_period_end') %}<span class="field-error">{{ validation_errors.get('billing_period_end') }}</span>{% endif %}
                   {% if editing_delivery.invoiced %}<span class="mini">Already invoiced — billing period is locked.</span>{% endif %}
                 </div>
                 <div class="field required {% if validation_errors.get('description') %}has-error{% endif %}" style="grid-column: 1 / -1;">
@@ -2166,7 +2179,7 @@
                   <label for="delivery_edit_file">Attachment</label>
                   <div class="receipt-dropzone" id="delivery_edit_file_dropzone">
                     <input type="file" id="delivery_edit_file" name="deliverable_file" accept=".pdf,.docx,.png,.jpg,.jpeg,.xlsx,.csv" style="display:none;">
-                    <span class="receipt-dropzone-text">Drag file here or click to upload</span>
+                    <span class="receipt-dropzone-text">Drag file here or click to upload (PDF, DOCX, XLSX, PNG, JPG, CSV — max 25MB)</span>
                     <span class="receipt-dropzone-filename" id="delivery_edit_file_filename">{% if editing_delivery.deliverable_filename %}Current file: {{ editing_delivery.deliverable_filename }}{% endif %}</span>
                   </div>
                   {% if validation_errors.get('deliverable_file') %}<span class="field-error">{{ validation_errors.get('deliverable_file') }}</span>{% endif %}
@@ -2291,7 +2304,7 @@
                   <label for="sop_file">File</label>
                   <div class="receipt-dropzone" id="sop_file_dropzone">
                     <input type="file" id="sop_file" name="sop_file" accept=".pdf,.docx,.png,.jpg,.jpeg" style="display:none;">
-                    <span class="receipt-dropzone-text">Drag file here or click to upload</span>
+                    <span class="receipt-dropzone-text">Drag file here or click to upload (PDF, DOCX, PNG, JPG — max 25MB)</span>
                     <span class="receipt-dropzone-filename" id="sop_file_filename"></span>
                   </div>
                   {% if validation_errors.get('sop_file') %}<span class="field-error">{{ validation_errors.get('sop_file') }}</span>{% endif %}
@@ -3703,7 +3716,7 @@
           <div class="receipt-dropzone receipt-dropzone-large" id="expense_upload_step_dropzone">
             <input type="file" id="expense_upload_step_file" accept="image/*,.pdf" style="display:none;">
             <input type="file" id="expense_upload_step_camera" accept="image/*" capture="environment" style="display:none;">
-            <span class="receipt-dropzone-text">Drag receipt here or click to upload</span>
+            <span class="receipt-dropzone-text">Drag receipt here or click to upload (PDF, JPG, PNG, WEBP — max 10MB)</span>
             <span class="receipt-dropzone-filename" id="expense_upload_step_filename"></span>
           </div>
           <div><button type="button" class="btn-secondary" id="expense_upload_step_camera_btn" style="display:none; margin-top: 12px;">Take Photo</button></div>
@@ -3807,7 +3820,7 @@
               <div class="receipt-dropzone receipt-dropzone-compact" id="expense_receipt_dropzone">
                 <input type="file" id="expense_receipt_file" name="receipt_file" accept="image/*,.pdf" style="display:none;">
                 <input type="file" id="expense_receipt_camera" accept="image/*" capture="environment" style="display:none;">
-                <span class="receipt-dropzone-text">Drag receipt here or click to upload</span>
+                <span class="receipt-dropzone-text">Drag receipt here or click to upload (PDF, PNG, JPG, GIF, HEIC, WEBP — max 25MB)</span>
                 <span class="receipt-dropzone-filename" id="expense_receipt_filename">{% if editing_expense and editing_expense.get('Receipt Filename') %}Current file: {{ editing_expense.get('Receipt Filename') }}{% endif %}</span>
               </div>
               {% if validation_errors.get('receipt_file') %}<span class="field-error">{{ validation_errors.get('receipt_file') }}</span>{% endif %}
