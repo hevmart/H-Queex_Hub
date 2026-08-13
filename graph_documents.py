@@ -1,11 +1,12 @@
-"""Microsoft Graph client for the Company Documents feature.
+"""Microsoft Graph client for the Company Documents feature and lead-notification email.
 
 Delegated OAuth (authorization-code + refresh-token), scoped to the
-hmartire@h-queex.com OneDrive via the `Files.ReadWrite` permission — the
-refresh token is obtained once via `scripts/graph_authorize.py` and self-
-renews on every use from then on (Microsoft Entra ID does not invalidate the
-previous refresh token on rotation, so a failed persist of the new one is
-recoverable, not a lockout — see docs/deployment.md).
+hmartire@h-queex.com account via the `Files.ReadWrite` (OneDrive) and
+`Mail.Send` (lead notification emails) permissions — the refresh token is
+obtained once via `scripts/graph_authorize.py` and self-renews on every use
+from then on (Microsoft Entra ID does not invalidate the previous refresh
+token on rotation, so a failed persist of the new one is recoverable, not a
+lockout — see docs/deployment.md).
 
 This module is deliberately standalone (no Flask/app.py imports) so
 `scripts/graph_authorize.py` can exercise it before app.py ever wires it in.
@@ -24,7 +25,7 @@ import requests
 
 GRAPH_API_BASE = "https://graph.microsoft.com/v1.0"
 GRAPH_TOKEN_URL = "https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token"
-GRAPH_SCOPE = "offline_access Files.ReadWrite"
+GRAPH_SCOPE = "offline_access Files.ReadWrite Mail.Send"
 DOCUMENTS_ROOT_FOLDER = "H-Queex Hub Documents"
 
 _ENV_KEYS = ("GRAPH_TENANT_ID", "GRAPH_CLIENT_ID", "GRAPH_CLIENT_SECRET")
@@ -237,6 +238,26 @@ def download_file(item_id: str) -> bytes:
     if response.status_code != 200:
         raise GraphRequestError(f"Download from OneDrive failed ({response.status_code}): {_short_error(response)}")
     return response.content
+
+
+def send_mail(to_address: str, subject: str, body_text: str) -> None:
+    """Sends as hmartire@h-queex.com via /me/sendMail. Requires the Mail.Send
+    delegated permission on top of Files.ReadWrite — see GRAPH_SCOPE."""
+    url = f"{GRAPH_API_BASE}/me/sendMail"
+    response = _request(
+        "POST",
+        url,
+        json={
+            "message": {
+                "subject": subject,
+                "body": {"contentType": "Text", "content": body_text},
+                "toRecipients": [{"emailAddress": {"address": to_address}}],
+            },
+            "saveToSentItems": True,
+        },
+    )
+    if response.status_code != 202:
+        raise GraphRequestError(f"Sending mail via Graph failed ({response.status_code}): {_short_error(response)}")
 
 
 def delete_file(item_id: str) -> None:

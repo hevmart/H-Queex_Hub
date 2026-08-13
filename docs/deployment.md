@@ -141,7 +141,19 @@ GRAPH_CLIENT_ID=6d96a8f2-3085-4496-8f6c-74f551c706e1
 GRAPH_CLIENT_SECRET=<copied from local .env, never generated fresh per-server — this is the same Azure app registration>
 GRAPH_REFRESH_TOKEN=<copied from local .env after running scripts/graph_authorize.py locally>
 GRAPH_ENV_FILE=/etc/hqueex-hub/hqueex-hub.env
+LEAD_NOTIFICATION_EMAIL=hmartire@h-queex.com   # optional; this is the default if unset
 ```
+
+**Lead notification email**: `/api/leads` sends a best-effort email (via
+Graph `Mail.Send`, as hmartire@h-queex.com) to `LEAD_NOTIFICATION_EMAIL`
+whenever a website lead is created — a mail failure never fails the API
+response since the lead is already saved by that point. This requires the
+`Mail.Send` delegated permission on the same Azure app registration as the
+OneDrive integration (added in Azure Portal → App registrations → API
+permissions), and a refresh token obtained *after* that permission was
+added — re-run `scripts/graph_authorize.py` locally any time `GRAPH_SCOPE`
+in `graph_documents.py` changes, since a refresh token only carries the
+scopes that were consented to at the time it was issued.
 
 **`GRAPH_ENV_FILE` is required on the server and easy to miss.** Locally,
 `graph_documents.py` persists a rotated refresh token back into the project's

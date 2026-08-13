@@ -8241,6 +8241,38 @@ def proposal_pdf(proposal_id):
 
 # --- CRM: Public lead intake API (website integration) -----------------------
 
+LEAD_NOTIFICATION_EMAIL = os.environ.get("LEAD_NOTIFICATION_EMAIL", "hmartire@h-queex.com").strip()
+
+
+def _notify_new_lead(lead: dict[str, Any]) -> None:
+    """Best-effort email alert — a Graph/mail failure must never fail the lead
+    submission itself, since the lead is already saved by the time this runs."""
+    if not LEAD_NOTIFICATION_EMAIL:
+        return
+    try:
+        body_lines = [
+            f"Source: {lead.get('source')}",
+            f"Contact: {lead.get('contact_name') or '(none)'}",
+            f"Company: {lead.get('company_name') or '(none)'}",
+            f"Email: {lead.get('email')}",
+            f"Phone: {lead.get('phone') or '(none)'}",
+            f"Service interest: {', '.join(lead.get('service_interest') or []) or '(none)'}",
+            "",
+            lead.get("notes") or "(no message)",
+            "",
+            f"View in Hub: https://hub.h-queex.com/crm/leads/{lead.get('id')}",
+        ]
+        graph_documents.send_mail(
+            LEAD_NOTIFICATION_EMAIL,
+            f"New lead ({lead.get('lead_number')}): {lead.get('contact_name') or lead.get('company_name')}",
+            "\n".join(body_lines),
+        )
+    except Exception:
+        import logging
+
+        logging.getLogger(__name__).error("Lead notification email failed for lead %s", lead.get("id"), exc_info=True)
+
+
 def _cors_response(payload: dict[str, Any], status_code: int = 200):
     response = jsonify(payload)
     response.status_code = status_code
@@ -8302,6 +8334,7 @@ def api_create_lead():
     leads.append(lead)
     _save_leads(leads)
     _record_audit("create", "lead", {"lead_id": lead["id"], "record": lead, "source": "Website API"})
+    _notify_new_lead(lead)
     return _cors_response({"success": True, "lead_id": lead["id"], "lead_number": lead["lead_number"]}, 201)
 
 
