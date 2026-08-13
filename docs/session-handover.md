@@ -114,6 +114,14 @@ OwningProcess` finds the real one; kill the rest via `taskkill /PID <n> /F`).
     `localhost`/`127.0.0.1`/`::1`, since the warning is meaningless for a server nothing
     external can reach. Still shows for any other hostname.
 
+12. **File binary backup gap closed (13 Aug 2026)** — Receipts, SOPs, and Delivery
+    Log deliverable files now upload to OneDrive for Business via the same
+    `graph_documents.py` module the Documents feature uses, under new category
+    folders (`H-Queex Hub Documents/Receipts`, `/SOPs`, `/Delivery Logs`). The
+    Documents-specific `_upload_document_to_graph` helper was generalized into
+    `_upload_file_to_graph(category, name, bytes)` and is now shared by all four
+    features. See Architectural Decisions below for the rollout/fallback pattern.
+
 ## Architectural decisions worth knowing
 
 - **Stable ids, idempotent migrations.** Every entity gets a `PREFIX-NNN` id assigned
@@ -251,6 +259,34 @@ OwningProcess` finds the real one; kill the rest via `taskkill /PID <n> /F`).
   to the actual website origin(s) before relying on this in production, or the real
   contact form will get CORS errors in the browser console even though curl/server-to-
   server calls work fine.
+- **Receipts/SOPs/Delivery-log files now upload to OneDrive too, reusing the Documents
+  pattern.** `_upload_file_to_graph(category, name, bytes)` (renamed from the
+  Documents-only `_upload_document_to_graph`) is the one shared routine every
+  file-upload feature calls — it resolves/creates `H-Queex Hub Documents/<category>`
+  and uploads. Each feature passes its own category: `RECEIPTS_GRAPH_CATEGORY`,
+  `SOPS_GRAPH_CATEGORY`, `DELIVERY_LOG_GRAPH_CATEGORY`. Unlike Documents (which is
+  OneDrive-only), these three keep writing to local disk first as a safety-net
+  fallback during rollout: `_save_uploaded_receipt`/`_save_uploaded_sop`/
+  `_save_uploaded_delivery_file` all write to their existing local dir *and* attempt
+  the OneDrive upload; if the OneDrive call fails, the local file still exists, the
+  record's `*_graph_item_id` field stays empty, and a warning is printed — nothing is
+  silently dropped, but nothing blocks the save either. The corresponding metadata
+  gained new fields: Expenses sheet rows get `Receipt Graph Item ID` / `Receipt Graph
+  Web URL`; `sops.json` entries get `graph_item_id` / `graph_web_url`;
+  `delivery-log.json` entries get `deliverable_graph_item_id` /
+  `deliverable_graph_web_url`. Serving routes (`/receipts/<filename>`,
+  `/sops/<filename>`, `/delivery-files/<filename>`) now look up the record by
+  filename, prefer streaming from OneDrive when a graph item id is present, and fall
+  back to `send_from_directory` on the local dir otherwise (covers both a genuine
+  OneDrive failure and any file that predates this change). **Existing historical
+  files already on local/server disk have not been backfilled into OneDrive** —
+  intentionally out of scope for this pass, per `HQueex_Hub_Backup_Gap_Fix_Spec.md`;
+  it's a separate follow-up migration, not yet scheduled. Automated tests use the
+  existing `fake_graph_documents` fixture (originally built for Documents) — new
+  tests: `test_expense_receipt_uploads_to_onedrive_and_serves_from_it`,
+  `test_expense_receipt_onedrive_failure_keeps_local_copy`,
+  `test_sop_file_upload_stores_to_onedrive_and_serves_from_it`,
+  `test_delivery_file_attachment_uploads_to_onedrive_and_serves_from_it`.
 
 ## Known issues / things a new session should be aware of
 
@@ -291,6 +327,18 @@ OwningProcess` finds the real one; kill the rest via `taskkill /PID <n> /F`).
   Hub URL before the website team wires it in. This file also hasn't actually been
   wired into the live website yet — it's the reference implementation, not a confirmed
   live integration.
+- **File-binary backup gap for Receipts/SOPs/Delivery Log closed in code (13 Aug
+  2026), pending a live click-through check.** Automated tests (mocked Graph API)
+  pass for all three. A local dev-server session was left running for a manual
+  spot-check (upload a receipt/SOP/delivery file, confirm it lands in OneDrive under
+  `H-Queex Hub Documents/Receipts|SOPs|Delivery Logs`, confirm the in-Hub download
+  link still works) — confirm this happened before treating the gap as fully closed
+  in practice, not just in tests. Server-side rollout (restart the server process to
+  pick up the new `app.py`) also still needs doing separately.
+- **Historical Receipt/SOP/Delivery-log files predating 13 Aug 2026 are still only on
+  local/server disk**, not backfilled into OneDrive — explicitly deferred as a
+  separate follow-up per `HQueex_Hub_Backup_Gap_Fix_Spec.md` §8. No migration script
+  exists yet.
 
 ## Next priorities
 
@@ -316,6 +364,8 @@ OwningProcess` finds the real one; kill the rest via `taskkill /PID <n> /F`).
 
 ### Lower-priority / not yet requested
 
+- Backfill migration for historical Receipt/SOP/Delivery-log files already on
+  local/server disk into OneDrive — deliberately deferred, see `HQueex_Hub_Backup_Gap_Fix_Spec.md` §8.
 - Decide whether `currency` and `phase_tag` become real subscription fields, or stay as
   notes-text conventions.
 - Broaden live/manual testing of the Travel and Subsistence and Other expense-type paths

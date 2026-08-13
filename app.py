@@ -1625,28 +1625,41 @@ def _run_receipt_ocr(file_bytes: bytes, extension: str, category_options: list[s
     return fields
 
 
-def _save_uploaded_receipt(file_storage: Any) -> tuple[str, str]:
-    """Returns (stored_filename, error_message). stored_filename is '' on failure or no file."""
+RECEIPTS_GRAPH_CATEGORY = "Receipts"
+
+
+def _save_uploaded_receipt(file_storage: Any) -> tuple[str, str, str, str]:
+    """Returns (stored_filename, graph_item_id, graph_web_url, error_message).
+    stored_filename is '' on failure or no file. The file is always written to
+    local disk first (the existing, proven path), then also uploaded to
+    OneDrive — graph_item_id/graph_web_url are '' if that upload fails, but the
+    local copy still exists, so nothing is silently lost during rollout."""
     if not file_storage or not getattr(file_storage, "filename", ""):
-        return "", ""
+        return "", "", "", ""
 
     original_name = secure_filename(file_storage.filename)
     if not original_name or "." not in original_name:
-        return "", "File must have a valid name and extension"
+        return "", "", "", "File must have a valid name and extension"
 
     extension = original_name.rsplit(".", 1)[-1].lower()
     if extension not in ALLOWED_RECEIPT_EXTENSIONS:
-        return "", "File type not allowed. Accepted: PDF, PNG, JPG, GIF, HEIC, WEBP"
+        return "", "", "", "File type not allowed. Accepted: PDF, PNG, JPG, GIF, HEIC, WEBP"
 
     file_storage.seek(0, 2)
     size_bytes = file_storage.tell()
     file_storage.seek(0)
     if size_bytes > MAX_DOCUMENT_SIZE_BYTES:
-        return "", "File exceeds the 25MB maximum size"
+        return "", "", "", "File exceeds the 25MB maximum size"
 
+    file_bytes = file_storage.read()
     stored_name = f"{uuid4().hex[:10]}_{original_name}"
-    file_storage.save(RECEIPTS_DIR / stored_name)
-    return stored_name, ""
+    (RECEIPTS_DIR / stored_name).write_bytes(file_bytes)
+
+    drive_item, graph_error = _upload_file_to_graph(RECEIPTS_GRAPH_CATEGORY, original_name, file_bytes)
+    if graph_error:
+        print(f"[receipts] OneDrive upload failed for {original_name}, kept local copy only: {graph_error}", flush=True)
+        return stored_name, "", "", ""
+    return stored_name, str(drive_item.get("id") or ""), str(drive_item.get("webUrl") or ""), ""
 
 
 PRE_TRADING_CAPEX_THRESHOLD = 1000.0
@@ -4407,10 +4420,6 @@ def _save_company_documents(documents: list[dict[str, Any]]) -> None:
     _save_json_records(COMPANY_DOCUMENTS_PATH, persisted)
 
 
-def _document_category_folder(category: str) -> str:
-    return f"{graph_documents.DOCUMENTS_ROOT_FOLDER}/{category}"
-
-
 def _validate_document_file(file_storage: Any) -> tuple[str, bytes, str]:
     """Returns (original_filename, file_bytes, error_message). original_filename is
     '' on failure or no file. Pure validation — does not touch OneDrive or disk,
@@ -4435,15 +4444,22 @@ def _validate_document_file(file_storage: Any) -> tuple[str, bytes, str]:
     return original_name, file_storage.read(), ""
 
 
-def _upload_document_to_graph(category: str, original_name: str, file_bytes: bytes) -> tuple[dict[str, Any], str]:
-    """Returns (drive_item, error_message). drive_item is {} on failure — the
+def _graph_category_folder(category: str) -> str:
+    return f"{graph_documents.DOCUMENTS_ROOT_FOLDER}/{category}"
+
+
+def _upload_file_to_graph(category: str, original_name: str, file_bytes: bytes) -> tuple[dict[str, Any], str]:
+    """Shared OneDrive upload routine used by every feature that stores a file
+    binary there (Documents, Receipts, SOPs, Delivery Log) — resolves/creates
+    the category folder under DOCUMENTS_ROOT_FOLDER and uploads the file.
+    Returns (drive_item, error_message). drive_item is {} on failure — the
     caller must treat that the same as any other rejected upload: a real error
     shown on the form, nothing saved, nothing silently dropped."""
     try:
         graph_documents.ensure_folder(graph_documents.DOCUMENTS_ROOT_FOLDER)
-        graph_documents.ensure_folder(_document_category_folder(category))
+        graph_documents.ensure_folder(_graph_category_folder(category))
         stored_name = f"{uuid4().hex[:10]}_{original_name}"
-        drive_item = graph_documents.upload_file(_document_category_folder(category), stored_name, file_bytes)
+        drive_item = graph_documents.upload_file(_graph_category_folder(category), stored_name, file_bytes)
         return drive_item, ""
     except (graph_documents.GraphAuthError, graph_documents.GraphRequestError) as exc:
         return {}, f"Couldn't upload to OneDrive: {exc}"
@@ -4847,6 +4863,8 @@ def _normalize_delivery_entry(record: dict[str, Any]) -> dict[str, Any]:
         "description": str(record.get("description") or "").strip(),
         "hours_spent": round(_coerce_number(hours_spent), 2) if hours_spent not in (None, "") else None,
         "deliverable_filename": str(record.get("deliverable_filename") or "").strip(),
+        "deliverable_graph_item_id": str(record.get("deliverable_graph_item_id") or "").strip(),
+        "deliverable_graph_web_url": str(record.get("deliverable_graph_web_url") or "").strip(),
         "billing_period": str(record.get("billing_period") or "").strip(),
         "invoiced": bool(record.get("invoiced", False)),
         "invoice_id": str(record.get("invoice_id") or "").strip(),
@@ -4864,23 +4882,33 @@ def _save_delivery_log(entries: list[dict[str, Any]]) -> None:
     _save_json_records(DELIVERY_LOG_PATH, [_normalize_delivery_entry(entry) for entry in entries])
 
 
-def _save_uploaded_delivery_file(file_storage: Any) -> tuple[str, str]:
+DELIVERY_LOG_GRAPH_CATEGORY = "Delivery Logs"
+
+
+def _save_uploaded_delivery_file(file_storage: Any) -> tuple[str, str, str, str]:
+    """Returns (stored_filename, graph_item_id, graph_web_url, error_message)."""
     if not file_storage or not getattr(file_storage, "filename", ""):
-        return "", ""
+        return "", "", "", ""
     original_name = secure_filename(file_storage.filename)
     if not original_name or "." not in original_name:
-        return "", "File must have a valid name and extension"
+        return "", "", "", "File must have a valid name and extension"
     extension = original_name.rsplit(".", 1)[-1].lower()
     if extension not in ALLOWED_DELIVERY_EXTENSIONS:
-        return "", "File type not allowed"
+        return "", "", "", "File type not allowed"
     file_storage.seek(0, 2)
     size_bytes = file_storage.tell()
     file_storage.seek(0)
     if size_bytes > MAX_DOCUMENT_SIZE_BYTES:
-        return "", "File exceeds the 25MB maximum size"
+        return "", "", "", "File exceeds the 25MB maximum size"
+    file_bytes = file_storage.read()
     stored_name = f"{uuid4().hex[:10]}_{original_name}"
-    file_storage.save(DELIVERY_FILES_DIR / stored_name)
-    return stored_name, ""
+    (DELIVERY_FILES_DIR / stored_name).write_bytes(file_bytes)
+
+    drive_item, graph_error = _upload_file_to_graph(DELIVERY_LOG_GRAPH_CATEGORY, original_name, file_bytes)
+    if graph_error:
+        print(f"[delivery-log] OneDrive upload failed for {original_name}, kept local copy only: {graph_error}", flush=True)
+        return stored_name, "", "", ""
+    return stored_name, str(drive_item.get("id") or ""), str(drive_item.get("webUrl") or ""), ""
 
 
 def _clarity_partner_pending_billing(delivery_entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -4920,6 +4948,8 @@ def _normalize_sop(record: dict[str, Any]) -> dict[str, Any]:
         "process_area": str(record.get("process_area") or "").strip(),
         "description": str(record.get("description") or "").strip(),
         "filename": str(record.get("filename") or "").strip(),
+        "graph_item_id": str(record.get("graph_item_id") or "").strip(),
+        "graph_web_url": str(record.get("graph_web_url") or "").strip(),
         "date_created": str(record.get("date_created") or date.today().isoformat()).strip(),
         "date_approved": str(record.get("date_approved") or "").strip(),
         "approved_by": str(record.get("approved_by") or "").strip(),
@@ -4938,23 +4968,33 @@ def _save_sops(sops: list[dict[str, Any]]) -> None:
     _save_json_records(SOPS_PATH, [_normalize_sop(sop) for sop in sops])
 
 
-def _save_uploaded_sop(file_storage: Any) -> tuple[str, str]:
+SOPS_GRAPH_CATEGORY = "SOPs"
+
+
+def _save_uploaded_sop(file_storage: Any) -> tuple[str, str, str, str]:
+    """Returns (stored_filename, graph_item_id, graph_web_url, error_message)."""
     if not file_storage or not getattr(file_storage, "filename", ""):
-        return "", ""
+        return "", "", "", ""
     original_name = secure_filename(file_storage.filename)
     if not original_name or "." not in original_name:
-        return "", "File must have a valid name and extension"
+        return "", "", "", "File must have a valid name and extension"
     extension = original_name.rsplit(".", 1)[-1].lower()
     if extension not in ALLOWED_SOP_EXTENSIONS:
-        return "", "File type not allowed. Accepted: PDF, DOCX, PNG, JPG"
+        return "", "", "", "File type not allowed. Accepted: PDF, DOCX, PNG, JPG"
     file_storage.seek(0, 2)
     size_bytes = file_storage.tell()
     file_storage.seek(0)
     if size_bytes > MAX_DOCUMENT_SIZE_BYTES:
-        return "", "File exceeds the 25MB maximum size"
+        return "", "", "", "File exceeds the 25MB maximum size"
+    file_bytes = file_storage.read()
     stored_name = f"{uuid4().hex[:10]}_{original_name}"
-    file_storage.save(SOP_FILES_DIR / stored_name)
-    return stored_name, ""
+    (SOP_FILES_DIR / stored_name).write_bytes(file_bytes)
+
+    drive_item, graph_error = _upload_file_to_graph(SOPS_GRAPH_CATEGORY, original_name, file_bytes)
+    if graph_error:
+        print(f"[sops] OneDrive upload failed for {original_name}, kept local copy only: {graph_error}", flush=True)
+        return stored_name, "", "", ""
+    return stored_name, str(drive_item.get("id") or ""), str(drive_item.get("webUrl") or ""), ""
 
 
 # --- CRM: Standard terms -----------------------------------------------------
@@ -6445,7 +6485,7 @@ def upload_company_document():
 
     drive_item: dict[str, Any] = {}
     if original_name:
-        drive_item, graph_error = _upload_document_to_graph(category, original_name, file_bytes)
+        drive_item, graph_error = _upload_file_to_graph(category, original_name, file_bytes)
         if graph_error:
             return _redirect_with_form_errors(
                 "company_documents_view",
@@ -6526,7 +6566,7 @@ def update_company_document():
     if original_name:
         # A replacement file was uploaded — upload the new one first, only drop
         # the old one from OneDrive once the new one has actually landed.
-        drive_item, graph_error = _upload_document_to_graph(category, original_name, file_bytes)
+        drive_item, graph_error = _upload_file_to_graph(category, original_name, file_bytes)
         if graph_error:
             return _redirect_with_form_errors(
                 "company_documents_view",
@@ -6547,11 +6587,11 @@ def update_company_document():
     elif category_changed and document.get("graph_item_id"):
         try:
             # The destination category folder may not exist yet — it's normally
-            # created lazily on first upload to that category (_upload_document_to_graph),
+            # created lazily on first upload to that category (_upload_file_to_graph),
             # but a move can be the first time a category is ever used.
             graph_documents.ensure_folder(graph_documents.DOCUMENTS_ROOT_FOLDER)
-            graph_documents.ensure_folder(_document_category_folder(category))
-            moved_item = graph_documents.move_file(document["graph_item_id"], _document_category_folder(category))
+            graph_documents.ensure_folder(_graph_category_folder(category))
+            moved_item = graph_documents.move_file(document["graph_item_id"], _graph_category_folder(category))
             document["graph_web_url"] = str(moved_item.get("webUrl") or document.get("graph_web_url") or "")
         except (graph_documents.GraphAuthError, graph_documents.GraphRequestError):
             warning = " (file could not be moved to the new category folder in OneDrive — it's still there under the old one)"
@@ -7181,7 +7221,7 @@ def add_delivery_entry():
     if errors:
         return _redirect_with_form_errors("operations_delivery_view", payload, errors, validation_tab="operations_delivery")
 
-    stored_filename, upload_error = _save_uploaded_delivery_file(request.files.get("deliverable_file"))
+    stored_filename, deliverable_graph_item_id, deliverable_graph_web_url, upload_error = _save_uploaded_delivery_file(request.files.get("deliverable_file"))
     if upload_error:
         return _redirect_with_form_errors("operations_delivery_view", payload, {"deliverable_file": upload_error}, validation_tab="operations_delivery")
 
@@ -7191,6 +7231,8 @@ def add_delivery_entry():
         **payload,
         "id": _generate_prefixed_id(entries, "DLV"),
         "deliverable_filename": stored_filename,
+        "deliverable_graph_item_id": deliverable_graph_item_id,
+        "deliverable_graph_web_url": deliverable_graph_web_url,
         "invoiced": False,
         "invoice_id": "",
         "created_at": now,
@@ -7243,13 +7285,15 @@ def update_delivery_entry():
     if errors:
         return _redirect_with_form_errors("operations_delivery_view", payload, errors, validation_tab="operations_delivery", edit_id=delivery_id)
 
-    stored_filename, upload_error = _save_uploaded_delivery_file(request.files.get("deliverable_file"))
+    stored_filename, deliverable_graph_item_id, deliverable_graph_web_url, upload_error = _save_uploaded_delivery_file(request.files.get("deliverable_file"))
     if upload_error:
         return _redirect_with_form_errors("operations_delivery_view", payload, {"deliverable_file": upload_error}, validation_tab="operations_delivery", edit_id=delivery_id)
 
     entry.update(payload)
     if stored_filename:
         entry["deliverable_filename"] = stored_filename
+        entry["deliverable_graph_item_id"] = deliverable_graph_item_id
+        entry["deliverable_graph_web_url"] = deliverable_graph_web_url
     entry["last_updated_at"] = datetime.now().isoformat(timespec="seconds")
     _save_delivery_log(entries)
     _record_audit("update", "delivery_entry", {"entry_id": delivery_id, "record": entry})
@@ -7400,7 +7444,7 @@ def add_sop():
     if errors:
         return _redirect_with_form_errors("operations_sops_view", {"title": title, "client_name": client_name}, errors, validation_tab="operations_sops")
 
-    stored_filename, upload_error = _save_uploaded_sop(request.files.get("sop_file"))
+    stored_filename, sop_graph_item_id, sop_graph_web_url, upload_error = _save_uploaded_sop(request.files.get("sop_file"))
     if upload_error:
         return _redirect_with_form_errors("operations_sops_view", {"title": title, "client_name": client_name}, {"sop_file": upload_error}, validation_tab="operations_sops")
 
@@ -7424,6 +7468,8 @@ def add_sop():
         "process_area": str(request.form.get("process_area") or "").strip(),
         "description": str(request.form.get("description") or "").strip(),
         "filename": stored_filename,
+        "graph_item_id": sop_graph_item_id,
+        "graph_web_url": sop_graph_web_url,
         "date_created": date.today().isoformat(),
         "notes": str(request.form.get("notes") or "").strip(),
         "created_at": now,
@@ -7490,13 +7536,53 @@ def archive_sop():
 @app.route("/sops/<path:filename>")
 def serve_sop_file(filename):
     as_attachment = request.args.get("download") == "1"
+    sop = next((record for record in _load_sops() if record.get("filename") == filename), None)
+    if sop and sop.get("graph_item_id"):
+        try:
+            content = graph_documents.download_file(sop["graph_item_id"])
+            mimetype = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+            response = Response(content, mimetype=mimetype)
+            disposition = "attachment" if as_attachment else "inline"
+            response.headers["Content-Disposition"] = f'{disposition}; filename="{filename}"'
+            return response
+        except (graph_documents.GraphAuthError, graph_documents.GraphRequestError):
+            pass  # fall through to the local copy, if one is still on this disk
     return send_from_directory(SOP_FILES_DIR, filename, as_attachment=as_attachment)
 
 
 @app.route("/delivery-files/<path:filename>")
 def serve_delivery_file(filename):
     as_attachment = request.args.get("download") == "1"
+    entry = next((record for record in _load_delivery_log() if record.get("deliverable_filename") == filename), None)
+    if entry and entry.get("deliverable_graph_item_id"):
+        try:
+            content = graph_documents.download_file(entry["deliverable_graph_item_id"])
+            mimetype = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+            response = Response(content, mimetype=mimetype)
+            disposition = "attachment" if as_attachment else "inline"
+            response.headers["Content-Disposition"] = f'{disposition}; filename="{filename}"'
+            return response
+        except (graph_documents.GraphAuthError, graph_documents.GraphRequestError):
+            pass  # fall through to the local copy, if one is still on this disk
     return send_from_directory(DELIVERY_FILES_DIR, filename, as_attachment=as_attachment)
+
+
+@app.route("/receipts/<path:filename>")
+def serve_receipt_file(filename):
+    as_attachment = request.args.get("download") == "1"
+    data = load_finance_data()
+    row = next((r for r in data.get("sheets", {}).get("Expenses", []) if r.get("Receipt Filename") == filename), None)
+    if row and row.get("Receipt Graph Item ID"):
+        try:
+            content = graph_documents.download_file(row["Receipt Graph Item ID"])
+            mimetype = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+            response = Response(content, mimetype=mimetype)
+            disposition = "attachment" if as_attachment else "inline"
+            response.headers["Content-Disposition"] = f'{disposition}; filename="{filename}"'
+            return response
+        except (graph_documents.GraphAuthError, graph_documents.GraphRequestError):
+            pass  # fall through to the local copy, if one is still on this disk
+    return send_from_directory(RECEIPTS_DIR, filename, as_attachment=as_attachment)
 
 
 # --- CRM: Pipeline dashboard --------------------------------------------------
@@ -9497,6 +9583,8 @@ def add_expense():
         "Supplier VAT Number": request.form.get("supplier_vat_number", ""),
         "Receipt / Invoice Ref": request.form.get("receipt_reference", ""),
         "Receipt Filename": "",
+        "Receipt Graph Item ID": "",
+        "Receipt Graph Web URL": "",
         "Category": request.form.get("category", ""),
         "Expense Type": request.form.get("expense_type", ""),
         "Subscription ID": "",
@@ -9526,9 +9614,11 @@ def add_expense():
         "OCR Language": request.form.get("ocr_language", ""),
         "OCR Raw Response": request.form.get("ocr_raw_response", ""),
     }
-    uploaded_receipt_name, receipt_upload_error = _save_uploaded_receipt(request.files.get("receipt_file"))
+    uploaded_receipt_name, receipt_graph_item_id, receipt_graph_web_url, receipt_upload_error = _save_uploaded_receipt(request.files.get("receipt_file"))
     if uploaded_receipt_name:
         payload["Receipt Filename"] = uploaded_receipt_name
+        payload["Receipt Graph Item ID"] = receipt_graph_item_id
+        payload["Receipt Graph Web URL"] = receipt_graph_web_url
         payload["Receipt Attached"] = "Yes"
     _form_total = payload.get("Total (€)", "")
     _form_vat = payload.get("VAT Amount (€)", "")
@@ -9643,6 +9733,8 @@ def update_expense():
         "Supplier VAT Number": request.form.get("supplier_vat_number", ""),
         "Receipt / Invoice Ref": request.form.get("receipt_reference", ""),
         "Receipt Filename": existing_expense_row.get("Receipt Filename", ""),
+        "Receipt Graph Item ID": existing_expense_row.get("Receipt Graph Item ID", ""),
+        "Receipt Graph Web URL": existing_expense_row.get("Receipt Graph Web URL", ""),
         "Category": request.form.get("category", ""),
         "Expense Type": existing_expense_row.get("Expense Type", "Receipt or Invoice"),
         "Subscription ID": existing_expense_row.get("Subscription ID", ""),
@@ -9672,9 +9764,11 @@ def update_expense():
         "OCR Language": request.form.get("ocr_language", existing_expense_row.get("OCR Language", "")),
         "OCR Raw Response": request.form.get("ocr_raw_response", existing_expense_row.get("OCR Raw Response", "")),
     }
-    uploaded_receipt_name, receipt_upload_error = _save_uploaded_receipt(request.files.get("receipt_file"))
+    uploaded_receipt_name, receipt_graph_item_id, receipt_graph_web_url, receipt_upload_error = _save_uploaded_receipt(request.files.get("receipt_file"))
     if uploaded_receipt_name:
         payload["Receipt Filename"] = uploaded_receipt_name
+        payload["Receipt Graph Item ID"] = receipt_graph_item_id
+        payload["Receipt Graph Web URL"] = receipt_graph_web_url
         payload["Receipt Attached"] = "Yes"
     _form_total = payload.get("Total (€)", "")
     _form_vat = payload.get("VAT Amount (€)", "")

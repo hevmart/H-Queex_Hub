@@ -124,9 +124,17 @@ card. You'll see two separate lines — one for the local/live-mount check
 Drive mount — that's expected, not a fault) and one for the nightly offsite
 sync (should show ✓ with a recent timestamp).
 
-**Known gap, not yet fixed**: uploaded file *binaries* (Documents, SOPs,
-receipts, delivery-log files) are not currently backed up anywhere — only
-their JSON metadata records are. This needs a future decision/fix.
+**Gap closed (13 Aug 2026)**: uploaded file *binaries* for Documents, Receipts,
+SOPs, and Delivery Log now upload directly to OneDrive for Business
+(`hmartire@h-queex.com`) via Microsoft Graph, under "H-Queex Hub Documents" →
+`Receipts` / `SOPs` / `Delivery Logs` category folders (Documents already had
+its own categories). Files there get real OneDrive version history — no
+separate backup layer is needed for them. Local/server disk write is still
+kept as a fallback during rollout (if the OneDrive upload fails, the local
+copy is what's served and a warning is logged — nothing is silently lost).
+**Not yet done**: existing historical files already on local/server disk have
+not been backfilled into OneDrive — that's a separate follow-up migration,
+not yet scheduled.
 
 ## 7. Business Plan & Documents (Google Drive)
 

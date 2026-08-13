@@ -3073,6 +3073,54 @@ def test_expense_receipt_rejects_disallowed_extension(workbook_copy):
     assert saved["Receipt Filename"] == ""
 
 
+def test_expense_receipt_uploads_to_onedrive_and_serves_from_it(workbook_copy, fake_graph_documents):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+
+    data = _expense_add_payload(description="OneDrive receipt check", category="Software and Subscriptions")
+    data['receipt_file'] = (BytesIO(b'%PDF-1.4 fake receipt content'), 'onedrive receipt.pdf')
+
+    response = client.post('/expenses/add', data=data, content_type='multipart/form-data', follow_redirects=True)
+    assert response.status_code == 200
+
+    app.load_finance_data.cache_clear()
+    saved = next(row for row in app.load_finance_data()["sheets"]["Expenses"] if row.get("Description") == "OneDrive receipt check")
+    assert saved["Receipt Graph Item ID"]
+    assert fake_graph_documents[saved["Receipt Graph Item ID"]]["folder"] == "H-Queex Hub Documents/Receipts"
+
+    download = client.get(f"/receipts/{saved['Receipt Filename']}")
+    assert download.status_code == 200
+    assert download.data == b'%PDF-1.4 fake receipt content'
+
+
+def test_expense_receipt_onedrive_failure_keeps_local_copy(workbook_copy, fake_graph_documents, monkeypatch):
+    def failing_upload(folder_path, filename, content):
+        raise app.graph_documents.GraphRequestError("Upload to OneDrive failed (507): quota exceeded")
+
+    monkeypatch.setattr(app.graph_documents, "upload_file", failing_upload)
+
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+
+    data = _expense_add_payload(description="Local-only receipt", category="Software and Subscriptions")
+    data['receipt_file'] = (BytesIO(b'%PDF-1.4 fake receipt content'), 'local only.pdf')
+
+    response = client.post('/expenses/add', data=data, content_type='multipart/form-data', follow_redirects=True)
+    assert response.status_code == 200
+
+    app.load_finance_data.cache_clear()
+    saved = next(row for row in app.load_finance_data()["sheets"]["Expenses"] if row.get("Description") == "Local-only receipt")
+    assert saved["Receipt Filename"]
+    assert saved["Receipt Graph Item ID"] == ""
+    assert (app.RECEIPTS_DIR / saved["Receipt Filename"]).exists()
+
+    download = client.get(f"/receipts/{saved['Receipt Filename']}")
+    assert download.status_code == 200
+    assert download.data == b'%PDF-1.4 fake receipt content'
+
+
 # --- Company: Documents ---------------------------------------------------
 
 def test_company_documents_seeds_cro_certificate_on_first_load(workbook_copy):
@@ -3945,6 +3993,32 @@ def test_delivery_file_attachment_stores_file(workbook_copy):
     assert (app.DELIVERY_FILES_DIR / filename).exists()
 
 
+def test_delivery_file_attachment_uploads_to_onedrive_and_serves_from_it(workbook_copy, fake_graph_documents):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+    client_a_id = _client_id_by_name("Client A")
+
+    data = {
+        "date": "2026-08-05",
+        "client_id": client_a_id,
+        "service_type": "Report",
+        "description": "OneDrive report delivered",
+        "deliverable_file": (BytesIO(b'%PDF-1.4 fake onedrive report'), 'onedrive report.pdf'),
+    }
+    response = client.post('/operations/delivery/add', data=data, content_type='multipart/form-data', follow_redirects=True)
+    assert response.status_code == 200
+
+    entries = json.loads(app.DELIVERY_LOG_PATH.read_text(encoding="utf-8"))
+    entry = next(e for e in entries if e["description"] == "OneDrive report delivered")
+    assert entry["deliverable_graph_item_id"]
+    assert fake_graph_documents[entry["deliverable_graph_item_id"]]["folder"] == "H-Queex Hub Documents/Delivery Logs"
+
+    download = client.get(f"/delivery-files/{entry['deliverable_filename']}")
+    assert download.status_code == 200
+    assert download.data == b'%PDF-1.4 fake onedrive report'
+
+
 # --- Operations: Clarity Partner invoice generation from Delivery Log -------
 
 def _make_clarity_partner_client(name="Partner Client", retainer_amount=500.0):
@@ -4126,6 +4200,30 @@ def test_sop_status_workflow_enforces_order(workbook_copy):
     assert sops[0]["status"] == "Approved"
     assert sops[0]["approved_by"] == "Hevandro"
     assert sops[0]["date_approved"]
+
+
+def test_sop_file_upload_stores_to_onedrive_and_serves_from_it(workbook_copy, fake_graph_documents):
+    app.WORKBOOK_PATH = workbook_copy
+    app.load_finance_data.cache_clear()
+    client = app.app.test_client()
+    client_a_id = _client_id_by_name("Client A")
+
+    data = {
+        "title": "OneDrive SOP",
+        "client_id": client_a_id,
+        "sop_file": (BytesIO(b'%PDF-1.4 fake sop content'), 'onboarding sop.pdf'),
+    }
+    response = client.post('/operations/sops/add', data=data, content_type='multipart/form-data', follow_redirects=True)
+    assert response.status_code == 200
+
+    sops = json.loads(app.SOPS_PATH.read_text(encoding="utf-8"))
+    sop = next(s for s in sops if s["title"] == "OneDrive SOP")
+    assert sop["graph_item_id"]
+    assert fake_graph_documents[sop["graph_item_id"]]["folder"] == "H-Queex Hub Documents/SOPs"
+
+    download = client.get(f"/sops/{sop['filename']}")
+    assert download.status_code == 200
+    assert download.data == b'%PDF-1.4 fake sop content'
 
 
 def test_sop_file_upload_rejects_disallowed_extension(workbook_copy):
