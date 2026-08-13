@@ -1374,8 +1374,7 @@
       {% if active_tab == 'company_profile' %}
       <div class="section">
         <div class="edit-banner">
-          <h2>Business profile</h2>
-          <a href="/company/profile#profile-edit-modal" class="btn-secondary" id="profile_edit_btn">Edit Profile</a>
+          <a href="/company/profile#profile-edit-modal" class="btn-secondary" id="profile_edit_btn" style="margin-left:auto;">Edit Profile</a>
         </div>
         <div class="card">
           <div class="form-section-heading">Identity</div>
@@ -1592,8 +1591,7 @@
       {% if client_filter %}{% set filtered_projects = filtered_projects|selectattr('client_name', 'equalto', client_filter)|list %}{% endif %}
       <div class="section">
         <div class="edit-banner">
-          <h2>Projects</h2>
-          <a href="/operations/projects#project-add-modal" class="btn-secondary" id="project_add_btn">+ New Project</a>
+          <a href="/operations/projects#project-add-modal" class="btn-secondary" id="project_add_btn" style="margin-left:auto;">+ New Project</a>
         </div>
         <form method="get" action="/operations/projects" class="table-actions" style="gap:12px;margin-bottom:14px;">
           <label class="field optional" style="margin:0;min-width:180px;">
@@ -1871,7 +1869,7 @@
       {% set project = dmaic_project %}
       <div class="section" id="dmaic_print_area">
         <div class="edit-banner">
-          <h2>{{ project.title }} — DMAIC Tracker</h2>
+          <h2>{{ project.title }}</h2>
           <div class="table-action-stack">
             <a href="/operations/dmaic" class="cancel-link">Change project</a>
             <form method="post" action="/operations/dmaic/pdf/{{ project.id }}" style="display:inline;">
@@ -1952,8 +1950,7 @@
       {% if active_tab == 'operations_delivery' %}
       <div class="section">
         <div class="edit-banner">
-          <h2>Delivery Log</h2>
-          <a href="/operations/delivery#delivery-add-modal" class="btn-secondary" id="delivery_add_btn">+ Log Delivery</a>
+          <a href="/operations/delivery#delivery-add-modal" class="btn-secondary" id="delivery_add_btn" style="margin-left:auto;">+ Log Delivery</a>
         </div>
         <form method="get" action="/operations/delivery" class="table-actions" style="gap:12px;margin-bottom:14px;flex-wrap:wrap;">
           <label class="field optional" style="margin:0;min-width:200px;">
@@ -2174,8 +2171,7 @@
       {% if active_tab == 'operations_sops' %}
       <div class="section">
         <div class="edit-banner">
-          <h2>SOP Library</h2>
-          <a href="/operations/sops#sop-add-modal" class="btn-secondary" id="sop_add_btn">+ New SOP</a>
+          <a href="/operations/sops#sop-add-modal" class="btn-secondary" id="sop_add_btn" style="margin-left:auto;">+ New SOP</a>
         </div>
         <form method="get" action="/operations/sops" class="table-actions" style="gap:12px;margin-bottom:14px;flex-wrap:wrap;">
           <label class="field optional" style="margin:0;min-width:200px;">
@@ -3055,8 +3051,7 @@
       {% if active_tab == 'company_users' %}
       <div class="section">
         <div class="edit-banner">
-          <h2>User management</h2>
-          <a href="#user-add-modal" class="btn-secondary" id="user_add_btn">+ New User</a>
+          <a href="#user-add-modal" class="btn-secondary" id="user_add_btn" style="margin-left:auto;">+ New User</a>
         </div>
         {% if users %}
         <table>
