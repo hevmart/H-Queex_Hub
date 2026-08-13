@@ -1,8 +1,13 @@
 import os
+from pathlib import Path
 
 import pytest
 
 import graph_documents as graph
+
+# Captured before the autouse fixture below monkeypatches graph._env_path, so
+# the two _env_path-specific tests can exercise the real implementation.
+_REAL_ENV_PATH = graph._env_path
 
 
 @pytest.fixture(autouse=True)
@@ -35,6 +40,21 @@ class _FakeResponse:
         if self._json_data is None:
             raise ValueError("no json")
         return self._json_data
+
+
+def test_env_path_defaults_to_project_dot_env(monkeypatch):
+    monkeypatch.delenv("GRAPH_ENV_FILE", raising=False)
+    # _REAL_ENV_PATH was captured before the autouse fixture patched graph._env_path.
+    assert _REAL_ENV_PATH() == Path(graph.__file__).resolve().parent / ".env"
+
+
+def test_env_path_honors_graph_env_file_override(monkeypatch, tmp_path):
+    # This is the server-deployment case: no local .env, credentials come from
+    # systemd's EnvironmentFile=, so a rotated refresh token must be written
+    # back there via GRAPH_ENV_FILE, not to some stray file nothing reads.
+    override_path = tmp_path / "hqueex-hub.env"
+    monkeypatch.setenv("GRAPH_ENV_FILE", str(override_path))
+    assert _REAL_ENV_PATH() == override_path
 
 
 def test_require_client_credentials_missing(monkeypatch):

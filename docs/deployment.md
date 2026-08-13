@@ -121,6 +121,41 @@ python3 -c "import secrets; print(secrets.token_hex(32))"
   server. Not set on this test instance yet; OCR upload will fail without it,
   everything else works fine.
 
+### Microsoft Graph (Company Documents → OneDrive)
+
+Company Documents (`graph_documents.py`) stores files in OneDrive via delegated
+OAuth as `hmartire@h-queex.com`, not local disk — see the module docstring and
+`scripts/graph_authorize.py` for how the refresh token is originally obtained
+(a one-time interactive consent run *locally*, never on the server — it needs
+a real browser).
+
+```
+GRAPH_TENANT_ID=8509ed16-1e5d-4472-a776-56d4baa6d2b3
+GRAPH_CLIENT_ID=6d96a8f2-3085-4496-8f6c-74f551c706e1
+GRAPH_CLIENT_SECRET=<copied from local .env, never generated fresh per-server — this is the same Azure app registration>
+GRAPH_REFRESH_TOKEN=<copied from local .env after running scripts/graph_authorize.py locally>
+GRAPH_ENV_FILE=/etc/hqueex-hub/hqueex-hub.env
+```
+
+**`GRAPH_ENV_FILE` is required on the server and easy to miss.** Locally,
+`graph_documents.py` persists a rotated refresh token back into the project's
+own `.env` (found automatically, no config needed). The server has no such
+`.env` — credentials arrive via systemd's `EnvironmentFile=` — so without
+`GRAPH_ENV_FILE` pointing at that same file, a rotated token would silently
+get written to a stray `/opt/hqueex-hub/.env` that nothing ever reads back,
+and the real env file would keep aging until its token's 90-day window lapsed
+(see `graph_documents._env_path()`).
+
+**File permissions need one adjustment from the 640 default above**: the
+`deploy` user (which owns the `hqueex-hub` systemd service) must be able to
+*write* to this file, not just read it, so the rotated-token persist can
+actually land. Set it to `660` (root:deploy, group read+write) rather than
+the `640` used for the rest of this file's contents:
+
+```bash
+sudo chmod 660 /etc/hqueex-hub/hqueex-hub.env
+```
+
 ## 5. Running as a service (gunicorn + systemd)
 
 Unit file: `/etc/systemd/system/hqueex-hub.service`

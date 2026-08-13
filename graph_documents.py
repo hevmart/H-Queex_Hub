@@ -41,7 +41,15 @@ class GraphRequestError(RuntimeError):
 
 
 def _env_path() -> Path:
-    """Overridable by tests so they never touch the real .env file."""
+    """Where the rotated refresh token gets persisted. Locally this is the
+    project .env that python-dotenv loads. On the server there is no .env —
+    credentials come from systemd's EnvironmentFile= — so GRAPH_ENV_FILE must
+    be set (to /etc/hqueex-hub/hqueex-hub.env) or a rotated token would get
+    written to a file nothing ever reads back. Also overridable by tests so
+    they never touch a real file."""
+    override = (os.environ.get("GRAPH_ENV_FILE") or "").strip()
+    if override:
+        return Path(override)
     return Path(__file__).resolve().parent / ".env"
 
 
