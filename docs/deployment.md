@@ -106,9 +106,15 @@ loaded by systemd via `EnvironmentFile=`.
 
 ```
 HQ_SECRET_KEY=<64-char hex, generated fresh on the server — never reused from local .env>
-HQ_ALLOWED_API_ORIGINS=https://h-queex.com,https://www.h-queex.com,https://h-queex.ie,https://www.h-queex.ie
+HQ_ALLOWED_API_ORIGINS=https://h-queex.com,https://www.h-queex.com,https://h-queex.ie,https://www.h-queex.ie,https://h-queex.netlify.app
 HQ_NETLIFY_SITE_SLUG=h-queex
 ```
+
+`https://h-queex.netlify.app` (the site's default, non-custom Netlify subdomain) is listed
+explicitly because `HQ_NETLIFY_SITE_SLUG`'s regex only matches deploy-preview subdomains
+(`<slug>--h-queex.netlify.app`), not the bare production one — added so the lead-intake
+forms work when testing against `h-queex.netlify.app` directly, before/without
+`h-queex.com` DNS pointing at Netlify.
 
 Generate a fresh secret key the same way for any future server:
 
