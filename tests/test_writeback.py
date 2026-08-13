@@ -52,12 +52,18 @@ def fake_graph_documents(monkeypatch):
     deterministic/offline — same spirit as the OCR tests mocking
     _run_receipt_ocr instead of calling the real Anthropic API."""
     store: dict[str, dict[str, Any]] = {}
+    known_folders: set[str] = set()
     counter = {"n": 0}
 
     def fake_ensure_folder(path):
-        return None
+        known_folders.add(path)
 
     def fake_upload_file(folder_path, filename, content):
+        # Real Graph 404s a PUT under a folder path that doesn't exist yet — enforce
+        # the same here so a caller that forgets ensure_folder() fails in tests too,
+        # not just live (this is exactly the bug the category-move live check caught).
+        if folder_path not in known_folders:
+            raise app.graph_documents.GraphRequestError(f"Upload to OneDrive failed (404): folder '{folder_path}' not found")
         counter["n"] += 1
         item_id = f"fake-item-{counter['n']}"
         store[item_id] = {"name": filename, "folder": folder_path, "content": content}
@@ -74,6 +80,8 @@ def fake_graph_documents(monkeypatch):
     def fake_move_file(item_id, new_folder_path):
         if item_id not in store:
             raise app.graph_documents.GraphRequestError(f"Move within OneDrive failed (404): item {item_id} not found")
+        if new_folder_path not in known_folders:
+            raise app.graph_documents.GraphRequestError(f"Could not resolve OneDrive folder '{new_folder_path}' (404): not found")
         store[item_id]["folder"] = new_folder_path
         return {"id": item_id, "webUrl": f"https://h-queex-test.sharepoint.com/{item_id}"}
 

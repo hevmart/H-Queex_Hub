@@ -6546,6 +6546,11 @@ def update_company_document():
         document["graph_web_url"] = str(drive_item.get("webUrl") or "")
     elif category_changed and document.get("graph_item_id"):
         try:
+            # The destination category folder may not exist yet — it's normally
+            # created lazily on first upload to that category (_upload_document_to_graph),
+            # but a move can be the first time a category is ever used.
+            graph_documents.ensure_folder(graph_documents.DOCUMENTS_ROOT_FOLDER)
+            graph_documents.ensure_folder(_document_category_folder(category))
             moved_item = graph_documents.move_file(document["graph_item_id"], _document_category_folder(category))
             document["graph_web_url"] = str(moved_item.get("webUrl") or document.get("graph_web_url") or "")
         except (graph_documents.GraphAuthError, graph_documents.GraphRequestError):
