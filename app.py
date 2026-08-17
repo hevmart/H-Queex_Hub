@@ -193,6 +193,7 @@ DOCUMENT_CATEGORIES = (
     "Legal",
     "Templates",
     "Client Agreements",
+    "Scope Briefs",
     "Other",
 )
 DOCUMENT_STATUSES = ("active", "archived")
@@ -228,6 +229,28 @@ PROJECT_DEADLINE_WARNING_DAYS = 14
 LEADS_PATH = BASE_DIR / "leads.json"
 PROPOSALS_PATH = BASE_DIR / "proposals.json"
 TERMS_PATH = BASE_DIR / "terms.json"
+ENGAGEMENTS_PATH = BASE_DIR / "engagements.json"
+ENGAGEMENT_STAGES = ("Scoping", "Active", "Delivered", "Closed")
+GENERATED_DOCUMENTS_PATH = BASE_DIR / "generated-documents.json"
+GENERATED_DOCUMENT_TYPES = ("scope_requirements_brief",)
+GENERATED_DOCUMENT_STATUSES = ("draft_pending_review", "approved")
+SCOPE_BRIEF_AI_DRAFT_FIELDS = ("business_context", "scope", "constraints", "stakeholders")
+SCOPE_BRIEF_HEV_ONLY_FIELDS = ("problem_statement", "objectives", "assumptions", "sign_off")
+SCOPE_BRIEF_TIER_DELIVERABLES = {
+    "Clarity Base": "Current-state process map + findings summary",
+    "Clarity Plus": "Full Discover through Digitalize phases",
+    "Clarity Partner": "Ongoing Maintain-phase cadence",
+}
+
+
+def _scope_brief_deliverables_for_tier(tier: str) -> str:
+    tier = str(tier or "").strip()
+    if tier in SCOPE_BRIEF_TIER_DELIVERABLES:
+        return SCOPE_BRIEF_TIER_DELIVERABLES[tier]
+    for key, value in SCOPE_BRIEF_TIER_DELIVERABLES.items():
+        if key.split(" ")[-1].lower() == tier.lower():
+            return value
+    return "To be confirmed with client — no standard tier deliverables matched."
 LEAD_SOURCES = ("Website", "Website — Update Request", "Referral", "LinkedIn", "Direct", "Other")
 LEAD_STATUSES = ("New", "Contacted", "Qualified", "Proposal Sent", "Negotiating", "Won", "Lost", "On Hold")
 LEAD_KANBAN_STATUSES = ("New", "Contacted", "Qualified", "Proposal Sent", "Negotiating", "Won", "Lost")
@@ -693,7 +716,7 @@ SHEET_HEADERS = {
     "AR": ["Client", "Invoice #", "Issue Date", "Due Date", "Total (€)", "Paid (€)", "Balance (€)", "Status"],
     "AP": ["Ref #", "Supplier Name", "Description", "Invoice Date", "Due Date", "Net (€)", "Total (€)", "Paid (€)", "Balance Due (€)", "Status"],
     "VAT": ["Period", "Output VAT — Sales (€)", "Input VAT — Purchases (€)", "Net VAT Due (€)", "VAT Paid (€)", "Balance (€)", "Due Date", "Status"],
-    "Clients": ["Client Name", "Contact Person", "Email", "Phone", "Country", "Service Tier", "Retainer Frequency", "Retainer Amount (€)"],
+    "Clients": ["Client Name", "Contact Person", "Email", "Phone", "Country", "Sector", "Systems in Use", "Service Tier", "Retainer Frequency", "Retainer Amount (€)"],
     "Suppliers": ["Supplier Name", "Contact Person", "Email", "Phone", "Country", "Default VAT Treatment", "Needs Completion"],
 }
 
@@ -2867,6 +2890,30 @@ def _migrate_client_ids(client_rows: list[dict[str, Any]]) -> bool:
             row["id"] = _generate_client_id(client_rows)
             changed = True
     return changed
+
+
+def _migrate_client_sector_systems(client_rows: list[dict[str, Any]]) -> bool:
+    """Idempotent backfill for the Sector / Systems in Use columns added for the
+    Document Generation module — old rows without these keys get empty string/list
+    defaults, same pattern as _migrate_client_ids."""
+    changed = False
+    for row in client_rows:
+        if "Sector" not in row:
+            row["Sector"] = ""
+            changed = True
+        if "Systems in Use" not in row:
+            row["Systems in Use"] = ""
+            changed = True
+    return changed
+
+
+def _client_systems_in_use_list(value: Any) -> list[str]:
+    """Systems in Use is stored on the Clients sheet as a comma-separated string
+    (sheet rows are flat string dicts), same convention as other free-text sheet
+    fields — this returns it as a list for display/prompt-building use."""
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    return [item.strip() for item in str(value or "").split(",") if item.strip()]
 
 
 def _migrate_supplier_ids(supplier_rows: list[dict[str, Any]]) -> bool:
@@ -5205,6 +5252,196 @@ def _lead_followup_severity(lead: dict[str, Any], *, today: date | None = None) 
     return "green"
 
 
+# --- CRM: Engagements -------------------------------------------------------------
+
+def _generate_engagement_number(existing_engagements: list[dict[str, Any]], *, year: int | None = None) -> str:
+    target_year = year or date.today().year
+    prefix = f"HQ-ENG-{target_year}-"
+    highest = 0
+    for engagement in existing_engagements:
+        number = str(engagement.get("engagement_number") or "")
+        if number.startswith(prefix):
+            try:
+                highest = max(highest, int(number[len(prefix):]))
+            except ValueError:
+                continue
+    return f"{prefix}{highest + 1:03d}"
+
+
+def _normalize_engagement(record: dict[str, Any]) -> dict[str, Any]:
+    stage = str(record.get("stage") or "Scoping").strip()
+    linked_documents = record.get("linked_documents")
+    if not isinstance(linked_documents, list):
+        linked_documents = [linked_documents] if linked_documents else []
+    now = datetime.now().isoformat(timespec="seconds")
+    return {
+        "id": str(record.get("id") or uuid4()),
+        "engagement_number": str(record.get("engagement_number") or "").strip(),
+        "client_id": str(record.get("client_id") or "").strip(),
+        "lead_id": str(record.get("lead_id") or "").strip(),
+        "tier": str(record.get("tier") or "").strip(),
+        "stage": stage if stage in ENGAGEMENT_STAGES else "Scoping",
+        "linked_documents": [str(item).strip() for item in linked_documents if str(item).strip()],
+        "start_date": str(record.get("start_date") or "").strip(),
+        "target_date": str(record.get("target_date") or "").strip(),
+        "notes": str(record.get("notes") or "").strip(),
+        "created_at": str(record.get("created_at") or now),
+        "updated_at": str(record.get("updated_at") or now),
+        "archived": bool(record.get("archived", False)),
+    }
+
+
+def _load_engagements() -> list[dict[str, Any]]:
+    return [_normalize_engagement(record) for record in _load_json_records(ENGAGEMENTS_PATH) if isinstance(record, dict)]
+
+
+def _save_engagements(engagements: list[dict[str, Any]]) -> None:
+    _save_json_records(ENGAGEMENTS_PATH, [_normalize_engagement(engagement) for engagement in engagements])
+
+
+# --- Document Generation: Generated Documents -------------------------------------
+
+def _normalize_generated_document(record: dict[str, Any]) -> dict[str, Any]:
+    status = str(record.get("status") or "draft_pending_review").strip()
+    document_type = str(record.get("document_type") or "scope_requirements_brief").strip()
+    fields = record.get("fields")
+    if not isinstance(fields, dict):
+        fields = {}
+    provenance = record.get("provenance")
+    if not isinstance(provenance, dict):
+        provenance = {}
+    source_document_ids = provenance.get("source_document_ids")
+    if not isinstance(source_document_ids, list):
+        source_document_ids = [source_document_ids] if source_document_ids else []
+    now = datetime.now().isoformat(timespec="seconds")
+    return {
+        "id": str(record.get("id") or uuid4()),
+        "document_type": document_type if document_type in GENERATED_DOCUMENT_TYPES else "scope_requirements_brief",
+        "engagement_id": str(record.get("engagement_id") or "").strip(),
+        "status": status if status in GENERATED_DOCUMENT_STATUSES else "draft_pending_review",
+        "fields": {
+            "client_name": str(fields.get("client_name") or "").strip(),
+            "contact_name": str(fields.get("contact_name") or "").strip(),
+            "engagement_tier": str(fields.get("engagement_tier") or "").strip(),
+            "engagement_number": str(fields.get("engagement_number") or "").strip(),
+            "generated_date": str(fields.get("generated_date") or "").strip(),
+            "business_context": str(fields.get("business_context") or "").strip(),
+            "problem_statement": str(fields.get("problem_statement") or "").strip(),
+            "objectives": str(fields.get("objectives") or "").strip(),
+            "scope": str(fields.get("scope") or "").strip(),
+            "constraints": str(fields.get("constraints") or "").strip(),
+            "stakeholders": str(fields.get("stakeholders") or "").strip(),
+            "assumptions": str(fields.get("assumptions") or "").strip(),
+            "deliverables": str(fields.get("deliverables") or "").strip(),
+            "sign_off": str(fields.get("sign_off") or "").strip(),
+        },
+        "provenance": {
+            "lead_id": str(provenance.get("lead_id") or "").strip(),
+            "engagement_id": str(provenance.get("engagement_id") or "").strip(),
+            "client_id": str(provenance.get("client_id") or "").strip(),
+            "source_document_ids": [str(item).strip() for item in source_document_ids if str(item).strip()],
+        },
+        "filed_document_id": str(record.get("filed_document_id") or "").strip(),
+        "created_at": str(record.get("created_at") or now),
+        "updated_at": str(record.get("updated_at") or now),
+        "approved_at": str(record.get("approved_at") or "").strip(),
+        "approved_by": str(record.get("approved_by") or "").strip(),
+    }
+
+
+def _load_generated_documents() -> list[dict[str, Any]]:
+    return [_normalize_generated_document(record) for record in _load_json_records(GENERATED_DOCUMENTS_PATH) if isinstance(record, dict)]
+
+
+def _save_generated_documents(documents: list[dict[str, Any]]) -> None:
+    _save_json_records(GENERATED_DOCUMENTS_PATH, [_normalize_generated_document(document) for document in documents])
+
+
+class DocumentGenerationError(RuntimeError):
+    """Raised when the Scope & Requirements Brief AI-DRAFT fields can't be generated via Claude."""
+
+
+DOCUMENT_GENERATION_MODEL = "claude-sonnet-4-5-20250929"
+DOCUMENT_GENERATION_AI_DRAFT_FIELDS = list(SCOPE_BRIEF_AI_DRAFT_FIELDS)
+
+DOCUMENT_GENERATION_SYSTEM_PROMPT = """You are a business analyst drafting sections of a Scope & Requirements Brief \
+for a process-improvement consultancy (H-Queex). You are given context about a client engagement: the client's \
+sector, systems in use, the originating lead's notes/challenge description, the engagement tier, and \
+descriptions of any client-supplied documents that were linked to this engagement.
+
+Draft ONLY the following four fields, grounded strictly in the context given — never invent client specifics that \
+were not provided:
+- business_context: 2-4 sentences summarizing the client's situation and why this engagement exists, drawn from \
+  the lead notes/challenge and any linked documents.
+- scope: A short in-scope / out-of-scope outline (use "In scope:" and "Out of scope:" lines) appropriate to the \
+  engagement tier and the business context.
+- constraints: Known constraints (budget, timeline, systems) drawn from the linked client-supplied documents, if \
+  any were described. If no such information was supplied, say so plainly rather than inventing figures.
+- stakeholders: Stakeholders & information sources — always include the client's named contact person, plus any \
+  other named stakeholders mentioned in the linked documents.
+
+Respond with ONLY a JSON object with exactly these four keys (business_context, scope, constraints, stakeholders), \
+each a plain text string. No markdown fences, no commentary outside the JSON object."""
+
+
+def _parse_document_generation_response_text(raw_text: str) -> dict[str, str]:
+    text = (raw_text or "").strip()
+    if text.startswith("```"):
+        text = text.strip("`")
+        if text.lower().startswith("json"):
+            text = text[4:]
+        text = text.strip()
+    try:
+        parsed = json.loads(text)
+    except (json.JSONDecodeError, TypeError):
+        raise DocumentGenerationError("Document drafting returned an unreadable response")
+    if not isinstance(parsed, dict):
+        raise DocumentGenerationError("Document drafting returned an unreadable response")
+    return {field: str(parsed.get(field) or "").strip() for field in DOCUMENT_GENERATION_AI_DRAFT_FIELDS}
+
+
+def _build_scope_brief_generation_prompt(*, client_row: dict[str, Any], engagement: dict[str, Any], lead: dict[str, Any] | None, linked_documents: list[dict[str, Any]]) -> str:
+    lines = [
+        f"Client name: {client_row.get('Client Name') or ''}",
+        f"Sector: {client_row.get('Sector') or 'Not specified'}",
+        f"Systems in use: {', '.join(_client_systems_in_use_list(client_row.get('Systems in Use'))) or 'Not specified'}",
+        f"Contact person: {client_row.get('Contact Person') or ''}",
+        f"Engagement tier: {engagement.get('tier') or 'Not specified'}",
+    ]
+    if lead:
+        lines.append(f"Originating lead notes / challenge: {lead.get('notes') or '(none provided)'}")
+    else:
+        lines.append("Originating lead notes / challenge: (no linked lead)")
+    if linked_documents:
+        lines.append("Client-supplied documents linked to this engagement:")
+        for document in linked_documents:
+            lines.append(f"  - {document.get('name') or document.get('filename') or document.get('id')} ({document.get('category') or 'Uncategorised'}): {document.get('description') or 'No description on file'}")
+    else:
+        lines.append("Client-supplied documents linked to this engagement: none")
+    return "\n".join(lines)
+
+
+def _run_scope_brief_generation(*, client_row: dict[str, Any], engagement: dict[str, Any], lead: dict[str, Any] | None, linked_documents: list[dict[str, Any]]) -> dict[str, str]:
+    """Calls Claude to draft the four AI-DRAFT fields for a Scope & Requirements Brief.
+    Linked client-supplied documents are passed as name/category/description context
+    only (not as extracted images/text) — see docs note in the Document Generation
+    module report for why this scope was chosen for this pass."""
+    try:
+        client = _get_anthropic_client()
+    except OcrError as exc:
+        raise DocumentGenerationError(str(exc)) from exc
+    prompt_text = _build_scope_brief_generation_prompt(client_row=client_row, engagement=engagement, lead=lead, linked_documents=linked_documents)
+    response = client.messages.create(
+        model=DOCUMENT_GENERATION_MODEL,
+        max_tokens=1536,
+        system=DOCUMENT_GENERATION_SYSTEM_PROMPT,
+        messages=[{"role": "user", "content": [{"type": "text", "text": prompt_text}]}],
+        timeout=45.0,
+    )
+    raw_text = "".join(block.text for block in response.content if getattr(block, "type", "") == "text")
+    return _parse_document_generation_response_text(raw_text)
+
+
 # --- CRM: Proposals -------------------------------------------------------------
 
 def _generate_proposal_number(existing_proposals: list[dict[str, Any]], *, year: int | None = None) -> str:
@@ -5899,6 +6136,9 @@ def _build_page_context(
     proposal_form: dict[str, Any] | None = None,
     proposal_detail: dict[str, Any] | None = None,
     invoice_detail: dict[str, Any] | None = None,
+    editing_engagement: dict[str, Any] | None = None,
+    engagement_detail: dict[str, Any] | None = None,
+    generated_document_detail: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     try:
         workbook_path = _resolve_workbook_path()
@@ -6022,6 +6262,9 @@ def _build_page_context(
     overdue_followups = _overdue_followups(leads)
     recently_won_leads = _recently_won(leads)
     standard_terms = _load_terms()["standard_terms"]
+    engagements = [engagement for engagement in _load_engagements() if not engagement.get("archived")]
+    for engagement in engagements:
+        engagement["client_name"] = client_id_to_name.get(engagement.get("client_id"), "")
     for overdue_lead in overdue_followups[:3]:
         upcoming_actions.append({
             "severity": "danger",
@@ -6210,6 +6453,13 @@ def _build_page_context(
         "proposal_detail": proposal_detail,
         "invoice_detail": invoice_detail,
         "standard_terms": standard_terms,
+        "engagements": engagements,
+        "engagement_stages": list(ENGAGEMENT_STAGES),
+        "editing_engagement": editing_engagement,
+        "engagement_detail": engagement_detail,
+        "generated_document_detail": generated_document_detail,
+        "scope_brief_ai_draft_fields": list(SCOPE_BRIEF_AI_DRAFT_FIELDS),
+        "scope_brief_hev_only_fields": list(SCOPE_BRIEF_HEV_ONLY_FIELDS),
     }
 
 
@@ -6259,6 +6509,8 @@ def load_finance_data() -> dict[str, Any]:
         _save_sheet_records_raw("Invoices", [{k: v for k, v in row.items() if not k.startswith("__")} for row in sheets["Invoices"]])
 
     if _migrate_client_ids(sheets["Clients"]):
+        _save_sheet_records_raw("Clients", [{k: v for k, v in row.items() if not k.startswith("__")} for row in sheets["Clients"]])
+    if _migrate_client_sector_systems(sheets["Clients"]):
         _save_sheet_records_raw("Clients", [{k: v for k, v in row.items() if not k.startswith("__")} for row in sheets["Clients"]])
     if _migrate_supplier_ids(sheets["Suppliers"]):
         _save_sheet_records_raw("Suppliers", [{k: v for k, v in row.items() if not k.startswith("__")} for row in sheets["Suppliers"]])
@@ -7884,6 +8136,393 @@ def convert_lead_to_client():
     _save_leads(leads)
     _record_audit("create", "client", {"row_number": row_number, "record": payload, "source": "lead_conversion", "lead_id": lead_id})
     return redirect(url_for("crm_lead_detail_view", lead_id=lead_id, message=f"Lead converted to client {client_name}"))
+
+
+# --- CRM: Engagements --------------------------------------------------------------
+
+def _engagement_payload_from_form() -> dict[str, Any]:
+    linked_documents = request.form.getlist("linked_documents")
+    return {
+        "client_id": str(request.form.get("client_id") or "").strip(),
+        "lead_id": str(request.form.get("lead_id") or "").strip(),
+        "tier": str(request.form.get("tier") or "").strip(),
+        "stage": str(request.form.get("stage") or "Scoping").strip(),
+        "linked_documents": linked_documents,
+        "start_date": str(request.form.get("start_date") or "").strip(),
+        "target_date": str(request.form.get("target_date") or "").strip(),
+        "notes": str(request.form.get("notes") or "").strip(),
+    }
+
+
+def _validate_engagement_payload(payload: dict[str, Any]) -> dict[str, str]:
+    errors: dict[str, str] = {}
+    if not payload.get("client_id"):
+        errors["client_id"] = "A client is required"
+    if payload.get("stage") not in ENGAGEMENT_STAGES:
+        errors["stage"] = "Please select a valid stage"
+    return errors
+
+
+@app.route("/crm/engagements")
+def crm_engagements_view():
+    data = load_finance_data()
+    engagements = [engagement for engagement in _load_engagements() if not engagement.get("archived")]
+    client_rows = data["sheets"]["Clients"]
+    for engagement in engagements:
+        engagement["client_name"] = _client_name_for_id(client_rows, engagement.get("client_id"))
+    editing_engagement = _find_record_by_id(engagements, request.args.get("edit_id"))
+    return render_template(
+        "index.html",
+        **_build_page_context(
+            "Engagements",
+            "crm_engagements",
+            data,
+            editing_engagement=editing_engagement,
+            message=request.args.get("message"),
+        ),
+    )
+
+
+@app.route("/crm/engagements/<engagement_id>")
+def crm_engagement_detail_view(engagement_id):
+    data = load_finance_data()
+    engagements = _load_engagements()
+    engagement = _find_record_by_id(engagements, engagement_id)
+    if engagement is None:
+        return redirect(url_for("crm_engagements_view", message="Engagement not found"))
+    client_rows = data["sheets"]["Clients"]
+    engagement["client_name"] = _client_name_for_id(client_rows, engagement.get("client_id"))
+    linked_docs = [doc for doc in _load_company_documents() if doc.get("id") in (engagement.get("linked_documents") or [])]
+    generated_docs = [doc for doc in _load_generated_documents() if doc.get("engagement_id") == engagement_id]
+    return render_template(
+        "index.html",
+        **_build_page_context(
+            f"Engagement: {engagement.get('engagement_number')}",
+            "crm_engagement_detail",
+            data,
+            engagement_detail={"engagement": engagement, "linked_docs": linked_docs, "generated_docs": generated_docs},
+            message=request.args.get("message"),
+        ),
+    )
+
+
+@app.route("/crm/engagements/add", methods=["POST"])
+def add_engagement():
+    payload = _engagement_payload_from_form()
+    errors = _validate_engagement_payload(payload)
+    if errors:
+        return _redirect_with_form_errors("crm_engagements_view", payload, errors)
+
+    client_rows = load_finance_data()["sheets"]["Clients"]
+    client_row = _find_record_by_id(client_rows, payload["client_id"])
+    if client_row is None:
+        return _redirect_with_form_errors("crm_engagements_view", payload, {"client_id": "Selected client was not found"})
+
+    engagements = _load_engagements()
+    now = datetime.now().isoformat(timespec="seconds")
+    engagement = _normalize_engagement({
+        **payload,
+        "id": str(uuid4()),
+        "engagement_number": _generate_engagement_number(engagements),
+        "tier": payload.get("tier") or client_row.get("Service Tier") or "",
+        "created_at": now,
+        "updated_at": now,
+    })
+    engagements.append(engagement)
+    _save_engagements(engagements)
+    _record_audit("create", "engagement", {"engagement_id": engagement["id"], "record": engagement})
+    return redirect(url_for("crm_engagement_detail_view", engagement_id=engagement["id"], message="Engagement created"))
+
+
+@app.route("/crm/engagements/update", methods=["POST"])
+def update_engagement():
+    engagement_id = str(request.form.get("engagement_id") or "").strip()
+    payload = _engagement_payload_from_form()
+    errors = _validate_engagement_payload(payload)
+
+    engagements = _load_engagements()
+    engagement = _find_record_by_id(engagements, engagement_id)
+    if engagement is None:
+        return redirect(url_for("crm_engagements_view", message="Engagement not found"))
+
+    if errors:
+        return _redirect_with_form_errors("crm_engagements_view", payload, errors, edit_id=engagement_id)
+
+    engagement.update(payload)
+    engagement["updated_at"] = datetime.now().isoformat(timespec="seconds")
+    _save_engagements(engagements)
+    _record_audit("update", "engagement", {"engagement_id": engagement_id, "record": engagement})
+    return redirect(url_for("crm_engagement_detail_view", engagement_id=engagement_id, message="Engagement updated"))
+
+
+@app.route("/crm/engagements/archive", methods=["POST"])
+def archive_engagement():
+    engagement_id = str(request.form.get("engagement_id") or "").strip()
+    engagements = _load_engagements()
+    engagement = _find_record_by_id(engagements, engagement_id)
+    if engagement is None:
+        return redirect(url_for("crm_engagements_view", message="Engagement not found"))
+    engagement["archived"] = True
+    engagement["updated_at"] = datetime.now().isoformat(timespec="seconds")
+    _save_engagements(engagements)
+    _record_audit("archive", "engagement", {"engagement_id": engagement_id, "record": engagement})
+    return redirect(url_for("crm_engagements_view", message="Engagement archived"))
+
+
+# --- Document Generation: Scope & Requirements Brief -------------------------------
+
+def _scope_brief_pdf_footer_note(generated_document: dict[str, Any]) -> str:
+    provenance = generated_document.get("provenance") or {}
+    lead_id = provenance.get("lead_id") or "(no linked lead)"
+    engagement_id = provenance.get("engagement_id") or ""
+    source_ids = ", ".join(provenance.get("source_document_ids") or []) or "(none)"
+    return f"Lead ID: {lead_id} | Engagement ID: {engagement_id} | Source documents: {source_ids}"
+
+
+def _build_scope_brief_pdf_html(generated_document: dict[str, Any]) -> str:
+    logo_uri = _report_logo_data_uri()
+    logo_html = f'<img src="{logo_uri}" alt="H-Queex" style="max-width:220px;">' if logo_uri else "<strong>H-QUEEX</strong>"
+    fields = generated_document.get("fields") or {}
+    status_label = "Draft — Pending Review (not client-facing)" if generated_document.get("status") != "approved" else "Approved"
+    footer_note = _scope_brief_pdf_footer_note(generated_document)
+
+    def _section(title: str, value: str) -> str:
+        body = (value or "").replace("\n", "<br>") or "<span style=\"color:#618096;\">(not yet provided)</span>"
+        return f'<div class="pdf-section-title">{title}</div><p>{body}</p>'
+
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Scope &amp; Requirements Brief — {fields.get('client_name', '')}</title>
+<style>
+  {_pdf_page_css()}
+  @page {{
+    @bottom-center {{
+      content: "{footer_note}";
+      font-size: 8px; color: #618096; font-family: Arial, sans-serif;
+    }}
+  }}
+  .cover-page {{ page-break-after: always; text-align: center; padding-top: 16%; }}
+  .cover-page img {{ margin-bottom: 32px; }}
+  .cover-page h1 {{ color: #16294A; font-size: 24px; margin: 0 0 12px; }}
+  .cover-page .cover-client {{ font-size: 16px; color: #37373A; margin-bottom: 6px; }}
+  .cover-page .cover-date {{ font-size: 12px; color: #618096; }}
+  .status-pill {{ display: inline-block; margin-top: 18px; padding: 4px 12px; border-radius: 12px; font-size: 10px; color: #FFFFFF; background: {"#618096" if generated_document.get("status") != "approved" else "#16294A"}; }}
+  .content-page {{ padding-top: 8px; }}
+  .pdf-section-title {{ color: #16294A; font-size: 13px; font-weight: 700; margin: 20px 0 8px; border-left: 3px solid #B08D57; padding-left: 8px; }}
+  .auto-row {{ font-size: 11px; margin-bottom: 4px; }}
+  .auto-row strong {{ color: #16294A; }}
+</style>
+</head>
+<body>
+  <div class="cover-page">
+    {logo_html}
+    <h1>Scope &amp; Requirements Brief</h1>
+    <p class="cover-client">Prepared for {fields.get('client_name', '')}</p>
+    <p class="cover-date">Engagement {fields.get('engagement_number', '')} &middot; {_format_date_display(fields.get('generated_date', ''))}</p>
+    <div class="status-pill">{status_label}</div>
+  </div>
+  <div class="content-page">
+    <div class="auto-row"><strong>Client:</strong> {fields.get('client_name', '')}</div>
+    <div class="auto-row"><strong>Contact:</strong> {fields.get('contact_name', '')}</div>
+    <div class="auto-row"><strong>Engagement tier:</strong> {fields.get('engagement_tier', '')}</div>
+    <div class="auto-row"><strong>Engagement ID:</strong> {fields.get('engagement_number', '')}</div>
+    <div class="auto-row"><strong>Date:</strong> {_format_date_display(fields.get('generated_date', ''))}</div>
+    {_section('Business Context', fields.get('business_context', ''))}
+    {_section('Problem Statement', fields.get('problem_statement', ''))}
+    {_section('Objectives', fields.get('objectives', ''))}
+    {_section('Scope', fields.get('scope', ''))}
+    {_section('Constraints', fields.get('constraints', ''))}
+    {_section('Stakeholders &amp; Information Sources', fields.get('stakeholders', ''))}
+    {_section('Assumptions', fields.get('assumptions', ''))}
+    {_section('Deliverables for This Engagement', fields.get('deliverables', ''))}
+    {_section('Sign-off', fields.get('sign_off', ''))}
+    <p style="color:#618096;font-size:9px;margin-top:24px;">{footer_note}</p>
+  </div>
+</body>
+</html>"""
+
+
+@app.route("/crm/engagements/<engagement_id>/generate-brief", methods=["POST"])
+def generate_scope_brief(engagement_id):
+    data = load_finance_data()
+    engagements = _load_engagements()
+    engagement = _find_record_by_id(engagements, engagement_id)
+    if engagement is None:
+        return redirect(url_for("crm_engagements_view", message="Engagement not found"))
+
+    client_rows = data["sheets"]["Clients"]
+    client_row = _find_record_by_id(client_rows, engagement.get("client_id"))
+    if client_row is None:
+        return redirect(url_for("crm_engagement_detail_view", engagement_id=engagement_id, message="Engagement's client could not be found"))
+
+    lead = _find_record_by_id(_load_leads(), engagement.get("lead_id")) if engagement.get("lead_id") else None
+    linked_documents = [doc for doc in _load_company_documents() if doc.get("id") in (engagement.get("linked_documents") or [])]
+
+    try:
+        ai_fields = _run_scope_brief_generation(client_row=client_row, engagement=engagement, lead=lead, linked_documents=linked_documents)
+    except DocumentGenerationError as exc:
+        return redirect(url_for("crm_engagement_detail_view", engagement_id=engagement_id, message=f"Could not draft AI sections: {exc}"))
+
+    now = datetime.now().isoformat(timespec="seconds")
+    generated_documents = _load_generated_documents()
+    generated_document = _normalize_generated_document({
+        "id": str(uuid4()),
+        "document_type": "scope_requirements_brief",
+        "engagement_id": engagement_id,
+        "status": "draft_pending_review",
+        "fields": {
+            "client_name": client_row.get("Client Name") or "",
+            "contact_name": client_row.get("Contact Person") or "",
+            "engagement_tier": engagement.get("tier") or "",
+            "engagement_number": engagement.get("engagement_number") or "",
+            "generated_date": date.today().isoformat(),
+            "business_context": ai_fields.get("business_context", ""),
+            "problem_statement": "",
+            "objectives": "",
+            "scope": ai_fields.get("scope", ""),
+            "constraints": ai_fields.get("constraints", ""),
+            "stakeholders": ai_fields.get("stakeholders", ""),
+            "assumptions": "",
+            "deliverables": _scope_brief_deliverables_for_tier(engagement.get("tier") or ""),
+            "sign_off": "",
+        },
+        "provenance": {
+            "lead_id": engagement.get("lead_id") or "",
+            "engagement_id": engagement_id,
+            "client_id": engagement.get("client_id") or "",
+            "source_document_ids": [doc.get("id") for doc in linked_documents],
+        },
+        "created_at": now,
+        "updated_at": now,
+    })
+    generated_documents.append(generated_document)
+    _save_generated_documents(generated_documents)
+    _record_audit("create", "generated_document", {"document_id": generated_document["id"], "engagement_id": engagement_id})
+    return redirect(url_for("generated_document_review", document_id=generated_document["id"], message="Draft brief generated — review before approving"))
+
+
+@app.route("/crm/generated-documents/<document_id>")
+def generated_document_review(document_id):
+    data = load_finance_data()
+    generated_documents = _load_generated_documents()
+    generated_document = _find_record_by_id(generated_documents, document_id)
+    if generated_document is None:
+        return redirect(url_for("crm_engagements_view", message="Generated document not found"))
+    engagement = _find_record_by_id(_load_engagements(), generated_document.get("engagement_id"))
+    return render_template(
+        "index.html",
+        **_build_page_context(
+            "Scope & Requirements Brief — Review",
+            "generated_document_review",
+            data,
+            generated_document_detail={"document": generated_document, "engagement": engagement},
+            message=request.args.get("message"),
+        ),
+    )
+
+
+@app.route("/crm/generated-documents/<document_id>/save", methods=["POST"])
+def save_generated_document(document_id):
+    generated_documents = _load_generated_documents()
+    generated_document = _find_record_by_id(generated_documents, document_id)
+    if generated_document is None:
+        return redirect(url_for("crm_engagements_view", message="Generated document not found"))
+    if generated_document.get("status") != "draft_pending_review":
+        return redirect(url_for("generated_document_review", document_id=document_id, message="Only a draft pending review can be edited"))
+
+    editable_fields = SCOPE_BRIEF_AI_DRAFT_FIELDS + SCOPE_BRIEF_HEV_ONLY_FIELDS
+    for field_name in editable_fields:
+        if field_name in request.form:
+            generated_document["fields"][field_name] = str(request.form.get(field_name) or "").strip()
+    generated_document["updated_at"] = datetime.now().isoformat(timespec="seconds")
+    _save_generated_documents(generated_documents)
+    _record_audit("update", "generated_document", {"document_id": document_id})
+    return redirect(url_for("generated_document_review", document_id=document_id, message="Draft saved"))
+
+
+@app.route("/crm/generated-documents/<document_id>/approve", methods=["POST"])
+def approve_generated_document(document_id):
+    """Status can only ever become 'approved' through this route — save_generated_document
+    and any other write path never touch status, so a draft can't skip review server-side
+    even if a client sent a crafted request."""
+    generated_documents = _load_generated_documents()
+    generated_document = _find_record_by_id(generated_documents, document_id)
+    if generated_document is None:
+        return redirect(url_for("crm_engagements_view", message="Generated document not found"))
+    if generated_document.get("status") == "approved":
+        return redirect(url_for("generated_document_review", document_id=document_id, message="This document is already approved"))
+
+    # Any last edits submitted alongside the Approve click are saved first, then validated.
+    editable_fields = SCOPE_BRIEF_AI_DRAFT_FIELDS + SCOPE_BRIEF_HEV_ONLY_FIELDS
+    for field_name in editable_fields:
+        if field_name in request.form:
+            generated_document["fields"][field_name] = str(request.form.get(field_name) or "").strip()
+
+    missing = [field_name for field_name in SCOPE_BRIEF_HEV_ONLY_FIELDS if not generated_document["fields"].get(field_name)]
+    if missing:
+        _save_generated_documents(generated_documents)
+        friendly_names = {"problem_statement": "Problem Statement", "objectives": "Objectives", "assumptions": "Assumptions", "sign_off": "Sign-off"}
+        missing_labels = ", ".join(friendly_names.get(name, name) for name in missing)
+        return redirect(url_for("generated_document_review", document_id=document_id, message=f"Cannot approve — please fill in: {missing_labels}"))
+
+    now = datetime.now().isoformat(timespec="seconds")
+    generated_document["status"] = "approved"
+    generated_document["approved_at"] = now
+    generated_document["approved_by"] = getattr(current_user, "name", "") or getattr(current_user, "email", "") or "Unknown"
+    generated_document["updated_at"] = now
+
+    html = _build_scope_brief_pdf_html(generated_document)
+    pdf_bytes = _generate_pdf_bytes(html)
+    warning = ""
+    if pdf_bytes is not None:
+        filename = f"scope-brief-{generated_document['fields'].get('engagement_number', document_id)}.pdf"
+        drive_item, graph_error = _upload_file_to_graph("Scope Briefs", filename, pdf_bytes)
+        if graph_error:
+            warning = f" (approved, but filing to Company Documents failed: {graph_error})"
+        else:
+            company_documents = _load_company_documents()
+            filed_now = datetime.now().isoformat(timespec="seconds")
+            filed_document = {
+                "id": _generate_prefixed_id(company_documents, "DOC"),
+                "name": f"Scope & Requirements Brief — {generated_document['fields'].get('client_name', '')} ({generated_document['fields'].get('engagement_number', '')})",
+                "category": "Scope Briefs",
+                "description": f"Auto-filed on approval of generated document {document_id}",
+                "filename": filename,
+                "graph_item_id": str(drive_item.get("id") or ""),
+                "graph_web_url": str(drive_item.get("webUrl") or ""),
+                "date_added": date.today().isoformat(),
+                "expiry_date": "",
+                "status": "active",
+                "notes": "",
+                "created_at": filed_now,
+                "last_updated_at": filed_now,
+            }
+            company_documents.append(filed_document)
+            _save_company_documents(company_documents)
+            generated_document["filed_document_id"] = filed_document["id"]
+            _record_audit("create", "company_document", {"document_id": filed_document["id"], "source": "generated_document_approval", "generated_document_id": document_id})
+    else:
+        warning = " (approved, but PDF generation isn't available on this machine — file it manually once WeasyPrint is available)"
+
+    _save_generated_documents(generated_documents)
+    _record_audit("approve", "generated_document", {"document_id": document_id, "approved_by": generated_document["approved_by"]})
+    return redirect(url_for("generated_document_review", document_id=document_id, message=f"Brief approved and filed{warning}"))
+
+
+@app.route("/crm/generated-documents/<document_id>/pdf")
+def generated_document_pdf(document_id):
+    generated_documents = _load_generated_documents()
+    generated_document = _find_record_by_id(generated_documents, document_id)
+    if generated_document is None:
+        return redirect(url_for("crm_engagements_view", message="Generated document not found"))
+    html = _build_scope_brief_pdf_html(generated_document)
+    pdf_bytes = _generate_pdf_bytes(html)
+    if pdf_bytes is None:
+        return Response(html, mimetype="text/html")
+    filename = f"scope-brief-{generated_document['fields'].get('engagement_number', document_id)}.pdf"
+    return Response(pdf_bytes, mimetype="application/pdf", headers={"Content-Disposition": f"attachment; filename={filename}"})
 
 
 # --- CRM: Proposals --------------------------------------------------------------
@@ -10387,6 +11026,8 @@ def add_client():
         "Email": request.form.get("email", ""),
         "Phone": request.form.get("phone", ""),
         "Country": request.form.get("country", ""),
+        "Sector": request.form.get("sector", ""),
+        "Systems in Use": request.form.get("systems_in_use", ""),
         "Service Tier": request.form.get("service_tier", "None"),
         "Retainer Frequency": request.form.get("retainer_frequency", ""),
         "Retainer Amount (€)": request.form.get("retainer_amount", ""),
@@ -10401,6 +11042,8 @@ def add_client():
                 "email": request.form.get("email", ""),
                 "phone": request.form.get("phone", ""),
                 "country": request.form.get("country", ""),
+                "sector": request.form.get("sector", ""),
+                "systems_in_use": request.form.get("systems_in_use", ""),
                 "service_tier": request.form.get("service_tier", "None"),
                 "retainer_frequency": request.form.get("retainer_frequency", ""),
                 "retainer_amount": request.form.get("retainer_amount", ""),
@@ -10428,6 +11071,8 @@ def update_client():
         "Email": request.form.get("email", ""),
         "Phone": request.form.get("phone", ""),
         "Country": request.form.get("country", ""),
+        "Sector": request.form.get("sector", ""),
+        "Systems in Use": request.form.get("systems_in_use", ""),
         "Service Tier": request.form.get("service_tier", "None"),
         "Retainer Frequency": request.form.get("retainer_frequency", ""),
         "Retainer Amount (€)": request.form.get("retainer_amount", ""),
@@ -10442,6 +11087,8 @@ def update_client():
                 "email": request.form.get("email", ""),
                 "phone": request.form.get("phone", ""),
                 "country": request.form.get("country", ""),
+                "sector": request.form.get("sector", ""),
+                "systems_in_use": request.form.get("systems_in_use", ""),
                 "service_tier": request.form.get("service_tier", "None"),
                 "retainer_frequency": request.form.get("retainer_frequency", ""),
                 "retainer_amount": request.form.get("retainer_amount", ""),

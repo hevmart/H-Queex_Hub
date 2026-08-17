@@ -885,7 +885,7 @@
       {% set finance_tabs = ['finance', 'income', 'expenses', 'invoices', 'subscriptions', 'payroll', 'ledger', 'archive'] %}
       {% set company_tabs = ['company', 'company_documents', 'company_compliance', 'company_profile', 'settings', 'company_users'] %}
       {% set operations_tabs = ['operations', 'operations_projects', 'operations_project_detail', 'operations_dmaic', 'operations_delivery', 'operations_sops'] %}
-      {% set crm_tabs = ['crm', 'crm_leads', 'crm_lead_detail', 'crm_proposals', 'crm_proposal_detail'] %}
+      {% set crm_tabs = ['crm', 'crm_leads', 'crm_lead_detail', 'crm_proposals', 'crm_proposal_detail', 'crm_engagements', 'crm_engagement_detail', 'generated_document_review'] %}
       <nav class="main-nav">
         <button type="button" class="nav-hamburger" id="nav_hamburger" aria-label="Toggle menu" aria-expanded="false">☰ Menu</button>
         <div class="nav-menu" id="nav_menu">
@@ -972,6 +972,7 @@
       {% set crm_nav_items = [
         ('crm_leads', 'Leads', '/crm/leads'),
         ('crm_proposals', 'Proposals', '/crm/proposals'),
+        ('crm_engagements', 'Engagements', '/crm/engagements'),
       ] %}
       {% if active_tab == 'crm' %}
       <h1 class="finance-page-title">{{ page_title }}</h1>
@@ -979,10 +980,10 @@
       {% elif active_tab in crm_tabs %}
       <nav class="finance-subnav">
         {% for tab_key, tab_label, tab_url in crm_nav_items %}
-        <a href="{{ tab_url }}" class="finance-subnav-tab {% if active_tab == tab_key or (tab_key == 'crm_leads' and active_tab == 'crm_lead_detail') or (tab_key == 'crm_proposals' and active_tab == 'crm_proposal_detail') %}active{% endif %}">{{ tab_label }}</a>
+        <a href="{{ tab_url }}" class="finance-subnav-tab {% if active_tab == tab_key or (tab_key == 'crm_leads' and active_tab == 'crm_lead_detail') or (tab_key == 'crm_proposals' and active_tab == 'crm_proposal_detail') or (tab_key == 'crm_engagements' and active_tab in ['crm_engagement_detail', 'generated_document_review']) %}active{% endif %}">{{ tab_label }}</a>
         {% endfor %}
       </nav>
-      <p class="breadcrumb">CRM <span class="breadcrumb-sep">›</span> {% if active_tab == 'crm_lead_detail' %}<a href="/crm/leads" style="color:inherit;">Leads</a> <span class="breadcrumb-sep">›</span> {{ page_title }}{% elif active_tab == 'crm_proposal_detail' %}<a href="/crm/proposals" style="color:inherit;">Proposals</a> <span class="breadcrumb-sep">›</span> {{ page_title }}{% else %}{{ page_title }}{% endif %}</p>
+      <p class="breadcrumb">CRM <span class="breadcrumb-sep">›</span> {% if active_tab == 'crm_lead_detail' %}<a href="/crm/leads" style="color:inherit;">Leads</a> <span class="breadcrumb-sep">›</span> {{ page_title }}{% elif active_tab == 'crm_proposal_detail' %}<a href="/crm/proposals" style="color:inherit;">Proposals</a> <span class="breadcrumb-sep">›</span> {{ page_title }}{% elif active_tab == 'crm_engagement_detail' %}<a href="/crm/engagements" style="color:inherit;">Engagements</a> <span class="breadcrumb-sep">›</span> {{ page_title }}{% elif active_tab == 'generated_document_review' %}<a href="/crm/engagements" style="color:inherit;">Engagements</a> <span class="breadcrumb-sep">›</span> {{ page_title }}{% else %}{{ page_title }}{% endif %}</p>
       <h1 class="finance-page-title">{{ page_title }}</h1>
       {% endif %}
 
@@ -3019,6 +3020,297 @@
           </form>
           <button type="button" class="btn-secondary" onclick="window.print()">Print / Save as PDF</button>
         </div>
+      </div>
+      {% endif %}
+
+      {% if active_tab == 'crm_engagements' %}
+      <div class="section">
+        <div class="edit-banner">
+          <a href="/crm/engagements#engagement-add-modal" class="btn-secondary" id="engagement_add_btn" style="margin-left:auto;">+ New Engagement</a>
+        </div>
+        <table class="services-table">
+          <tr><th>Engagement #</th><th class="col-name">Client</th><th>Tier</th><th>Stage</th><th class="col-date">Start</th><th class="col-date">Target</th><th class="col-actions"></th></tr>
+          {% for engagement in engagements %}
+          <tr>
+            <td>{{ engagement.engagement_number }}</td>
+            <td class="col-name"><a href="/crm/engagements/{{ engagement.id }}" style="color:var(--brand-navy);font-weight:700;text-decoration:none;">{{ engagement.client_name }}</a></td>
+            <td>{{ engagement.tier or '—' }}</td>
+            <td>{{ engagement.stage }}</td>
+            <td>{{ engagement.start_date | fmt_date or '—' }}</td>
+            <td>{{ engagement.target_date | fmt_date or '—' }}</td>
+            <td class="col-actions">
+              <div class="table-action-stack">
+                {{ edit_button('/crm/engagements?edit_id=' ~ engagement.id ~ '#engagement-edit-modal') }}
+              </div>
+            </td>
+          </tr>
+          {% endfor %}
+        </table>
+        {% if not engagements %}
+        <p class="mini">No engagements yet.</p>
+        {% endif %}
+      </div>
+
+      <div class="modal-overlay" id="engagement_add_modal_overlay">
+        <div class="modal-box compliance-modal-box service-modal-box wide-modal-box">
+          <div class="compliance-modal-header"><h3>New Engagement</h3></div>
+          <div class="compliance-modal-body">
+            <form method="post" action="/crm/engagements/add" class="form-shell" novalidate>
+              <div class="form-row form-row-4">
+                <div class="field required {% if validation_errors.get('client_id') %}has-error{% endif %}">
+                  <label for="engagement_client_id">Client</label>
+                  <select id="engagement_client_id" name="client_id">
+                    <option value="">Select a client</option>
+                    {% for client in clients_catalog %}
+                    <option value="{{ client.id }}">{{ client.name }}</option>
+                    {% endfor %}
+                  </select>
+                  {% if validation_errors.get('client_id') %}<span class="field-error">{{ validation_errors.get('client_id') }}</span>{% endif %}
+                </div>
+                <div class="field optional">
+                  <label for="engagement_lead_id">Lead (optional)</label>
+                  <select id="engagement_lead_id" name="lead_id">
+                    <option value="">No linked lead</option>
+                    {% for lead in leads %}
+                    <option value="{{ lead.id }}">{{ lead.contact_name or lead.company_name }}</option>
+                    {% endfor %}
+                  </select>
+                </div>
+                <div class="field optional">
+                  <label for="engagement_tier">Tier</label>
+                  <select id="engagement_tier" name="tier">
+                    <option value="">Use client's current tier</option>
+                    {% for tier in client_service_tiers %}
+                    <option value="{{ tier }}">{{ tier }}</option>
+                    {% endfor %}
+                  </select>
+                </div>
+                <div class="field required">
+                  <label for="engagement_stage">Stage</label>
+                  <select id="engagement_stage" name="stage">
+                    {% for stage in engagement_stages %}
+                    <option value="{{ stage }}">{{ stage }}</option>
+                    {% endfor %}
+                  </select>
+                </div>
+              </div>
+              <div class="form-row form-row-2">
+                <div class="field optional">
+                  <label for="engagement_start_date">Start date</label>
+                  <input id="engagement_start_date" type="date" name="start_date">
+                </div>
+                <div class="field optional">
+                  <label for="engagement_target_date">Target date</label>
+                  <input id="engagement_target_date" type="date" name="target_date">
+                </div>
+              </div>
+              <div class="form-row form-row-1">
+                <div class="field optional">
+                  <label for="engagement_linked_documents">Client-supplied documents (optional)</label>
+                  <select id="engagement_linked_documents" name="linked_documents" multiple size="4">
+                    {% for document in company_documents %}
+                    <option value="{{ document.id }}">{{ document.name }} ({{ document.category }})</option>
+                    {% endfor %}
+                  </select>
+                  <span class="mini">Hold Ctrl/Cmd to select more than one. Used as context for the AI-drafted sections of a generated brief.</span>
+                </div>
+              </div>
+              <div class="form-row form-row-1">
+                <div class="field optional">
+                  <label for="engagement_notes">Notes</label>
+                  <textarea id="engagement_notes" name="notes" rows="3" placeholder="Notes"></textarea>
+                </div>
+              </div>
+              <div class="modal-actions">
+                <a href="/crm/engagements" class="btn-go-back">Cancel</a>
+                <button type="submit" class="btn-confirm-save">Save Engagement</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>
+
+      {% if editing_engagement %}
+      <div class="modal-overlay" id="engagement_edit_modal_overlay">
+        <div class="modal-box compliance-modal-box service-modal-box wide-modal-box">
+          <div class="compliance-modal-header"><h3>Edit Engagement</h3></div>
+          <div class="compliance-modal-body">
+            <form method="post" action="/crm/engagements/update" class="form-shell" novalidate>
+              <input type="hidden" name="engagement_id" value="{{ editing_engagement.id }}">
+              <div class="form-row form-row-4">
+                <div class="field required">
+                  <label for="engagement_edit_client_id">Client</label>
+                  <select id="engagement_edit_client_id" name="client_id">
+                    {% for client in clients_catalog %}
+                    <option value="{{ client.id }}" {% if client.id == editing_engagement.client_id %}selected{% endif %}>{{ client.name }}</option>
+                    {% endfor %}
+                  </select>
+                </div>
+                <div class="field optional">
+                  <label for="engagement_edit_tier">Tier</label>
+                  <select id="engagement_edit_tier" name="tier">
+                    {% for tier in client_service_tiers %}
+                    <option value="{{ tier }}" {% if tier == editing_engagement.tier %}selected{% endif %}>{{ tier }}</option>
+                    {% endfor %}
+                  </select>
+                </div>
+                <div class="field required">
+                  <label for="engagement_edit_stage">Stage</label>
+                  <select id="engagement_edit_stage" name="stage">
+                    {% for stage in engagement_stages %}
+                    <option value="{{ stage }}" {% if stage == editing_engagement.stage %}selected{% endif %}>{{ stage }}</option>
+                    {% endfor %}
+                  </select>
+                </div>
+                <input type="hidden" name="lead_id" value="{{ editing_engagement.lead_id }}">
+              </div>
+              <div class="form-row form-row-2">
+                <div class="field optional">
+                  <label for="engagement_edit_start_date">Start date</label>
+                  <input id="engagement_edit_start_date" type="date" name="start_date" value="{{ editing_engagement.start_date }}">
+                </div>
+                <div class="field optional">
+                  <label for="engagement_edit_target_date">Target date</label>
+                  <input id="engagement_edit_target_date" type="date" name="target_date" value="{{ editing_engagement.target_date }}">
+                </div>
+              </div>
+              <div class="form-row form-row-1">
+                <div class="field optional">
+                  <label for="engagement_edit_linked_documents">Client-supplied documents (optional)</label>
+                  <select id="engagement_edit_linked_documents" name="linked_documents" multiple size="4">
+                    {% for document in company_documents %}
+                    <option value="{{ document.id }}" {% if document.id in editing_engagement.linked_documents %}selected{% endif %}>{{ document.name }} ({{ document.category }})</option>
+                    {% endfor %}
+                  </select>
+                  <span class="mini">Hold Ctrl/Cmd to select more than one. Used as context for the AI-drafted sections of a generated brief.</span>
+                </div>
+              </div>
+              <div class="form-row form-row-1">
+                <div class="field optional">
+                  <label for="engagement_edit_notes">Notes</label>
+                  <textarea id="engagement_edit_notes" name="notes" rows="3" placeholder="Notes">{{ editing_engagement.notes }}</textarea>
+                </div>
+              </div>
+              {{ archive_in_modal('/crm/engagements/archive', 'engagement_id', editing_engagement.id, label='Archive this engagement', confirm_message='Are you sure? This will archive the engagement.') }}
+              <div class="modal-actions">
+                <a href="/crm/engagements" class="btn-go-back">Cancel</a>
+                <button type="submit" class="btn-confirm-save">Update Engagement</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>
+      <script>window.ENGAGEMENT_EDIT_MODAL_OPEN = true;</script>
+      {% endif %}
+      <script>window.ENGAGEMENT_ADD_MODAL_OPEN = {{ 'true' if (validation_errors and not editing_engagement) else 'false' }};</script>
+      {% endif %}
+
+      {% if active_tab == 'crm_engagement_detail' and engagement_detail %}
+      {% set engagement = engagement_detail.engagement %}
+      <div class="section">
+        <div class="edit-banner">
+          <h2>{{ engagement.engagement_number }} — {{ engagement.client_name }}</h2>
+          <div class="table-action-stack">
+            {{ edit_button('/crm/engagements?edit_id=' ~ engagement.id ~ '#engagement-edit-modal') }}
+            <form method="post" action="/crm/engagements/{{ engagement.id }}/generate-brief">
+              <button type="submit" class="btn-confirm-save">Generate Scope Brief</button>
+            </form>
+          </div>
+        </div>
+        <div class="card" style="display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));margin-bottom:16px;">
+          <div><div class="mini" style="margin:0;">Tier</div><strong>{{ engagement.tier or '—' }}</strong></div>
+          <div><div class="mini" style="margin:0;">Stage</div><strong>{{ engagement.stage }}</strong></div>
+          <div><div class="mini" style="margin:0;">Start date</div><strong>{{ engagement.start_date | fmt_date or '—' }}</strong></div>
+          <div><div class="mini" style="margin:0;">Target date</div><strong>{{ engagement.target_date | fmt_date or '—' }}</strong></div>
+        </div>
+        {% if engagement.notes %}<p class="mini">{{ engagement.notes }}</p>{% endif %}
+
+        <h3 style="color:var(--brand-navy);font-size:14px;margin-top:24px;">Client-supplied documents</h3>
+        {% if engagement_detail.linked_docs %}
+        <ul style="margin:0;padding-left:16px;font-size:13px;">
+          {% for document in engagement_detail.linked_docs %}
+          <li>{{ document.name }} <span class="mini">({{ document.category }})</span></li>
+          {% endfor %}
+        </ul>
+        {% else %}
+        <p class="mini">No client-supplied documents linked yet — edit this engagement to link Company Documents for use as AI-drafting context.</p>
+        {% endif %}
+
+        <h3 style="color:var(--brand-navy);font-size:14px;margin-top:24px;">Generated documents</h3>
+        {% if engagement_detail.generated_docs %}
+        <table class="services-table">
+          <tr><th>Type</th><th>Status</th><th class="col-date">Created</th><th class="col-actions"></th></tr>
+          {% for gdoc in engagement_detail.generated_docs %}
+          <tr>
+            <td>Scope &amp; Requirements Brief</td>
+            <td>{% if gdoc.status == 'approved' %}<span class="status-pill approved">Approved</span>{% else %}<span class="status-pill pending">Draft — Pending Review</span>{% endif %}</td>
+            <td>{{ gdoc.created_at[:10] | fmt_date }}</td>
+            <td class="col-actions"><a href="/crm/generated-documents/{{ gdoc.id }}" class="btn-secondary">Review</a></td>
+          </tr>
+          {% endfor %}
+        </table>
+        {% else %}
+        <p class="mini">No documents generated yet for this engagement.</p>
+        {% endif %}
+      </div>
+      {% endif %}
+
+      {% if active_tab == 'generated_document_review' and generated_document_detail %}
+      {% set gdoc = generated_document_detail.document %}
+      {% set fields = gdoc.fields %}
+      <div class="section" style="max-width:900px;">
+        <div class="edit-banner">
+          <h2>Scope &amp; Requirements Brief — {{ fields.client_name }}</h2>
+          <div class="table-action-stack">
+            {% if gdoc.status == 'approved' %}<span class="status-pill approved">Approved</span>{% else %}<span class="status-pill pending">Draft — Pending Review</span>{% endif %}
+            <a href="/crm/generated-documents/{{ gdoc.id }}/pdf" class="btn-secondary" target="_blank">Download PDF</a>
+          </div>
+        </div>
+
+        <form method="post" action="/crm/generated-documents/{{ gdoc.id }}/save">
+          <div class="card" style="margin-bottom:16px;">
+            <h3 style="color:var(--brand-navy);font-size:13px;margin-top:0;">AUTO — from CRM data</h3>
+            <div style="display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));">
+              <div><div class="mini" style="margin:0;">Client name</div><strong>{{ fields.client_name }}</strong></div>
+              <div><div class="mini" style="margin:0;">Contact name</div><strong>{{ fields.contact_name or '—' }}</strong></div>
+              <div><div class="mini" style="margin:0;">Engagement tier</div><strong>{{ fields.engagement_tier or '—' }}</strong></div>
+              <div><div class="mini" style="margin:0;">Engagement ID</div><strong>{{ fields.engagement_number }}</strong></div>
+              <div><div class="mini" style="margin:0;">Date</div><strong>{{ fields.generated_date | fmt_date }}</strong></div>
+            </div>
+          </div>
+
+          <div class="card" style="margin-bottom:16px;">
+            <h3 style="color:var(--brand-navy);font-size:13px;margin-top:0;">AI-DRAFT — review and edit before approving</h3>
+            <p class="mini">Claude-drafted from CRM data. Never client-facing until approved — edit freely below.</p>
+            <div class="field optional"><label for="gdoc_business_context">Business Context</label><textarea id="gdoc_business_context" name="business_context" rows="3" {% if gdoc.status == 'approved' %}disabled{% endif %}>{{ fields.business_context }}</textarea></div>
+            <div class="field optional"><label for="gdoc_scope">Scope (in / out)</label><textarea id="gdoc_scope" name="scope" rows="4" {% if gdoc.status == 'approved' %}disabled{% endif %}>{{ fields.scope }}</textarea></div>
+            <div class="field optional"><label for="gdoc_constraints">Constraints</label><textarea id="gdoc_constraints" name="constraints" rows="3" {% if gdoc.status == 'approved' %}disabled{% endif %}>{{ fields.constraints }}</textarea></div>
+            <div class="field optional"><label for="gdoc_stakeholders">Stakeholders &amp; Information Sources</label><textarea id="gdoc_stakeholders" name="stakeholders" rows="3" {% if gdoc.status == 'approved' %}disabled{% endif %}>{{ fields.stakeholders }}</textarea></div>
+          </div>
+
+          <div class="card" style="margin-bottom:16px;">
+            <h3 style="color:var(--brand-navy);font-size:13px;margin-top:0;">HEV-ONLY — required before approval</h3>
+            <div class="field required"><label for="gdoc_problem_statement">Problem Statement</label><textarea id="gdoc_problem_statement" name="problem_statement" rows="3" placeholder="Problem statement" {% if gdoc.status == 'approved' %}disabled{% endif %}>{{ fields.problem_statement }}</textarea></div>
+            <div class="field required"><label for="gdoc_objectives">Objectives</label><textarea id="gdoc_objectives" name="objectives" rows="3" placeholder="Objectives" {% if gdoc.status == 'approved' %}disabled{% endif %}>{{ fields.objectives }}</textarea></div>
+            <div class="field required"><label for="gdoc_assumptions">Assumptions</label><textarea id="gdoc_assumptions" name="assumptions" rows="3" placeholder="Assumptions" {% if gdoc.status == 'approved' %}disabled{% endif %}>{{ fields.assumptions }}</textarea></div>
+            <div class="field required"><label for="gdoc_sign_off">Sign-off</label><textarea id="gdoc_sign_off" name="sign_off" rows="3" placeholder="Sign-off" {% if gdoc.status == 'approved' %}disabled{% endif %}>{{ fields.sign_off }}</textarea></div>
+          </div>
+
+          <div class="card" style="margin-bottom:16px;">
+            <h3 style="color:var(--brand-navy);font-size:13px;margin-top:0;">Deliverables for This Engagement</h3>
+            <p>{{ fields.deliverables }}</p>
+            <p class="mini">Fixed by engagement tier — not editable here.</p>
+          </div>
+
+          {% if gdoc.status != 'approved' %}
+          <div class="modal-actions" style="justify-content:flex-start;">
+            <button type="submit" class="btn-secondary">Save Draft</button>
+            <button type="submit" formaction="/crm/generated-documents/{{ gdoc.id }}/approve" class="btn-confirm-save">Approve</button>
+          </div>
+          {% else %}
+          <p class="mini">Approved {{ gdoc.approved_at[:10] | fmt_date }} by {{ gdoc.approved_by }}. Filed to Company Documents{% if gdoc.filed_document_id %} as {{ gdoc.filed_document_id }}{% endif %}.</p>
+          {% endif %}
+        </form>
       </div>
       {% endif %}
 
@@ -7220,6 +7512,8 @@
         initFormModal({ overlayId: "lead_edit_modal_overlay", addBtnId: "", basePath: "/crm/leads", hash: "#lead-edit-modal", openFlag: "LEAD_EDIT_MODAL_OPEN" });
         initFormModal({ overlayId: "proposal_add_modal_overlay", addBtnId: "proposal_add_btn", basePath: "/crm/proposals", hash: "#proposal-add-modal", openFlag: "PROPOSAL_ADD_MODAL_OPEN" });
         initFormModal({ overlayId: "proposal_edit_modal_overlay", addBtnId: "", basePath: "/crm/proposals", hash: "#proposal-edit-modal", openFlag: "PROPOSAL_EDIT_MODAL_OPEN" });
+        initFormModal({ overlayId: "engagement_add_modal_overlay", addBtnId: "engagement_add_btn", basePath: "/crm/engagements", hash: "#engagement-add-modal", openFlag: "ENGAGEMENT_ADD_MODAL_OPEN" });
+        initFormModal({ overlayId: "engagement_edit_modal_overlay", addBtnId: "", basePath: "/crm/engagements", hash: "#engagement-edit-modal", openFlag: "ENGAGEMENT_EDIT_MODAL_OPEN" });
 
         var leadsViewToggle = document.getElementById("leads_view_toggle");
         var leadsKanbanView = document.getElementById("leads_kanban_view");
